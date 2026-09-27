@@ -1,0 +1,32 @@
+displayName: 英语
+display:
+  icon: 🔤
+  gradient: from-emerald-500 to-teal-500
+  iconBg: bg-emerald-100 dark:bg-emerald-900/30
+  iconColor: text-emerald-600 dark:text-emerald-400
+categories:
+  - key: GRAMMAR
+    label: 语法与语法填空
+    priority: CORE
+    ref: english-grammar.md
+    shared: true
+  - key: VOCABULARY
+    label: 词汇与词义辨析
+    priority: NORMAL
+    ref: english-vocabulary.md
+    shared: true
+  - key: CLOZE
+    label: 完形填空
+    priority: CORE
+    ref: english-cloze.md
+    shared: true
+  - key: READING
+    label: 阅读理解
+    priority: CORE
+    ref: english-reading.md
+    shared: true
+  - key: WRITING
+    label: 书面表达
+    priority: ALWAYS_ONE
+    ref: english-writing.md
+    shared: true

@@ -1,0 +1,32 @@
+displayName: 语文
+display:
+  icon: ✒️
+  gradient: from-rose-500 to-pink-500
+  iconBg: bg-rose-100 dark:bg-rose-900/30
+  iconColor: text-rose-600 dark:text-rose-400
+categories:
+  - key: MODERN_READING
+    label: 现代文阅读
+    priority: CORE
+    ref: chinese-modern-reading.md
+    shared: true
+  - key: ANCIENT_POETRY
+    label: 古诗文阅读
+    priority: CORE
+    ref: chinese-ancient-poetry.md
+    shared: true
+  - key: LANGUAGE_USAGE
+    label: 语言文字运用
+    priority: CORE
+    ref: chinese-language-usage.md
+    shared: true
+  - key: CLASSICS
+    label: 名篇名句与整本书阅读
+    priority: NORMAL
+    ref: chinese-classics.md
+    shared: true
+  - key: WRITING
+    label: 写作
+    priority: ALWAYS_ONE
+    ref: chinese-writing.md
+    shared: true

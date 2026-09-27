@@ -54,7 +54,7 @@
 | --- | --- | --- | --- |
 | 后端 | Spring Boot | 4.1.0 | 应用框架 |
 | 语言 | Java | 25 | 开发语言（虚拟线程） |
-| AI | Spring AI | 2.0.0 | 多模型接入、结构化输出 |
+| AI | Spring AI | 2.0.1 | 多模型接入、结构化输出、工具调用（2.0.0 的流式工具调用分片合并有缺陷） |
 | AI | Spring AI Agent Utils | 0.10.0 | Skill 资源加载与 Advisor 扩展 |
 | 存储 | PostgreSQL + pgvector | 16 / 0.8 | 关系数据 + 向量检索（维度 1024，COSINE） |
 | 缓存与异步 | Redis + Redisson | 7 / 4.0.0 | 缓存、Redis Stream 异步任务 |

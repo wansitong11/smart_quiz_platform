@@ -1,12 +1,15 @@
 # Smart Quiz Platform Agent Rules
 
-Spring Boot 4.1.0 + Java 25 + Spring AI 2.0.0 + React 智能刷题平台。
+Spring Boot 4.1.0 + Java 25 + Spring AI 2.0.1 + React 智能刷题平台。
 
 本文件是跨工具 Agent 入口，只放长期有效、代码里不容易直接推断、猜错会影响结果的规则。更细的目录规则放在 `.claude/rules/`，需要时再读取。
 
+**开工前先读 `docs/改造说明.md`**：项目定位、代码地图、四个核心机制（试卷层级树 / 题型判分 /
+资料分类与检索范围 / 问答工具化 + ChatMemory）、本地启动与测试命令、已知坑清单、待办 P1。
+
 ## Tech Stack
 
-- Backend: Spring Boot 4.1.0 / Java 25 / Gradle / Spring AI 2.0.0
+- Backend: Spring Boot 4.1.0 / Java 25 / Gradle / Spring AI 2.0.1
 - Database: PostgreSQL + pgvector，向量维度 1024，距离类型 COSINE
 - Cache & async: Redis / Redisson / Redis Stream
 - Storage & parsing: RustFS/S3 / Apache Tika

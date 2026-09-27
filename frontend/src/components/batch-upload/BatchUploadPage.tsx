@@ -1,4 +1,5 @@
 import { AlertCircle, ArrowLeft, Upload } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import BatchUploadDropzone from './BatchUploadDropzone';
 import BatchUploadList from './BatchUploadList';
@@ -13,10 +14,12 @@ interface BatchUploadPageProps {
   customNamePlaceholder?: string;
   backLabel: string;
   onBack: () => void;
+  /** 上传前需要先确认的上下文（如「导入到哪个分类」），展示在标题下方 */
+  contextSlot?: ReactNode;
 }
 
 export default function BatchUploadPage({
-  entityLabel, policy, adapter, customNamePlaceholder, backLabel, onBack,
+  entityLabel, policy, adapter, customNamePlaceholder, backLabel, onBack, contextSlot,
 }: BatchUploadPageProps) {
   const batchUpload = useBatchUpload(adapter, policy);
   const processLabel = adapter.processLabel;
@@ -31,6 +34,8 @@ export default function BatchUploadPage({
           单批最多 {MAX_BATCH_FILES} 个文件，同时上传 {MAX_CONCURRENT_UPLOADS} 个，上传后自动异步{processLabel}
         </p>
       </div>
+
+      {contextSlot}
 
       <BatchUploadDropzone
         entityLabel={entityLabel}

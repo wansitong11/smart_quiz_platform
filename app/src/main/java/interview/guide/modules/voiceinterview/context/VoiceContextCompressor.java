@@ -3,7 +3,7 @@ package interview.guide.modules.voiceinterview.context;
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.log.ErrorLogSanitizer;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeMessageEntity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.core.io.ResourceLoader;
@@ -53,7 +53,7 @@ public class VoiceContextCompressor {
      * @param coveredTurns  已被摘要覆盖的轮次数（用于增量合并，避免重复摘要）
      * @return 压缩结果：summary（可能为 null）、recent（保留的近期轮次）、coveredTurns、changed
      */
-    public CompressedHistory compress(List<VoiceInterviewMessageEntity> turns,
+    public CompressedHistory compress(List<OralPracticeMessageEntity> turns,
                                        String cachedSummary, int coveredTurns) {
         return compress(turns, cachedSummary, coveredTurns, null);
     }
@@ -61,7 +61,7 @@ public class VoiceContextCompressor {
     /**
      * 使用会话指定的 LLM 提供商压缩对话历史。
      */
-    public CompressedHistory compress(List<VoiceInterviewMessageEntity> turns,
+    public CompressedHistory compress(List<OralPracticeMessageEntity> turns,
                                        String cachedSummary, int coveredTurns,
                                        String llmProvider) {
         var cfg = properties.getContextCompression();
@@ -73,7 +73,7 @@ public class VoiceContextCompressor {
         // NONE 模式 / 未达到窗口大小：不摘要、不裁窗口，但仍执行字符硬预算
         if (cfg.getMode() == VoiceInterviewProperties.Mode.NONE
                 || turns.size() <= cfg.getWindowSize()) {
-            List<VoiceInterviewMessageEntity> budgeted = applyCharBudget(null, turns);
+            List<OralPracticeMessageEntity> budgeted = applyCharBudget(null, turns);
             return new CompressedHistory(null, budgeted, 0, false);
         }
 
@@ -83,7 +83,7 @@ public class VoiceContextCompressor {
         String summary = cachedSummary;
         boolean changed = false;
         boolean summaryFailed = false;
-        int effectiveCoveredTurns = VoiceInterviewMessageEntity.trimToNull(cachedSummary) == null
+        int effectiveCoveredTurns = OralPracticeMessageEntity.trimToNull(cachedSummary) == null
             ? 0
             : Math.min(Math.max(coveredTurns, 0), earlyCount);
 
@@ -110,7 +110,7 @@ public class VoiceContextCompressor {
             ? effectiveCoveredTurns
             : earlyCount;
         String budgetedSummary = truncateSummary(summary);
-        List<VoiceInterviewMessageEntity> recent =
+        List<OralPracticeMessageEntity> recent =
             applyCharBudget(budgetedSummary, turns.subList(recentStart, total));
         return new CompressedHistory(budgetedSummary, recent, effectiveCoveredTurns, changed);
     }
@@ -135,8 +135,8 @@ public class VoiceContextCompressor {
      * 字符硬预算：摘要字符数 + 近期历史格式化后字符数 <= maxHistoryChars。
      * 超出时从最早的近期消息开始删除，始终保留最近消息。
      */
-    private List<VoiceInterviewMessageEntity> applyCharBudget(String summary,
-                                                              List<VoiceInterviewMessageEntity> recent) {
+    private List<OralPracticeMessageEntity> applyCharBudget(String summary,
+                                                              List<OralPracticeMessageEntity> recent) {
         int max = properties.getContextCompression().getMaxHistoryChars();
         if (max <= 0 || recent.isEmpty()) {
             return recent;
@@ -157,7 +157,7 @@ public class VoiceContextCompressor {
         int summaryChars = summary != null ? summary.length() : 0;
         if (start == recent.size()) {
             // 连最近一条都放不下：保留最近消息的身份，按剩余预算截断其文本，硬上限不被绕过
-            VoiceInterviewMessageEntity truncated =
+            OralPracticeMessageEntity truncated =
                 truncateMessageTail(recent.get(recent.size() - 1), max - summaryChars);
             log.info("最近消息超出字符预算已截断: summaryChars={}, budget={}, inputTurns={}, outputTurns=1",
                 summaryChars, max, recent.size());
@@ -172,9 +172,9 @@ public class VoiceContextCompressor {
      * 截断单条消息文本以适配剩余预算，保留尾部语义（候选人最后的表述更接近当前语境）。
      * 返回副本，不修改原实体。
      */
-    private VoiceInterviewMessageEntity truncateMessageTail(VoiceInterviewMessageEntity msg, int remaining) {
-        String aiText = VoiceInterviewMessageEntity.trimToNull(msg.getAiGeneratedText());
-        String userText = VoiceInterviewMessageEntity.trimToNull(msg.getUserRecognizedText());
+    private OralPracticeMessageEntity truncateMessageTail(OralPracticeMessageEntity msg, int remaining) {
+        String aiText = OralPracticeMessageEntity.trimToNull(msg.getAiGeneratedText());
+        String userText = OralPracticeMessageEntity.trimToNull(msg.getUserRecognizedText());
         int aiLen = aiText != null ? "面试官：".length() + aiText.length() : 0;
         int userLen = userText != null ? "候选人：".length() + userText.length() : 0;
         int budget = Math.max(remaining, 0);
@@ -183,7 +183,7 @@ public class VoiceContextCompressor {
         int userKeep = Math.min(userLen, budget);
         int aiKeep = Math.min(aiLen, budget - userKeep);
 
-        VoiceInterviewMessageEntity copy = VoiceInterviewMessageEntity.builder()
+        OralPracticeMessageEntity copy = OralPracticeMessageEntity.builder()
             .sequenceNum(msg.getSequenceNum())
             .messageType(msg.getMessageType())
             .build();
@@ -209,10 +209,10 @@ public class VoiceContextCompressor {
      * 单条轮次格式化后的字符成本，与 formatRecent 的输出一致：
      * 每个非空文本都会以「面试官：/候选人：」前缀各占一行。
      */
-    private int formattedCharCost(VoiceInterviewMessageEntity msg) {
+    private int formattedCharCost(OralPracticeMessageEntity msg) {
         int cost = 0;
-        String aiText = VoiceInterviewMessageEntity.trimToNull(msg.getAiGeneratedText());
-        String userText = VoiceInterviewMessageEntity.trimToNull(msg.getUserRecognizedText());
+        String aiText = OralPracticeMessageEntity.trimToNull(msg.getAiGeneratedText());
+        String userText = OralPracticeMessageEntity.trimToNull(msg.getUserRecognizedText());
         if (aiText != null) {
             cost += "面试官：".length() + aiText.length();
         }
@@ -225,12 +225,12 @@ public class VoiceContextCompressor {
     /**
      * 将实体轮次格式化为「面试官：/候选人：」文本行，与原 getHistory 的格式化逻辑保持一致。
      */
-    public List<String> formatRecent(List<VoiceInterviewMessageEntity> turns) {
+    public List<String> formatRecent(List<OralPracticeMessageEntity> turns) {
         List<String> history = new ArrayList<>();
         String pendingAiQuestion = null;
-        for (VoiceInterviewMessageEntity msg : turns) {
-            String aiText = VoiceInterviewMessageEntity.trimToNull(msg.getAiGeneratedText());
-            String userText = VoiceInterviewMessageEntity.trimToNull(msg.getUserRecognizedText());
+        for (OralPracticeMessageEntity msg : turns) {
+            String aiText = OralPracticeMessageEntity.trimToNull(msg.getAiGeneratedText());
+            String userText = OralPracticeMessageEntity.trimToNull(msg.getUserRecognizedText());
             if (pendingAiQuestion != null) {
                 history.add("面试官：" + pendingAiQuestion);
                 pendingAiQuestion = null;
@@ -260,7 +260,7 @@ public class VoiceContextCompressor {
     /**
      * 先应用字符硬预算，再格式化最近窗口；用于加载失败时的有界降级路径。
      */
-    public List<String> formatRecentWithinBudget(List<VoiceInterviewMessageEntity> turns) {
+    public List<String> formatRecentWithinBudget(List<OralPracticeMessageEntity> turns) {
         return formatRecent(applyCharBudget(null, turns));
     }
 
@@ -310,7 +310,7 @@ public class VoiceContextCompressor {
      * @param changed     摘要是否较缓存发生变化（需持久化）
      */
     public record CompressedHistory(String summary,
-                                     List<VoiceInterviewMessageEntity> recent,
+                                     List<OralPracticeMessageEntity> recent,
                                      int coveredTurns,
                                      boolean changed) {
     }

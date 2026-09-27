@@ -4,7 +4,7 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.file.FileStorageService;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
-import interview.guide.modules.resume.model.ResumeEntity;
+import interview.guide.modules.resume.model.PracticePaperEntity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -32,7 +32,7 @@ public class ResumeDeleteService {
         log.info("收到删除简历请求: id={}", id);
         
         // 获取简历信息（用于删除存储文件）
-        ResumeEntity resume = persistenceService.findById(id)
+        PracticePaperEntity resume = persistenceService.findById(id)
             .orElseThrow(() -> new BusinessException(
                 ErrorCode.RESUME_NOT_FOUND));
         

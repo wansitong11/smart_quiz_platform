@@ -10,6 +10,7 @@ export interface KnowledgeBaseItem {
   id: number;
   name: string;
   category: string | null;
+  categoryCode: string | null;
   originalFilename: string;
   fileSize: number;
   contentType: string;
@@ -193,7 +194,7 @@ export const knowledgeBaseApi = {
       formData.append('name', name);
     }
     if (category) {
-      formData.append('category', category);
+      formData.append('categoryCode', category);
     }
     return request.upload<UploadKnowledgeBaseResponse>('/api/knowledgebase/upload', formData);
   },
@@ -237,31 +238,26 @@ export const knowledgeBaseApi = {
   // ========== 分类管理 ==========
 
   /**
-   * 获取所有分类
+   * 按分类获取知识库（categoryCode 为空表示未分类）
    */
-  async getAllCategories(): Promise<string[]> {
-    return request.get<string[]>('/api/knowledgebase/categories');
-  },
-
-  /**
-   * 根据分类获取知识库
-   */
-  async getByCategory(category: string): Promise<KnowledgeBaseItem[]> {
-    return request.get<KnowledgeBaseItem[]>(`/api/knowledgebase/category/${encodeURIComponent(category)}`);
+  async getByCategory(categoryCode: string): Promise<KnowledgeBaseItem[]> {
+    return request.get<KnowledgeBaseItem[]>(
+      `/api/knowledgebase/list?categoryCode=${encodeURIComponent(categoryCode)}`
+    );
   },
 
   /**
    * 获取未分类的知识库
    */
   async getUncategorized(): Promise<KnowledgeBaseItem[]> {
-    return request.get<KnowledgeBaseItem[]>('/api/knowledgebase/uncategorized');
+    return request.get<KnowledgeBaseItem[]>('/api/knowledgebase/list?uncategorized=true');
   },
 
   /**
-   * 更新知识库分类
+   * 更新知识库分类（categoryCode 为空表示未分类）
    */
-  async updateCategory(id: number, category: string | null): Promise<void> {
-    return request.put(`/api/knowledgebase/${id}/category`, { category });
+  async updateCategory(id: number, categoryCode: string | null): Promise<void> {
+    return request.put(`/api/knowledgebase/${id}/category`, { categoryCode });
   },
 
   // ========== 搜索 ==========

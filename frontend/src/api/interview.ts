@@ -1,5 +1,7 @@
 import { request } from './request';
 import type {
+  BatchSubmitAnswerItem,
+  BatchSubmitAnswerResponse,
   CreateInterviewRequest,
   CurrentQuestionResponse,
   InterviewReport,
@@ -20,7 +22,7 @@ export interface TextSessionMeta {
   overallScore: number | null;
   sourceType: string | null;
   knowledgeBaseId: number | null;
-  interviewCategory?: string | null;
+  subjectCategory?: string | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -47,6 +49,14 @@ export const interviewApi = {
    */
   async getSession(sessionId: string): Promise<InterviewSession> {
     return request.get<InterviewSession>(`/api/interview/sessions/${sessionId}`);
+  },
+
+  /**
+   * 从这次试卷练习再开一次作答（报告页「再练一遍」）。
+   * 未交卷则返回那一次，已交卷则基于同一份切题结果新开一次。
+   */
+  async startNewAttempt(sessionId: string): Promise<InterviewSession> {
+    return request.post<InterviewSession>(`/api/interview/sessions/${sessionId}/attempts`);
   },
 
   /**
@@ -105,5 +115,22 @@ export const interviewApi = {
    */
   async completeInterview(sessionId: string): Promise<void> {
     return request.post<void>(`/api/interview/sessions/${sessionId}/complete`);
+  },
+
+  /**
+   * 整卷交卷：一次提交整卷答案，后端批量落库并触发批改
+   * 适用于可跳题、可回改的试卷 / 练习材料作答
+   */
+  async submitWholePaper(
+    sessionId: string,
+    answers: BatchSubmitAnswerItem[]
+  ): Promise<BatchSubmitAnswerResponse> {
+    return request.post<BatchSubmitAnswerResponse>(
+      `/api/interview/sessions/${sessionId}/answers/batch`,
+      { answers },
+      {
+        timeout: 180000, // 3分钟超时
+      }
+    );
   },
 };

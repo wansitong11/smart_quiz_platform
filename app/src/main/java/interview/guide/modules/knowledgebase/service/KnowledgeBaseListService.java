@@ -32,6 +32,7 @@ public class KnowledgeBaseListService {
     private final RagChatMessageRepository ragChatMessageRepository;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final FileStorageService fileStorageService;
+    private final KbCategoryService categoryService;
 
     /**
      * 获取知识库列表（支持状态过滤和排序）
@@ -56,7 +57,7 @@ public class KnowledgeBaseListService {
             entities = sortEntities(entities, sortBy);
         }
         
-        return knowledgeBaseMapper.toListItemDTOList(entities);
+        return toDtoList(entities);
     }
 
     /**
@@ -78,7 +79,7 @@ public class KnowledgeBaseListService {
      */
     public Optional<KnowledgeBaseListItemDTO> getKnowledgeBase(Long id) {
         return knowledgeBaseRepository.findById(id)
-            .map(knowledgeBaseMapper::toListItemDTO);
+            .map(entity -> knowledgeBaseMapper.toListItemDTO(entity, categoryService.nameByCode()));
     }
 
     /**
@@ -102,35 +103,28 @@ public class KnowledgeBaseListService {
     // ========== 分类管理 ==========
 
     /**
-     * 获取所有分类
+     * 根据分类 code 获取知识库列表（code 为空表示「未分类」）
      */
-    public List<String> getAllCategories() {
-        return knowledgeBaseRepository.findAllCategories();
-    }
-
-    /**
-     * 根据分类获取知识库列表
-     */
-    public List<KnowledgeBaseListItemDTO> listByCategory(String category) {
+    public List<KnowledgeBaseListItemDTO> listByCategory(String categoryCode) {
         List<KnowledgeBaseEntity> entities;
-        if (category == null || category.isBlank()) {
-            entities = knowledgeBaseRepository.findByCategoryIsNullOrderByUploadedAtDesc();
+        if (categoryCode == null || categoryCode.isBlank()) {
+            entities = knowledgeBaseRepository.findByCategoryCodeIsNullOrderByUploadedAtDesc();
         } else {
-            entities = knowledgeBaseRepository.findByCategoryOrderByUploadedAtDesc(category);
+            entities = knowledgeBaseRepository.findByCategoryCodeOrderByUploadedAtDesc(categoryCode.trim());
         }
-        return knowledgeBaseMapper.toListItemDTOList(entities);
+        return toDtoList(entities);
     }
 
     /**
-     * 更新知识库分类
+     * 更新知识库分类（传 categoryCode，null 表示未分类）
      */
     @Transactional
-    public void updateCategory(Long id, String category) {
+    public void updateCategory(Long id, String categoryCode) {
         KnowledgeBaseEntity entity = knowledgeBaseRepository.findById(id)
             .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND, "知识库不存在"));
-        entity.setCategory(category != null && !category.isBlank() ? category : null);
+        entity.setCategoryCode(categoryService.normalizeCode(categoryCode));
         knowledgeBaseRepository.save(entity);
-        log.info("更新知识库分类: id={}, category={}", id, category);
+        log.info("更新知识库分类: id={}, categoryCode={}", id, categoryCode);
     }
 
     // ========== 搜索功能 ==========
@@ -143,8 +137,15 @@ public class KnowledgeBaseListService {
             return listKnowledgeBases();
         }
         return knowledgeBaseMapper.toListItemDTOList(
-            knowledgeBaseRepository.searchByKeyword(keyword.trim())
+            knowledgeBaseRepository.searchByKeyword(keyword.trim()), categoryService.nameByCode()
         );
+    }
+
+    /**
+     * 列表统一补分类展示名（一次查出 code→name 映射，避免逐条查库）。
+     */
+    private List<KnowledgeBaseListItemDTO> toDtoList(List<KnowledgeBaseEntity> entities) {
+        return knowledgeBaseMapper.toListItemDTOList(entities, categoryService.nameByCode());
     }
 
     // ========== 排序功能 ==========

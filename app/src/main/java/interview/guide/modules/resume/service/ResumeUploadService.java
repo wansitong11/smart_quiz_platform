@@ -7,9 +7,9 @@ import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.common.transaction.TransactionalExecutor;
 import interview.guide.infrastructure.file.FileStorageService;
 import interview.guide.infrastructure.file.FileValidationService;
-import interview.guide.modules.interview.model.ResumeAnalysisResponse;
-import interview.guide.modules.resume.listener.AnalyzeStreamProducer;
-import interview.guide.modules.resume.model.ResumeEntity;
+import interview.guide.modules.resume.listener.PaperExtractionStreamProducer;
+import interview.guide.modules.resume.model.PaperAnalysisEntity;
+import interview.guide.modules.resume.model.PracticePaperEntity;
 import interview.guide.modules.resume.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,7 +33,7 @@ public class ResumeUploadService {
     private final ResumePersistenceService persistenceService;
     private final AppConfigProperties appConfig;
     private final FileValidationService fileValidationService;
-    private final AnalyzeStreamProducer analyzeStreamProducer;
+    private final PaperExtractionStreamProducer paperExtractionProducer;
     private final ResumeRepository resumeRepository;
     private final TransactionalExecutor transactionalExecutor;
 
@@ -61,7 +61,7 @@ public class ResumeUploadService {
         validateContentType(contentType);
 
         // 3. 检查简历是否已存在（去重）
-        Optional<ResumeEntity> existingResume = persistenceService.findExistingResume(file);
+        Optional<PracticePaperEntity> existingResume = persistenceService.findExistingResume(file);
         if (existingResume.isPresent()) {
             log.info("简历上传处理完成（重复）: {} - 耗时: {}ms",
                 fileName, System.currentTimeMillis() - startTime);
@@ -85,7 +85,7 @@ public class ResumeUploadService {
             fileKey, System.currentTimeMillis() - storageStart);
 
         // 6. 保存简历到数据库（状态为 PENDING）；失败时按 fileKey 补偿删除孤儿对象（简历是先解析再上传，补偿只包在 S3 成功之后）
-        ResumeEntity savedResume;
+        PracticePaperEntity savedResume;
         try {
             savedResume = persistenceService.saveResume(file, resumeText, fileKey, fileUrl);
         } catch (Exception dbError) {
@@ -100,7 +100,7 @@ public class ResumeUploadService {
         }
 
         // 7. 发送分析任务到 Redis Stream；投递失败时文件与实体保留（手动重试依据），返回真实状态
-        boolean enqueueAccepted = analyzeStreamProducer.sendAnalyzeTask(savedResume.getId());
+        boolean enqueueAccepted = paperExtractionProducer.sendExtractTask(savedResume.getId());
 
         long totalTime = System.currentTimeMillis() - startTime;
         log.info("简历上传处理完成: {}, resumeId={} - 总耗时: {}ms (解析+存储+入库)",
@@ -111,7 +111,7 @@ public class ResumeUploadService {
             "resume", Map.of(
                 "id", savedResume.getId(),
                 "filename", savedResume.getOriginalFilename(),
-                "analyzeStatus", enqueueAccepted ? AsyncTaskStatus.PENDING.name() : AsyncTaskStatus.FAILED.name()
+                "analysisStatus", enqueueAccepted ? AsyncTaskStatus.PENDING.name() : AsyncTaskStatus.FAILED.name()
             ),
             "storage", Map.of(
                 "fileKey", fileKey,
@@ -147,16 +147,16 @@ public class ResumeUploadService {
     /**
      * 处理重复简历
      */
-    private Map<String, Object> handleDuplicateResume(ResumeEntity resume) {
+    private Map<String, Object> handleDuplicateResume(PracticePaperEntity resume) {
         log.info("检测到重复简历，返回历史分析结果: resumeId={}", resume.getId());
 
-        // 获取历史分析结果
-        Optional<ResumeAnalysisResponse> analysisOpt = persistenceService.getLatestAnalysisAsDTO(resume.getId());
+        // 获取历史解析摘要
+        Optional<PaperAnalysisEntity> analysisOpt = persistenceService.getLatestAnalysis(resume.getId());
 
         // 已有分析结果，直接返回
         // 没有分析结果（可能之前分析失败），返回当前状态
-        return analysisOpt.map(resumeAnalysisResponse -> Map.of(
-                "analysis", resumeAnalysisResponse,
+        return analysisOpt.map(analysis -> Map.of(
+                "analysis", persistenceService.toAnalysisHistoryDTO(analysis),
                 "storage", Map.of(
                         "fileKey", resume.getStorageKey() != null ? resume.getStorageKey() : "",
                         "fileUrl", resume.getStorageUrl() != null ? resume.getStorageUrl() : "",
@@ -169,7 +169,7 @@ public class ResumeUploadService {
                 "resume", Map.of(
                         "id", resume.getId(),
                         "filename", resume.getOriginalFilename(),
-                        "analyzeStatus", resume.getAnalyzeStatus() != null ? resume.getAnalyzeStatus().name() : AsyncTaskStatus.PENDING.name()
+                        "analysisStatus", resume.getAnalysisStatus() != null ? resume.getAnalysisStatus().name() : AsyncTaskStatus.PENDING.name()
                 ),
                 "storage", Map.of(
                         "fileKey", resume.getStorageKey() != null ? resume.getStorageKey() : "",
@@ -196,19 +196,19 @@ public class ResumeUploadService {
         log.info("开始重新分析简历: resumeId={}", resumeId);
 
         transactionalExecutor.run(() -> {
-            ResumeEntity resume = resumeRepository.findById(resumeId)
+            PracticePaperEntity resume = resumeRepository.findById(resumeId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
-            resume.setAnalyzeStatus(AsyncTaskStatus.PENDING);
-            resume.setAnalyzeError(null);
-            resume.setAnalyzeAttemptId(null);
-            resume.setAnalyzeUpdatedAt(java.time.LocalDateTime.now());
+            resume.setAnalysisStatus(AsyncTaskStatus.PENDING);
+            resume.setAnalysisError(null);
+            resume.setAnalysisAttemptId(null);
+            resume.setAnalysisUpdatedAt(java.time.LocalDateTime.now());
             resumeRepository.save(resume);
         });
         // 手动重试清零自动恢复计数
-        resumeRepository.resetAnalyzeRecoveryCount(resumeId);
+        resumeRepository.resetAnalysisRecoveryCount(resumeId);
 
         // 事务提交后再发送分析任务到 Stream；投递失败必须让调用方感知
-        if (!analyzeStreamProducer.sendAnalyzeTask(resumeId)) {
+        if (!paperExtractionProducer.sendExtractTask(resumeId)) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "任务投递失败，请稍后重试");
         }
 

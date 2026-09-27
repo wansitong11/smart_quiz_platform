@@ -1,7 +1,7 @@
 package interview.guide.modules.voiceinterview.context;
 
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeMessageEntity;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.service.VoiceInterviewService;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,16 +56,16 @@ class VoiceHistoryLoaderTest {
     loader = new VoiceHistoryLoader(messageRepository, interviewService, compressor, properties);
   }
 
-  private VoiceInterviewMessageEntity msg(int seq) {
-    return VoiceInterviewMessageEntity.builder()
+  private OralPracticeMessageEntity msg(int seq) {
+    return OralPracticeMessageEntity.builder()
         .sequenceNum(seq).messageType("AI_SPEECH")
         .aiGeneratedText("问题" + seq).userRecognizedText("回答" + seq)
         .build();
   }
 
-  private VoiceInterviewMessageEntity summaryRow(Integer seqNum, Integer boundary) {
-    VoiceInterviewMessageEntity row = VoiceInterviewMessageEntity.builder()
-        .sequenceNum(seqNum).messageType(VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY)
+  private OralPracticeMessageEntity summaryRow(Integer seqNum, Integer boundary) {
+    OralPracticeMessageEntity row = OralPracticeMessageEntity.builder()
+        .sequenceNum(seqNum).messageType(OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY)
         .build();
     row.setAiGeneratedText("已有摘要");
     row.setSummaryCoveredSequenceNum(boundary);
@@ -73,7 +73,7 @@ class VoiceHistoryLoaderTest {
   }
 
   private void stubWindow(int from, int count) {
-    List<VoiceInterviewMessageEntity> desc = new java.util.ArrayList<>();
+    List<OralPracticeMessageEntity> desc = new java.util.ArrayList<>();
     for (int seq = from + count - 1; seq >= from; seq--) {
       desc.add(msg(seq));
     }

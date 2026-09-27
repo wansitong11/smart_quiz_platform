@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "knowledge_bases", indexes = {
     @Index(name = "idx_kb_hash", columnList = "fileHash", unique = true),
-    @Index(name = "idx_kb_category", columnList = "category")
+    @Index(name = "idx_kb_category_code", columnList = "categoryCode")
 })
 public class KnowledgeBaseEntity {
 
@@ -26,9 +26,9 @@ public class KnowledgeBaseEntity {
     @Column(nullable = false)
     private String name;
 
-    // 分类/分组（如"Java面试"、"项目文档"等）
-    @Column(length = 100)
-    private String category;
+    // 所属分类 code（对应 kb_categories.code），为空表示未分类
+    @Column(name = "category_code", length = 64)
+    private String categoryCode;
 
     // 原始文件名
     @Column(nullable = false)
@@ -244,12 +244,12 @@ public class KnowledgeBaseEntity {
         this.lastAccessedAt = LocalDateTime.now();
     }
 
-    public String getCategory() {
-        return category;
+    public String getCategoryCode() {
+        return categoryCode;
     }
 
-    public void setCategory(String category) {
-        this.category = category;
+    public void setCategoryCode(String categoryCode) {
+        this.categoryCode = categoryCode;
     }
 
     public VectorStatus getVectorStatus() {

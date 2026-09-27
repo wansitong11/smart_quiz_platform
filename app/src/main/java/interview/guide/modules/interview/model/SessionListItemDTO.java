@@ -1,7 +1,7 @@
 package interview.guide.modules.interview.model;
 
 import interview.guide.common.model.AsyncTaskStatus;
-import interview.guide.modules.interview.model.InterviewSessionEntity.SessionStatus;
+import interview.guide.modules.interview.model.PracticeSessionEntity.SessionStatus;
 
 import java.time.LocalDateTime;
 
@@ -20,11 +20,11 @@ public record SessionListItemDTO(
     Integer overallScore,
     String sourceType,
     Long knowledgeBaseId,
-    String interviewCategory,
+    String subjectCategory,
     LocalDateTime createdAt,
     LocalDateTime completedAt
 ) {
-    public static SessionListItemDTO from(InterviewSessionEntity e) {
+    public static SessionListItemDTO from(PracticeSessionEntity e) {
         return new SessionListItemDTO(
             e.getSessionId(),
             e.getSkillId(),
@@ -37,7 +37,7 @@ public record SessionListItemDTO(
             e.getOverallScore(),
             e.getSourceType(),
             e.getKnowledgeBaseId(),
-            e.getInterviewCategory(),
+            e.getSubjectCategory(),
             e.getCreatedAt(),
             e.getCompletedAt()
         );

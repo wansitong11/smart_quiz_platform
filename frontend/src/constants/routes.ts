@@ -1,4 +1,6 @@
 export const ROUTES = {
+  paperAnalysis: '/papers',
+  paperPractice: (sessionId: string) => `/papers?session=${sessionId}`,
   interview: '/interview',
   interviewCreate: (requestId: string) => `/interview/create/${requestId}`,
   interviewSession: (sessionId: string) => `/interview/session/${sessionId}`,

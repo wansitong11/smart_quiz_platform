@@ -1,4 +1,5 @@
 import { request } from './request';
+import type { InterviewSession, PaperTree } from '../types/interview';
 
 export type AnalyzeStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 export type EvaluateStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
@@ -12,8 +13,8 @@ export interface ResumeListItem {
   latestScore?: number;
   lastAnalyzedAt?: string;
   interviewCount: number;
-  analyzeStatus?: AnalyzeStatus;
-  analyzeError?: string;
+  analysisStatus?: AnalyzeStatus;
+  analysisError?: string;
   storageUrl?: string;
 }
 
@@ -23,18 +24,18 @@ export interface ResumeStats {
   totalAccessCount: number;
 }
 
+/**
+ * 试卷 / 练习材料解析摘要（结构化切题结果概览）
+ */
 export interface AnalysisItem {
   id: number;
-  overallScore: number;
-  contentScore: number;
-  structureScore: number;
-  skillMatchScore: number;
-  expressionScore: number;
-  projectScore: number;
+  questionCount: number;
+  totalScore: number;
   summary: string;
   analyzedAt: string;
-  strengths: string[];
-  suggestions: unknown[];
+  practiceSessionId?: string | null;
+  topics: string[];
+  warnings: string[];
 }
 
 export interface InterviewItem {
@@ -45,6 +46,8 @@ export interface InterviewItem {
   evaluateStatus?: EvaluateStatus;
   evaluateError?: string;
   overallScore: number | null;
+  /** 会话来源：NORMAL / KNOWLEDGE_BASE / PAPER */
+  sourceType?: string | null;
   overallFeedback: string | null;
   createdAt: string;
   completedAt: string | null;
@@ -75,8 +78,8 @@ export interface ResumeDetail {
   uploadedAt: string;
   accessCount: number;
   resumeText: string;
-  analyzeStatus?: AnalyzeStatus;
-  analyzeError?: string;
+  analysisStatus?: AnalyzeStatus;
+  analysisError?: string;
   analyses: AnalysisItem[];
   interviews: InterviewItem[];
 }
@@ -85,6 +88,20 @@ export interface InterviewDetail extends InterviewItem {
   evaluateStatus?: EvaluateStatus;
   evaluateError?: string;
   answers: AnswerItem[];
+  /** 试卷层级树（老数据可能为空） */
+  paperTree?: PaperTree | null;
+  /** 按小节汇总的得分 */
+  sectionScores?: SectionScore[];
+}
+
+export interface SectionScore {
+  title: string;
+  subtitle?: string | null;
+  level: number;
+  questionCount: number;
+  fullScore: number;
+  score: number;
+  scoreRate: number;
 }
 
 export const historyApi = {
@@ -149,5 +166,13 @@ export const historyApi = {
    */
   async reanalyze(id: number): Promise<void> {
     return request.post(`/api/resumes/${id}/reanalyze`);
+  },
+
+  /**
+   * 开始（或继续）一次试卷作答。
+   * 上一次没交卷就返回那一次，已交卷则基于同一份切题结果新开一次。
+   */
+  async startPaperAttempt(paperId: number): Promise<InterviewSession> {
+    return request.post<InterviewSession>(`/api/resumes/${paperId}/attempts`);
   },
 };

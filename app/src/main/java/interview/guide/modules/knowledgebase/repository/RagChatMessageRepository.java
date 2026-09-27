@@ -34,6 +34,13 @@ public interface RagChatMessageRepository extends JpaRepository<RagChatMessageEn
     List<RagChatMessageEntity> findRecentCompletedBySessionId(@Param("sessionId") Long sessionId, Pageable pageable);
 
     /**
+     * 获取会话中最早的 N 条已完成消息（按 messageOrder 正序取）。
+     * 用于回答「第一个问题是什么」这类需要从头看的问题，避免全量加载后再截取。
+     */
+    @Query("SELECT m FROM RagChatMessageEntity m WHERE m.session.id = :sessionId AND m.completed = true ORDER BY m.messageOrder ASC")
+    List<RagChatMessageEntity> findFirstCompletedBySessionId(@Param("sessionId") Long sessionId, Pageable pageable);
+
+    /**
     @Query("SELECT COUNT(m) FROM RagChatMessageEntity m WHERE m.session.id = :sessionId")
     Integer countBySessionId(@Param("sessionId") Long sessionId);
 

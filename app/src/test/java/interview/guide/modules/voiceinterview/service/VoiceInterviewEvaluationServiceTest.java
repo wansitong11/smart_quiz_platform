@@ -3,8 +3,8 @@ package interview.guide.modules.voiceinterview.service;
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.evaluation.UnifiedEvaluationService;
 import interview.guide.modules.interview.skill.InterviewSkillService;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewEvaluationEntity;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeEvaluationEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewEvaluationRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
@@ -55,7 +55,7 @@ class VoiceInterviewEvaluationServiceTest {
     @Test
     @DisplayName("没有有效对话时应显示暂无评分而不是零分")
     void shouldNotAssignZeroScoreWhenNoConversationExists() {
-        VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+        OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
             .id(1L)
             .roleType("Java 后端开发")
             .startTime(LocalDateTime.now())
@@ -64,8 +64,8 @@ class VoiceInterviewEvaluationServiceTest {
 
         evaluationService.saveEmptyEvaluationTransactional(1L, session);
 
-        ArgumentCaptor<VoiceInterviewEvaluationEntity> captor =
-            ArgumentCaptor.forClass(VoiceInterviewEvaluationEntity.class);
+        ArgumentCaptor<OralPracticeEvaluationEntity> captor =
+            ArgumentCaptor.forClass(OralPracticeEvaluationEntity.class);
         verify(evaluationRepository).save(captor.capture());
         assertThat(captor.getValue().getOverallScore()).isNull();
         assertThat(captor.getValue().getOverallFeedback()).contains("暂无可评估内容");

@@ -9,7 +9,7 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.modules.resume.repository.ResumeRepository;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -101,7 +101,7 @@ class DashscopeLlmServiceTest {
     when(chatResponse.getResult()).thenReturn(generation);
     when(generation.getOutput()).thenReturn(new AssistantMessage(replyMarker));
 
-    VoiceInterviewSessionEntity session = new VoiceInterviewSessionEntity();
+    OralPracticeSessionEntity session = new OralPracticeSessionEntity();
     String reply = service.chat(userInputMarker, session, List.of());
 
     assertThat(reply).contains(replyMarker);

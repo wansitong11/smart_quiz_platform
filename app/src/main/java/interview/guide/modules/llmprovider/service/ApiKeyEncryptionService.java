@@ -21,8 +21,8 @@ public class ApiKeyEncryptionService {
   private static final int NONCE_BYTES = 12;
   private static final int GCM_TAG_BITS = 128;
   private static final String CIPHER = "AES/GCM/NoPadding";
-  private static final String DEV_FALLBACK_KEY =
-      "interview-guide-dev-only-provider-api-key-encryption";
+    private static final String DEV_FALLBACK_KEY =
+      "smart-quiz-dev-only-provider-api-key-encryption";
 
   private final LlmProviderProperties properties;
   private final SecureRandom secureRandom = new SecureRandom();

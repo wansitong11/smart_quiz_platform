@@ -95,11 +95,10 @@ class VoiceInterviewWebSocketHandlerTest {
   void shouldWarmupOpeningAudioWhenExplicitlyEnabled() throws InterruptedException {
     VoiceInterviewProperties properties = new VoiceInterviewProperties();
     properties.setOpeningAudioWarmupEnabled(true);
-    properties.getOpening().setSkillQuestions(Map.of("java-backend", "你好，开始面试。"));
-    properties.getOpening().setAlgorithmQuestion("");
-    properties.getOpening().setBackendQuestion("");
+    properties.getOpening().setSkillQuestions(Map.of("chinese", "你好，开始背诵练习。"));
+    properties.getOpening().setDefaultQuestion("");
     CountDownLatch ttsCalled = new CountDownLatch(1);
-    when(ttsService.synthesize("你好，开始面试。")).thenAnswer(invocation -> {
+    when(ttsService.synthesize("你好，开始背诵练习。")).thenAnswer(invocation -> {
       ttsCalled.countDown();
       return new byte[0];
     });

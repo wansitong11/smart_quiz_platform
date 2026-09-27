@@ -5,7 +5,6 @@ import {AlertCircle, CheckCircle, Clock, FileStack, RefreshCw, Sparkles, Upload}
 import {historyApi, ResumeListItem} from '../api/history';
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
 import {formatDateOnly} from '../utils/date';
-import {getScoreProgressColor} from '../utils/score';
 import { ROUTES } from '../constants/routes';
 
 interface HistoryListProps {
@@ -35,7 +34,7 @@ function resumesEqual(a: ResumeListItem[], b: ResumeListItem[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (a[i].id !== b[i].id ||
-        a[i].analyzeStatus !== b[i].analyzeStatus ||
+        a[i].analysisStatus !== b[i].analysisStatus ||
         a[i].latestScore !== b[i].latestScore) return false;
   }
   return true;
@@ -69,7 +68,7 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
   }, [loadResumes]);
 
   // 轮询：有分析中的简历时启动 3s 轮询
-  const hasAnalyzing = resumes.some(r => isAnalyzing(r.analyzeStatus));
+  const hasAnalyzing = resumes.some(r => isAnalyzing(r.analysisStatus));
 
   useEffect(() => {
     if (!hasAnalyzing) return;
@@ -191,7 +190,6 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
               <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">简历名称</th>
               <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">上传日期</th>
               <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">分析状态</th>
-              <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">AI 评分</th>
               <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">面试状态</th>
               <th className="w-20"></th>
             </tr>
@@ -225,34 +223,11 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
                   <td className="px-6 py-5 text-slate-500 dark:text-slate-400">{formatDateOnly(resume.uploadedAt)}</td>
                   <td className="px-6 py-5">
                     <div className="flex items-center gap-2">
-                      <AnalyzeStatusIcon status={resume.analyzeStatus}/>
+                      <AnalyzeStatusIcon status={resume.analysisStatus}/>
                       <span className="text-sm text-slate-600 dark:text-slate-300">
-                        {getAnalyzeStatusText(resume.analyzeStatus)}
+                        {getAnalyzeStatusText(resume.analysisStatus)}
                       </span>
                     </div>
-                  </td>
-                  <td className="px-6 py-5">
-                    {resume.analyzeStatus === 'COMPLETED' && resume.latestScore !== undefined ? (
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="w-20 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                          <motion.div
-                            className={`h-full ${getScoreProgressColor(resume.latestScore)} rounded-full`}
-                            initial={{width: 0}}
-                            animate={{width: `${resume.latestScore}%`}}
-                            transition={{duration: 0.8, delay: index * 0.05}}
-                          />
-                        </div>
-                        <span className="font-bold text-slate-800 dark:text-white">{resume.latestScore}</span>
-                      </div>
-                    ) : isAnalyzing(resume.analyzeStatus) ? (
-                      <span className="text-blue-500 dark:text-blue-400 text-sm">生成中...</span>
-                    ) : resume.analyzeStatus === 'FAILED' ? (
-                      <span className="text-red-500 dark:text-red-400 text-sm"
-                            title={resume.analyzeError}>失败</span>
-                    ) : (
-                      <span className="text-slate-400 dark:text-slate-500">-</span>
-                    )}
                   </td>
                   <td className="px-6 py-5">
                     {resume.interviewCount > 0 ? (

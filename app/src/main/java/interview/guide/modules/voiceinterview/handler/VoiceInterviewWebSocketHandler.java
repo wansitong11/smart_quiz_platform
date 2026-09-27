@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import interview.guide.modules.voiceinterview.dto.WebSocketControlMessage;
 import interview.guide.modules.voiceinterview.dto.WebSocketSubtitleMessage;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeMessageEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.context.VoiceContextCompressor;
 import interview.guide.modules.voiceinterview.service.QwenAsrService;
@@ -92,10 +92,9 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     private static final long AI_SPEAK_COOLDOWN_MS = 800;
     private static final int MAX_ASR_READY_RETRY = 2;
     private static final long ASR_READY_CHECK_DELAY_SECONDS = 10;
-    private static final String DEFAULT_OPENING_QUESTION_ALGORITHM =
-        "你好，我是本场面试官。第一个问题：请你口述一道算法题，不写代码，只讲\u300C问题建模、数据结构选型、步骤、复杂度、边界处理\u300D。";
-    private static final String DEFAULT_OPENING_QUESTION_BACKEND =
-        "你好，我是本场面试官。第一个问题：请用 1 分钟介绍一个你深度参与的项目，按三点回答：业务目标、你负责的核心模块、核心技术栈。说完我会立刻追问一个关键技术决策。";
+    private static final String DEFAULT_OPENING_QUESTION =
+        "你好，我是本次练习的陪练老师。第一个环节：请用 1 分钟口头说说你最近在学的知识点，"
+            + "按三点回答：学的是什么、你掌握到什么程度、还有哪里没弄明白。说完我会追问一个关键概念。";
 
     private static ScheduledExecutorService createUtteranceMergeScheduler() {
         ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(2, r -> {
@@ -124,8 +123,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                 if (opening.getSkillQuestions() != null) {
                     allTemplates.addAll(opening.getSkillQuestions().values());
                 }
-                allTemplates.add(opening.getAlgorithmQuestion());
-                allTemplates.add(opening.getBackendQuestion());
+                allTemplates.add(opening.getDefaultQuestion());
                 for (String template : allTemplates) {
                     preloadOpeningAudio(template);
                 }
@@ -222,7 +220,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                     return;
                 }
 
-                VoiceInterviewSessionEntity sessionEntity = getSessionEntity(sessionId);
+                OralPracticeSessionEntity sessionEntity = getSessionEntity(sessionId);
                 if (sessionEntity == null) {
                     log.warn("Session entity not found when sending opening question: {}", sessionId);
                     return;
@@ -280,7 +278,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
         return convertPcmToWav(pcm);
     }
 
-    private String buildOpeningQuestion(VoiceInterviewSessionEntity sessionEntity) {
+    private String buildOpeningQuestion(OralPracticeSessionEntity sessionEntity) {
         String skillId = sessionEntity.getSkillId() != null ? sessionEntity.getSkillId() : "";
         VoiceInterviewProperties.OpeningConfig opening = voiceInterviewProperties.getOpening();
         Map<String, String> skillQuestions = opening != null ? opening.getSkillQuestions() : null;
@@ -290,20 +288,10 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                 return bySkill;
             }
         }
-        List<String> algorithmSkills = opening != null && opening.getAlgorithmSkills() != null
-            ? opening.getAlgorithmSkills()
-            : List.of();
-
-        if (algorithmSkills.contains(skillId)) {
-            String configured = opening != null ? opening.getAlgorithmQuestion() : null;
-            return configured != null && !configured.isBlank()
-                ? configured
-                : DEFAULT_OPENING_QUESTION_ALGORITHM;
-        }
-        String configured = opening != null ? opening.getBackendQuestion() : null;
+        String configured = opening != null ? opening.getDefaultQuestion() : null;
         return configured != null && !configured.isBlank()
             ? configured
-            : DEFAULT_OPENING_QUESTION_BACKEND;
+            : DEFAULT_OPENING_QUESTION;
     }
 
     @Override
@@ -639,7 +627,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
 
             log.info("Getting LLM response for session {}, textLength={}", sessionId, userText.length());
 
-            VoiceInterviewSessionEntity sessionEntity = getSessionEntity(sessionId);
+            OralPracticeSessionEntity sessionEntity = getSessionEntity(sessionId);
             if (sessionEntity == null) {
                 log.error("Session entity not found for session {}, cannot generate LLM response", sessionId);
                 sendError(session, "会话不存在，请重新开始面试");
@@ -1244,7 +1232,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     /**
      * Get session entity from database
      */
-    private VoiceInterviewSessionEntity getSessionEntity(String sessionId) {
+    private OralPracticeSessionEntity getSessionEntity(String sessionId) {
         try {
             Long sessionIdLong = Long.parseLong(sessionId);
             return interviewService.getSession(sessionIdLong);

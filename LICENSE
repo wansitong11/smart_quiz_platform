@@ -1,3 +1,23 @@
+智能刷题平台（Smart Quiz Platform）
+Copyright (C) 2026 万思桐 (wansitong11)
+
+本程序基于开源项目 interview-guide（https://github.com/Snailclimb/interview-guide，
+Copyright (C) Snailclimb）二次开发，并保留了原项目的 GNU AGPL-3.0 许可。
+主要修改内容：将原「AI 面试官平台」改造为面向高中生的语文 / 数学 / 英语
+在线刷题与测评平台，替换了学科（Skills）与 Prompt 的业务语义，新增知识点标签、
+错题本、掌握度模型与个性化推题等教育功能，并调整了品牌与部署配置。
+详细修改说明见 README.md「来源与许可」章节。
+
+本程序是自由软件：你可以根据自由软件基金会发布的 GNU Affero 通用公共许可证
+（第 3 版或你选择的任何更新版本）的条款重新分发和/或修改它。
+
+本程序分发时希望它有用，但不提供任何担保，甚至不含适销性或特定用途适用性的
+默示担保。详情请参阅 GNU Affero 通用公共许可证。
+
+完整许可证原文如下。
+
+--------------------------------------------------------------------------------
+
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 

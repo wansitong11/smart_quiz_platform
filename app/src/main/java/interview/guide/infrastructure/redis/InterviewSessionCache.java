@@ -3,13 +3,13 @@ package interview.guide.infrastructure.redis;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
+import interview.guide.modules.interview.model.PaperTree;
 import interview.guide.modules.interview.model.InterviewSessionDTO.SessionStatus;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
-import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.Serializable;
@@ -53,8 +53,8 @@ public class InterviewSessionCache {
         private String resumeText;
         private Long resumeId;
         private Long knowledgeBaseId;
-        private String interviewCategory;
-        private String questionsJson;  // 序列化的问题列表
+        private String subjectCategory;
+        private String paperTreeJson;  // 序列化的试卷层级树：题目、层级与材料原文的唯一数据源
         private int currentIndex;
         private SessionStatus status;
 
@@ -62,29 +62,34 @@ public class InterviewSessionCache {
         }
 
         public CachedSession(String sessionId, String resumeText, Long resumeId, Long knowledgeBaseId,
-                            String interviewCategory,
-                            List<InterviewQuestionDTO> questions, int currentIndex,
+                            String subjectCategory,
+                            PaperTree paperTree, int currentIndex,
                             SessionStatus status, ObjectMapper objectMapper) {
             this.sessionId = sessionId;
             this.resumeText = resumeText;
             this.resumeId = resumeId;
             this.knowledgeBaseId = knowledgeBaseId;
-            this.interviewCategory = interviewCategory;
+            this.subjectCategory = subjectCategory;
             this.currentIndex = currentIndex;
             this.status = status;
             try {
-                this.questionsJson = objectMapper.writeValueAsString(questions);
+                this.paperTreeJson = paperTree.toJson(objectMapper);
             } catch (JacksonException e) {
-                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "序列化问题列表失败", e);
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "序列化试卷结构失败", e);
             }
         }
 
+        /**
+         * 扁平题目列表（从试卷层级树运行时派生）。
+         * 可变副本：作答链路会在其上写回答案，再通过
+         * {@link #updateQuestions(String, List)} 同步回树。
+         */
         public List<InterviewQuestionDTO> getQuestions(ObjectMapper objectMapper) {
-            try {
-                return objectMapper.readValue(questionsJson, new TypeReference<>() {});
-            } catch (JacksonException e) {
-                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "反序列化问题列表失败");
-            }
+            return getPaperTree(objectMapper).flattenQuestions();
+        }
+
+        public PaperTree getPaperTree(ObjectMapper objectMapper) {
+            return PaperTree.parse(objectMapper, paperTreeJson);
         }
     }
 
@@ -92,13 +97,13 @@ public class InterviewSessionCache {
      * 保存会话到缓存
      */
     public void saveSession(String sessionId, String resumeText, Long resumeId, Long knowledgeBaseId,
-                           String interviewCategory,
-                           List<InterviewQuestionDTO> questions, int currentIndex,
+                           String subjectCategory,
+                           PaperTree paperTree, int currentIndex,
                            SessionStatus status) {
         String key = buildSessionKey(sessionId);
         CachedSession cachedSession = new CachedSession(
-            sessionId, resumeText, resumeId, knowledgeBaseId, interviewCategory,
-            questions, currentIndex, status, objectMapper
+            sessionId, resumeText, resumeId, knowledgeBaseId, subjectCategory,
+            paperTree, currentIndex, status, objectMapper
         );
 
         redisService.set(key, cachedSession, SESSION_TTL);
@@ -156,17 +161,18 @@ public class InterviewSessionCache {
     }
 
     /**
-     * 更新问题列表（用于保存答案）
+     * 更新题目载荷（用于保存答案）。只替换树中的题目节点，层级与材料原文原样保留。
      */
     public void updateQuestions(String sessionId, List<InterviewQuestionDTO> questions) {
         getSession(sessionId).ifPresent(session -> {
             try {
-                session.setQuestionsJson(objectMapper.writeValueAsString(questions));
+                PaperTree updated = session.getPaperTree(objectMapper).withQuestions(questions);
+                session.setPaperTreeJson(updated.toJson(objectMapper));
                 String key = buildSessionKey(sessionId);
                 redisService.set(key, session, SESSION_TTL);
                 log.debug("更新会话问题: sessionId={}", sessionId);
             } catch (JacksonException e) {
-                log.error("序列化问题列表失败", e);
+                log.error("序列化试卷结构失败", e);
             }
         });
     }

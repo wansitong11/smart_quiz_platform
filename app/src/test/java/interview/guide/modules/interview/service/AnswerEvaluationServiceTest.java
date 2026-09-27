@@ -1,6 +1,7 @@
 package interview.guide.modules.interview.service;
 
 import interview.guide.common.evaluation.EvaluationReport;
+import interview.guide.common.evaluation.InterviewEvaluationProperties;
 import interview.guide.common.evaluation.UnifiedEvaluationService;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
@@ -41,7 +42,8 @@ class AnswerEvaluationServiceTest {
     AnswerEvaluationService service = new AnswerEvaluationService(
         unifiedEvaluationService,
         persistenceService,
-        skillService
+        skillService,
+        new ObjectiveAnswerGrader(new InterviewEvaluationProperties())
     );
     InterviewQuestionDTO question = InterviewQuestionDTO.fromQuestionBank(
         0,

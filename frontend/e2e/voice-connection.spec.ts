@@ -59,7 +59,7 @@ test.afterAll(async () => {
 
 test('语音面试通过当前应用地址完成真实 WebSocket 握手', async ({ page }) => {
   await page.route('https://cdn.jsdelivr.net/**', route => route.abort());
-  await page.goto(baseURL + '/voice-interview?skillId=java-backend&duration=15');
+  await page.goto(baseURL + '/voice-interview?skillId=chinese&duration=15');
   await expect(page.getByTestId('voice-recorder-toggle')).toBeEnabled();
   expect(handshake).toEqual({
     path: '/ws/voice-interview/42', host: new URL(baseURL).host, origin: baseURL,

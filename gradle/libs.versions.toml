@@ -2,7 +2,9 @@
 
 [versions]
 spring-boot = "4.1.0"
-springAi = "2.0.0"
+# 2.0.1 修复了流式工具调用的分片合并：改为按 tool call index 合并，
+# 兼容 DashScope / DeepSeek 这类「续传分片不带 id」的 OpenAI 兼容厂商
+springAi = "2.0.1"
 springAiAgentUtils = "0.10.0"
 tika = "2.9.2"
 lombok = "1.18.46"

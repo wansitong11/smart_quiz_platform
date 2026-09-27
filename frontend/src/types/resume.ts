@@ -1,11 +1,13 @@
-// 简历分析响应类型
+// 试卷 / 练习材料解析摘要（结构化切题结果概览）
 export interface ResumeAnalysisResponse {
-  overallScore: number;
-  scoreDetail: ScoreDetail;
+  id: number;
+  questionCount: number;
+  totalScore: number;
   summary: string;
-  strengths: string[];
-  suggestions: Suggestion[];
-  originalText: string;
+  analyzedAt: string;
+  practiceSessionId?: string | null;
+  topics: string[];
+  warnings: string[];
 }
 
 // 存储信息
@@ -21,28 +23,13 @@ export interface UploadResponse {
   resume?: {
     id: number;
     filename: string;
-    analyzeStatus: string;
+    analysisStatus: string;
   };
   storage: StorageInfo;
   /** 任务是否成功投递到异步队列；false 时简历已保存但状态为 FAILED，可重试 */
   enqueueAccepted: boolean;
   duplicate: boolean;
   message: string;
-}
-
-export interface ScoreDetail {
-  contentScore: number;      // 内容完整性 (0-25)
-  structureScore: number;    // 结构清晰度 (0-20)
-  skillMatchScore: number;   // 技能匹配度 (0-25)
-  expressionScore: number;   // 表达专业性 (0-15)
-  projectScore: number;      // 项目经验 (0-15)
-}
-
-export interface Suggestion {
-  category: string;         // 建议类别
-  priority: '高' | '中' | '低';
-  issue: string;            // 问题描述
-  recommendation: string;   // 具体建议
 }
 
 export interface ApiError {

@@ -187,7 +187,11 @@ public class KnowledgeBaseInterviewService {
             followUp.referenceAnswer(),
             followUp.keyPoints(),
             followUp.scoringRubric(),
-            entity.getSourceContext()
+            entity.getSourceContext(),
+            null,
+            null,
+            null,
+            null
         ));
       }
     }

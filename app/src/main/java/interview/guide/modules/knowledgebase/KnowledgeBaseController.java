@@ -54,8 +54,18 @@ public class KnowledgeBaseController {
     @GetMapping("/api/knowledgebase/list")
     public Result<List<KnowledgeBaseListItemDTO>> getAllKnowledgeBases(
             @RequestParam(value = "sortBy", required = false) String sortBy,
-            @RequestParam(value = "vectorStatus", required = false) String vectorStatus) {
-        
+            @RequestParam(value = "vectorStatus", required = false) String vectorStatus,
+            @RequestParam(value = "categoryCode", required = false) String categoryCode,
+            @RequestParam(value = "uncategorized", required = false) Boolean uncategorized) {
+
+        // 按分类筛选（categoryCode 为空且未指定 uncategorized 时返回全部）
+        if (Boolean.TRUE.equals(uncategorized)) {
+            return Result.success(listService.listByCategory(null));
+        }
+        if (categoryCode != null && !categoryCode.isBlank()) {
+            return Result.success(listService.listByCategory(categoryCode));
+        }
+
         VectorStatus status = null;
         if (vectorStatus != null && !vectorStatus.isBlank()) {
             try {
@@ -110,38 +120,14 @@ public class KnowledgeBaseController {
         return queryService.answerQuestionStream(request.knowledgeBaseIds(), request.question());
     }
 
-    // ========== 分类管理 API ==========
+    // ========== 分类管理 API（分类本身见 KbCategoryController） ==========
 
     /**
-     * 获取所有分类
-     */
-    @GetMapping("/api/knowledgebase/categories")
-    public Result<List<String>> getAllCategories() {
-        return Result.success(listService.getAllCategories());
-    }
-
-    /**
-     * 根据分类获取知识库列表
-     */
-    @GetMapping("/api/knowledgebase/category/{category}")
-    public Result<List<KnowledgeBaseListItemDTO>> getByCategory(@PathVariable String category) {
-        return Result.success(listService.listByCategory(category));
-    }
-
-    /**
-     * 获取未分类的知识库
-     */
-    @GetMapping("/api/knowledgebase/uncategorized")
-    public Result<List<KnowledgeBaseListItemDTO>> getUncategorized() {
-        return Result.success(listService.listByCategory(null));
-    }
-
-    /**
-     * 更新知识库分类
+     * 更新知识库分类（categoryCode 为空表示「未分类」）
      */
     @PutMapping("/api/knowledgebase/{id}/category")
     public Result<Void> updateCategory(@PathVariable Long id, @RequestBody Map<String, String> body) {
-        listService.updateCategory(id, body.get("category"));
+        listService.updateCategory(id, body.get("categoryCode"));
         return Result.success(null);
     }
 
@@ -156,8 +142,8 @@ public class KnowledgeBaseController {
     public Result<Map<String, Object>> uploadKnowledgeBase(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "name", required = false) String name,
-            @RequestParam(value = "category", required = false) String category) {
-        return Result.success(uploadService.uploadKnowledgeBase(file, name, category));
+            @RequestParam(value = "categoryCode", required = false) String categoryCode) {
+        return Result.success(uploadService.uploadKnowledgeBase(file, name, categoryCode));
     }
 
     /**

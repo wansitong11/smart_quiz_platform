@@ -77,7 +77,11 @@ class KnowledgeBaseQueryServiceTest {
         listService,
         countService,
         properties,
-        resourceLoader
+        resourceLoader,
+        null,
+        null,
+        null,
+        null
     );
   }
 
@@ -170,7 +174,7 @@ class KnowledgeBaseQueryServiceTest {
       properties.setMetricsEnabled(true);
       RagMetrics ragMetrics = new RagMetrics(provider, properties);
       return new KnowledgeBaseQueryService(llmProviderRegistry, ragMetrics, vectorService, listService,
-          countService, properties, resourceLoader);
+          countService, properties, resourceLoader, null, null, null, null);
     }
 
     @Test
@@ -239,9 +243,10 @@ class KnowledgeBaseQueryServiceTest {
     }
 
     @Test
-    @DisplayName("同步计数前置异常：仍记录 error 与 total，且只记录一次")
+    @DisplayName("同步计数异常（检索之后归位计数）：仍记录 error 与已发生的阶段，且只记一次")
     void syncCountFailureStillRecordsError() throws Exception {
       service = buildMetricsService();
+      stubDocuments();
       org.mockito.Mockito.doThrow(new IllegalStateException("db down"))
           .when(countService).updateQuestionCounts(anyList());
 
@@ -253,7 +258,7 @@ class KnowledgeBaseQueryServiceTest {
           .isEqualTo("error");
       assertThat(meterRegistry.get(RagMetrics.STAGE_DURATION).timers())
           .extracting(timer -> timer.getId().getTag("stage"))
-          .containsExactly("total");
+          .containsExactlyInAnyOrder("rewrite", "retrieve", "total");
     }
 
     @Test
@@ -387,7 +392,7 @@ class KnowledgeBaseQueryServiceTest {
       KnowledgeBaseQueryProperties properties = new KnowledgeBaseQueryProperties();
       properties.getSearch().setMergeOriginalQuery(true);
       return new KnowledgeBaseQueryService(llmProviderRegistry, ragMetrics, vectorService, listService,
-          countService, properties, resourceLoader);
+          countService, properties, resourceLoader, null, null, null, null);
     }
 
     private List<RagQueryExecution> answerCollect(KnowledgeBaseQueryService svc, String question)

@@ -23,14 +23,14 @@ public record CreateInterviewRequest(
 
     String llmProvider,     // LLM提供商
 
-    @NotBlank(message = "面试主题不能为空")
-    String skillId,         // 面试主题 ID（如 java-backend, frontend, custom 等）
+    @NotBlank(message = "练习学科不能为空")
+    String skillId,         // 学科 / 自定义练习 ID（如 chinese, math, english, custom 等）
 
     String difficulty,      // 难度级别: junior / mid / senior
 
-    List<CategoryDTO> customCategories,   // 自定义面试的分类（JD 解析结果）
+    List<CategoryDTO> customCategories,   // 自定义练习的分类（考纲 / 资料解析结果）
 
-    String jdText,                         // JD 原文（自定义面试时作为出题依据）
+    String jdText,                         // 考纲 / 资料原文（自定义练习时作为出题依据）
 
     String requestId                       // 创建请求幂等键，刷新/重试时复用同一会话
 ) {}

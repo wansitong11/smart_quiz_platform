@@ -161,9 +161,9 @@ export default function HistoryList({ onSelectResume }: HistoryListProps) {
   // 待处理判断：显式的 PENDING/PROCESSING 状态，或状态未定义且无分数
   useEffect(() => {
     const hasPendingItems = resumes.some(
-      r => r.analyzeStatus === 'PENDING' ||
-        r.analyzeStatus === 'PROCESSING' ||
-        (r.analyzeStatus === undefined && r.latestScore === undefined)
+      r => r.analysisStatus === 'PENDING' ||
+        r.analysisStatus === 'PROCESSING' ||
+        (r.analysisStatus === undefined && r.latestScore === undefined)
     );
 
     if (hasPendingItems && !loading) {
@@ -357,9 +357,9 @@ export default function HistoryList({ onSelectResume }: HistoryListProps) {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
-                        <StatusIcon status={resume.analyzeStatus} hasScore={resume.latestScore !== undefined} />
+                        <StatusIcon status={resume.analysisStatus} hasScore={resume.latestScore !== undefined} />
                         <span className="text-sm text-slate-600">
-                          {getStatusText(resume.analyzeStatus, resume.latestScore !== undefined)}
+                          {getStatusText(resume.analysisStatus, resume.latestScore !== undefined)}
                         </span>
                       </div>
                     </td>
@@ -407,7 +407,7 @@ export default function HistoryList({ onSelectResume }: HistoryListProps) {
                           </button>
                         )}
                         {/* 重新分析按钮（仅 FAILED 状态显示） */}
-                        {resume.analyzeStatus === 'FAILED' && (
+                        {resume.analysisStatus === 'FAILED' && (
                           <button
                             onClick={(e) => handleReanalyze(resume.id, e)}
                             disabled={reanalyzingId === resume.id}

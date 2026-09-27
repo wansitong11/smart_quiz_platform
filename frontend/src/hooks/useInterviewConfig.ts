@@ -7,13 +7,13 @@ export type InterviewMode = 'text' | 'voice';
 export type Difficulty = 'junior' | 'mid' | 'senior';
 
 export const DIFFICULTY_OPTIONS: { value: Difficulty; label: string; desc: string }[] = [
-  { value: 'junior', label: '校招', desc: '0-1 年' },
-  { value: 'mid', label: '中级', desc: '1-3 年' },
-  { value: 'senior', label: '高级', desc: '3 年+' },
+  { value: 'junior', label: '基础', desc: '课本同步' },
+  { value: 'mid', label: '中等', desc: '常规考点' },
+  { value: 'senior', label: '综合', desc: '高考难度' },
 ];
 
 export const CUSTOM_SKILL_ID = 'custom';
-export const DEFAULT_SKILL_ID = 'java-backend';
+export const DEFAULT_SKILL_ID = 'chinese';
 export const DEFAULT_LLM_PROVIDER = '';
 export const MIN_JD_LENGTH = 50;
 

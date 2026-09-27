@@ -26,6 +26,13 @@ public enum ErrorCode {
     RESUME_FILE_TYPE_NOT_SUPPORTED(2006, "不支持的文件类型"),
     RESUME_ANALYSIS_FAILED(2007, "简历分析失败"),
     RESUME_ANALYSIS_NOT_FOUND(2008, "简历分析结果不存在"),
+
+    // ========== 试卷 / 练习材料模块错误 201x（原简历模块语义迁移） ==========
+    PAPER_NOT_FOUND(2010, "试卷不存在"),
+    PAPER_PARSE_FAILED(2011, "试卷解析失败"),
+    PAPER_EXTRACTION_FAILED(2012, "试卷切题失败"),
+    PAPER_EXTRACTION_NOT_FOUND(2013, "试卷解析结果不存在"),
+    PAPER_NO_QUESTION_FOUND(2014, "未从材料中识别到题目"),
     
     // ========== 面试模块错误 3xxx ==========
     INTERVIEW_SESSION_NOT_FOUND(3001, "面试会话不存在"),

@@ -4,8 +4,8 @@ const file = (name: string) => ({ name, mimeType: 'text/plain', buffer: Buffer.f
 const row = (page: Page, name: string) => page.locator('section .divide-y > div')
   .filter({ has: page.getByText(name, { exact: true }) });
 const success = (route: Route, data: unknown) => route.fulfill({ json: { code: 200, message: 'success', data } });
-const result = (id: number, analyzeStatus: string, extra = {}) => ({
-  resume: { id, filename: '简历.txt', analyzeStatus },
+const result = (id: number, analysisStatus: string, extra = {}) => ({
+  resume: { id, filename: '简历.txt', analysisStatus },
   storage: { resumeId: id }, enqueueAccepted: true, duplicate: false, message: '', ...extra,
 });
 
@@ -18,8 +18,8 @@ test('批量简历保留各自分析状态，兼容历史重复响应，并按�
     if (uploads === 2) return success(route, { storage: { resumeId: 2 }, analysis: { overallScore: 85 }, duplicate: true });
     return success(route, result(3, 'FAILED', { enqueueAccepted: false, message: '简历已保存，但分析任务投递失败，请稍后重试' }));
   });
-  await page.route('**/api/resumes/1/detail', route => success(route, { id: 1, analyzeStatus: 'COMPLETED' }));
-  await page.route('**/api/resumes/3/detail', route => success(route, { id: 3, analyzeStatus: 'COMPLETED' }));
+  await page.route('**/api/resumes/1/detail', route => success(route, { id: 1, analysisStatus: 'COMPLETED' }));
+  await page.route('**/api/resumes/3/detail', route => success(route, { id: 3, analysisStatus: 'COMPLETED' }));
   await page.route('**/api/resumes/3/reanalyze', route => { retries++; return success(route, null); });
   await page.goto('/upload');
   await page.locator('input[type=file]').setInputFiles([file('new.txt'), file('duplicate.txt'), file('failed.txt')]);
@@ -103,10 +103,10 @@ test('慢分析查询不阻塞其他简历，失败原因来自详情接口', as
   await page.route('**/api/resumes/upload', route => success(route, result(++uploads, 'PENDING')));
   await page.route('**/api/resumes/1/detail', async route => {
     await gate;
-    await success(route, { id: 1, analyzeStatus: 'COMPLETED' });
+    await success(route, { id: 1, analysisStatus: 'COMPLETED' });
   });
   await page.route('**/api/resumes/2/detail', route => success(route, {
-    id: 2, analyzeStatus: 'FAILED', analyzeError: '分析服务暂时不可用',
+    id: 2, analysisStatus: 'FAILED', analysisError: '分析服务暂时不可用',
   }));
   try {
     await page.goto('/upload');
@@ -127,7 +127,7 @@ test('已有历史分析时仍尊重当前处理状态，重新分析失败可�
     duplicate: true, analysis: { overallScore: 90 },
   })));
   await page.route('**/api/resumes/7/detail', route => success(route, {
-    id: 7, analyzeStatus: retries > 1 ? 'COMPLETED' : 'FAILED', analyzeError: '当前分析失败',
+    id: 7, analysisStatus: retries > 1 ? 'COMPLETED' : 'FAILED', analysisError: '当前分析失败',
   }));
   await page.route('**/api/resumes/7/reanalyze', route => {
     retries++;

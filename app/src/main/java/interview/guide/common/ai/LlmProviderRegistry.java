@@ -21,6 +21,7 @@ import org.springframework.ai.chat.client.advisor.ToolCallingAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.OpenAiChatModel;
@@ -57,6 +58,7 @@ public class LlmProviderRegistry {
     private final ToolCallingManager toolCallingManager;
     private final ObservationRegistry observationRegistry;
     private final ToolCallback interviewSkillsToolCallback;
+    private final ChatMemory chatMemory;
     private static final Map<String, String> RECOMMENDED_EMBEDDING_MODELS = Map.of(
         "dashscope", "text-embedding-v3",
         "glm", "embedding-3",
@@ -73,7 +75,8 @@ public class LlmProviderRegistry {
             ApiKeyEncryptionService encryptionService,
             @Autowired(required = false) ToolCallingManager toolCallingManager,
             @Autowired(required = false) ObservationRegistry observationRegistry,
-            @Autowired(required = false) @Qualifier("interviewSkillsToolCallback") ToolCallback interviewSkillsToolCallback) {
+            @Autowired(required = false) @Qualifier("interviewSkillsToolCallback") ToolCallback interviewSkillsToolCallback,
+            @Autowired(required = false) ChatMemory chatMemory) {
         this.properties = properties;
         this.providerRepository = providerRepository;
         this.globalSettingRepository = globalSettingRepository;
@@ -81,6 +84,7 @@ public class LlmProviderRegistry {
         this.toolCallingManager = toolCallingManager;
         this.observationRegistry = observationRegistry;
         this.interviewSkillsToolCallback = interviewSkillsToolCallback;
+        this.chatMemory = chatMemory;
     }
 
     public LlmProviderRegistry(
@@ -88,7 +92,8 @@ public class LlmProviderRegistry {
             ToolCallingManager toolCallingManager,
             ObservationRegistry observationRegistry,
             ToolCallback interviewSkillsToolCallback) {
-        this(properties, null, null, null, toolCallingManager, observationRegistry, interviewSkillsToolCallback);
+        this(properties, null, null, null, toolCallingManager, observationRegistry,
+            interviewSkillsToolCallback, null);
     }
 
     /**
@@ -147,6 +152,19 @@ public class LlmProviderRegistry {
     public ChatClient getVoiceChatClient(String providerId) {
         String id = resolveProviderId(providerId);
         return clientCache.computeIfAbsent(id + ":voice", key -> createVoiceChatClient(id));
+    }
+
+    /**
+     * 获取「工具型 Agent」ChatClient：只挂工具调用 Advisor（支持流式）+ 安全兜底。
+     * <p>
+     * 与 {@link #getChatClient(String)} 的区别：不挂 SkillsTool、不挂记忆 Advisor——
+     * 资料问答场景的工具由调用方按请求注入（工具需要会话上下文），
+     * 历史由后端显式管理，避免两套记忆互相干扰。
+     * </p>
+     */
+    public ChatClient getAgentChatClient(String providerId) {
+        String id = resolveProviderId(providerId);
+        return clientCache.computeIfAbsent(id + ":agent", key -> createAgentChatClient(id));
     }
 
     /**
@@ -212,6 +230,60 @@ public class LlmProviderRegistry {
         }
         log.info("[LlmProviderRegistry] Created voice ChatClient (SkillsTool + streaming ToolCall) for {}", providerId);
         return builder.build();
+    }
+
+    /**
+     * 工具型 Agent 客户端：流式工具调用 + 安全兜底，工具由调用方按请求注入。
+     * <p>
+     * 另外挂 {@link MessageChatMemoryAdvisor}：对话上下文由 Spring AI 的 ChatMemory
+     * 统一注入（仓储是只读的 {@code ragChatMemoryRepository}，落库仍由业务侧负责）。
+     * </p>
+     */
+    private ChatClient createAgentChatClient(String providerId) {
+        OpenAiChatModel chatModel = getChatModel(providerId);
+
+        ChatClient.Builder builder = ChatClient.builder(chatModel);
+        List<Advisor> advisors = new ArrayList<>();
+        if (toolCallingManager != null) {
+            advisors.add(buildToolCallAdvisor(true));
+        } else {
+            log.warn("[LlmProviderRegistry] Agent client built without ToolCallingManager, provider={}", providerId);
+        }
+        buildChatMemoryAdvisor().ifPresent(advisors::add);
+        buildSafeGuardAdvisor().ifPresent(advisors::add);
+        if (!advisors.isEmpty()) {
+            builder.defaultAdvisors(advisors);
+        }
+        log.info("[LlmProviderRegistry] Created agent ChatClient (streaming tools + chat memory) for {}", providerId);
+        return builder.build();
+    }
+
+    /**
+     * 对话记忆 advisor：Spring AI 的 ChatMemory Bean 可用时才挂。
+     * <p>
+     * ChatMemory 由官方自动配置（{@code ChatMemoryAutoConfiguration}）构建：
+     * 它发现有自定义的 {@code ChatMemoryRepository}（本项目是只读适配
+     * {@code ragChatMemoryRepository}）就直接用，不再创建内存版实现。
+     * </p>
+     * <p>
+     * <b>为什么不像 {@link #buildDefaultAdvisors} 那样在这里 new 一个
+     * {@code MessageWindowChatMemory}</b>：
+     * <ul>
+     *   <li>{@code MessageWindowChatMemory.get()} 不做裁剪，裁剪只发生在 {@code add()}
+     *       之后回写仓储；本项目的对话消息由业务侧写入（仓储是只读的），
+     *       所以这里的 maxMessages 对读取路径是无效的——窗口只能由读取侧负责
+     *       （已在 {@code RagChatMemoryRepository} 里按 {@code chat-memory-max-messages} 裁剪）；</li>
+     *   <li>若在这里再 new 一个（尤其是 {@link #buildDefaultAdvisors} 那种不传仓储的写法），
+     *       会退回内存仓储：重启丢历史，且与数据库里的会话记录形成两份状态。</li>
+     * </ul>
+     * 结论：记忆实例交给自动配置，窗口单一归属「仓储」。
+     * </p>
+     */
+    private Optional<Advisor> buildChatMemoryAdvisor() {
+        if (chatMemory == null) {
+            return Optional.empty();
+        }
+        return Optional.of(MessageChatMemoryAdvisor.builder(chatMemory).build());
     }
 
     private OpenAiChatModel getChatModel(String providerId) {

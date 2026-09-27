@@ -42,6 +42,18 @@ public class RagChatSessionEntity {
     private SessionStatus status = SessionStatus.ACTIVE;
 
     /**
+     * 检索范围：ALL（全部资料）/ CATEGORY（按分类）/ SELECTED（指定资料）
+     */
+    @Column(name = "kb_scope", length = 16, nullable = false)
+    private String kbScope = RagScopeKind.ALL.name();
+
+    /**
+     * 按分类检索时的分类 code（仅 kbScope = CATEGORY 有效）
+     */
+    @Column(name = "kb_category", length = 64)
+    private String kbCategory;
+
+    /**
      * 多对多：会话关联的知识库
      */
     @ManyToMany(fetch = FetchType.LAZY)
@@ -122,5 +134,19 @@ public class RagChatSessionEntity {
         return knowledgeBases.stream()
             .map(KnowledgeBaseEntity::getId)
             .toList();
+    }
+
+    /**
+     * 范围类型（空值按全部资料处理）
+     */
+    public RagScopeKind scopeKind() {
+        if (kbScope == null || kbScope.isBlank()) {
+            return RagScopeKind.ALL;
+        }
+        try {
+            return RagScopeKind.valueOf(kbScope.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return RagScopeKind.ALL;
+        }
     }
 }

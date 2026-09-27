@@ -46,13 +46,16 @@ class KnowledgeBaseUploadServiceTest {
   private FileHashService fileHashService;
   @Mock
   private VectorizeStreamProducer vectorizeStreamProducer;
+  @Mock
+  private KbCategoryService categoryService;
 
   private KnowledgeBaseUploadService service;
 
   @BeforeEach
   void setUp() {
     service = new KnowledgeBaseUploadService(parseService, persistenceService, storageService,
-        knowledgeBaseRepository, fileValidationService, fileHashService, vectorizeStreamProducer);
+        knowledgeBaseRepository, fileValidationService, fileHashService, vectorizeStreamProducer,
+        categoryService);
   }
 
   @Test

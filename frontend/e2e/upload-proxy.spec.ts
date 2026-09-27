@@ -21,7 +21,7 @@ test.beforeAll(async () => {
     }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ code: 200, message: 'success', data: {
-      resume: { id: 1, analyzeStatus: 'COMPLETED' },
+      resume: { id: 1, analysisStatus: 'COMPLETED' },
       knowledgeBase: { id: 1, vectorStatus: 'COMPLETED' },
     } }));
   });

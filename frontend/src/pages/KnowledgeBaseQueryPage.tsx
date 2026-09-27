@@ -4,7 +4,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {Virtuoso, type VirtuosoHandle} from 'react-virtuoso';
 import {knowledgeBaseApi, type KnowledgeBaseItem, type SortOption} from '../api/knowledgebase';
-import {ragChatApi, type RagChatSessionListItem} from '../api/ragChat';
+import {kbCategoryApi, type KbCategory} from '../api/kbCategory';
+import {ragChatApi, type RagChatSessionListItem, type RagScope} from '../api/ragChat';
 import {formatDateOnly} from '../utils/date';
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
 import CodeBlock from '../components/CodeBlock';
@@ -31,7 +32,11 @@ interface CategoryGroup {
 export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBaseQueryPageProps) {
   // 知识库状态
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
+  const [categories, setCategories] = useState<KbCategory[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<Set<number>>(new Set());
+  // 检索范围：默认「全部资料」，也可以只查某个分类或指定资料
+  const [scopeKind, setScopeKind] = useState<RagScope>('ALL');
+  const [scopeCategoryCode, setScopeCategoryCode] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(true);
 
   // 搜索和排序状态
@@ -64,6 +69,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
 
   useEffect(() => {
     loadKnowledgeBases();
+    loadCategories();
     loadSessions();
   }, []);
 
@@ -83,6 +89,51 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
       console.error('加载知识库列表失败', err);
     } finally {
       setLoadingList(false);
+    }
+  };
+
+  /** 分类只用于「按分类检索」与分组展示，不含「未分类」占位行 */
+  const loadCategories = async () => {
+    try {
+      const list = await kbCategoryApi.list();
+      setCategories(list.filter(item => item.code));
+    } catch (err) {
+      console.error('加载资料分类失败', err);
+    }
+  };
+
+  /** 范围是否可发起提问 */
+  const isScopeReady = scopeKind === 'ALL'
+    || (scopeKind === 'CATEGORY' && Boolean(scopeCategoryCode))
+    || (scopeKind === 'SELECTED' && selectedKbIds.size > 0);
+
+  /** 范围描述（未创建会话时按当前选择展示） */
+  const scopeDescription = (() => {
+    if (scopeKind === 'ALL') return '全部资料';
+    if (scopeKind === 'CATEGORY') {
+      const name = categories.find(item => item.code === scopeCategoryCode)?.name;
+      return name ? `分类：${name}` : '未选择分类';
+    }
+    return selectedKbIds.size > 0 ? `${selectedKbIds.size} 份指定资料` : '未选择资料';
+  })();
+
+  /** 切换范围：已有会话时同步更新到服务端，之后的提问立即按新范围检索 */
+  const applyScope = async (next: { kind: RagScope; categoryCode?: string | null }) => {
+    setScopeKind(next.kind);
+    if (next.kind === 'CATEGORY') {
+      setScopeCategoryCode(next.categoryCode ?? null);
+    }
+    const request = {
+      scope: next.kind,
+      categoryCode: next.kind === 'CATEGORY' ? (next.categoryCode ?? null) : null,
+      knowledgeBaseIds: next.kind === 'SELECTED' ? Array.from(selectedKbIds) : [],
+    };
+    if (currentSessionId) {
+      try {
+        await ragChatApi.updateScope(currentSessionId, request);
+      } catch (err) {
+        console.error('切换检索范围失败', err);
+      }
     }
   };
 
@@ -156,20 +207,21 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
   };
 
   const handleToggleKb = (kbId: number) => {
-    setSelectedKbIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(kbId)) {
-        newSet.delete(kbId);
-      } else {
-        newSet.add(kbId);
-      }
-      if (newSet.size !== prev.size && currentSessionId) {
-        setCurrentSessionId(null);
-        setCurrentSessionTitle('');
-        setMessages([]);
-      }
-      return newSet;
-    });
+    const next = new Set(selectedKbIds);
+    if (next.has(kbId)) {
+      next.delete(kbId);
+    } else {
+      next.add(kbId);
+    }
+    setSelectedKbIds(next);
+    setScopeKind('SELECTED');
+    // 已有会话时把新范围同步到服务端，下一句提问立即生效
+    if (currentSessionId) {
+      ragChatApi.updateScope(currentSessionId, {
+        scope: 'SELECTED',
+        knowledgeBaseIds: Array.from(next),
+      }).catch(err => console.error('切换检索范围失败', err));
+    }
   };
 
   const handleNewSession = () => {
@@ -183,6 +235,8 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
       const detail = await ragChatApi.getSessionDetail(sessionId);
       setCurrentSessionId(detail.id);
       setCurrentSessionTitle(detail.title);
+      setScopeKind(detail.scope ?? 'ALL');
+      setScopeCategoryCode(detail.categoryCode ?? null);
       setSelectedKbIds(new Set(detail.knowledgeBases.map(kb => kb.id)));
       setMessages(detail.messages.map(m => ({
         id: m.id,
@@ -255,7 +309,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
   };
 
   const handleSubmitQuestion = async () => {
-    if (!question.trim() || selectedKbIds.size === 0 || loading) return;
+    if (!question.trim() || !isScopeReady || loading) return;
 
     const userQuestion = question.trim();
     setQuestion('');
@@ -264,7 +318,11 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     let sessionId = currentSessionId;
     if (!sessionId) {
       try {
-        const session = await ragChatApi.createSession(Array.from(selectedKbIds));
+        const session = await ragChatApi.createSession({
+          scope: scopeKind,
+          categoryCode: scopeKind === 'CATEGORY' ? scopeCategoryCode : null,
+          knowledgeBaseIds: scopeKind === 'SELECTED' ? Array.from(selectedKbIds) : [],
+        });
         sessionId = session.id;
         setCurrentSessionId(sessionId);
         setCurrentSessionTitle(session.title);
@@ -394,11 +452,11 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
               <h2 className="text-base font-semibold text-slate-800 dark:text-white">对话历史</h2>
               <motion.button
                 onClick={handleNewSession}
-                disabled={selectedKbIds.size === 0}
+                disabled={!isScopeReady}
                 className="p-1.5 text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                title="新建对话"
+                title={isScopeReady ? '新建对话' : '请先在右侧选择分类或资料'}
               >
                 <Plus className="w-5 h-5" />
               </motion.button>
@@ -485,21 +543,25 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
         <div className="flex-1 min-w-0">
           <div
               className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm flex flex-col h-full border border-slate-100 dark:border-slate-700">
-            {selectedKbIds.size > 0 ? (
+            {isScopeReady ? (
               <>
                 {/* 会话信息 */}
                 <div className="p-4 border-b border-slate-200 dark:border-slate-600">
                   <h2 className="text-base font-semibold text-slate-800 dark:text-white">
-                    {currentSessionTitle || (selectedKbIds.size === 1
+                    {currentSessionTitle || (scopeKind === 'SELECTED' && selectedKbIds.size === 1
                       ? knowledgeBases.find(kb => kb.id === Array.from(selectedKbIds)[0])?.name || '新对话'
-                      : `${selectedKbIds.size} 个知识库 - 新对话`)}
+                      : '新对话')}
                   </h2>
                   <div className="flex flex-wrap gap-1.5 mt-2">
-                    {Array.from(selectedKbIds).map(kbId => {
+                    <span
+                      className="px-2 py-0.5 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 text-xs rounded-full">
+                      检索范围：{scopeDescription}
+                    </span>
+                    {scopeKind === 'SELECTED' && Array.from(selectedKbIds).map(kbId => {
                       const kb = knowledgeBases.find(k => k.id === kbId);
                       return kb ? (
-                          <span key={kbId}
-                                className="px-2 py-0.5 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 text-xs rounded-full">
+                        <span key={kbId}
+                              className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs rounded-full">
                           {kb.name}
                         </span>
                       ) : null;
@@ -513,7 +575,12 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                       <div
                           className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500">
                       <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                      <p className="text-sm">开始提问吧！</p>
+                      <p className="text-sm">
+                        新对话 · 当前范围：{scopeDescription}
+                      </p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+                        直接输入问题即可，这条对话会自动出现在左侧「对话历史」
+                      </p>
                     </div>
                   ) : (
                     <Virtuoso
@@ -584,6 +651,10 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
 
                 {/* 输入区域 */}
                 <div className="p-4 border-t border-slate-200 dark:border-slate-600">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+                    检索范围：<span className="font-medium text-slate-700 dark:text-slate-200">{scopeDescription}</span>
+                    <span className="text-slate-400"> · 在右侧可切换</span>
+                  </p>
                   <div className="flex gap-3">
                     <input
                       type="text"
@@ -596,7 +667,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                     />
                     <motion.button
                       onClick={handleSubmitQuestion}
-                      disabled={!question.trim() || selectedKbIds.size === 0 || loading}
+                      disabled={!question.trim() || !isScopeReady || loading}
                       className="px-5 py-2.5 bg-primary-500 text-white rounded-xl font-medium hover:bg-primary-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                       whileHover={{ scale: loading ? 1 : 1.02 }}
                       whileTap={{ scale: loading ? 1 : 0.98 }}
@@ -612,7 +683,11 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                   <svg className="w-12 h-12 mx-auto mb-3 opacity-50" viewBox="0 0 24 24" fill="none">
                     <path d="M21 15C21 15.5304 20.7893 16.0391 20.4142 16.4142C20.0391 16.7893 19.5304 17 19 17H7L3 21V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H19C19.5304 3 20.0391 3.21071 20.4142 3.58579C20.7893 3.96086 21 4.46957 21 5V15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  <p className="text-sm">请先在右侧选择知识库</p>
+                  <p className="text-sm">
+                    {scopeKind === 'CATEGORY'
+                      ? '请先在右侧选择一个分类'
+                      : '请先在右侧勾选资料，或切换到「全部资料」'}
+                  </p>
                 </div>
               </div>
             )}
@@ -674,6 +749,44 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                     <option value="access">访问排序</option>
                     <option value="question">提问排序</option>
                   </select>
+                </div>
+
+                {/* 检索范围：全部资料 / 按分类 / 指定资料 */}
+                <div className="mb-3 space-y-1.5">
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">检索范围</p>
+                  <button
+                    onClick={() => applyScope({ kind: 'ALL' })}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${scopeKind === 'ALL'
+                      ? 'bg-primary-50 dark:bg-primary-900/30 border border-primary-500 text-primary-700 dark:text-primary-300'
+                      : 'border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    全部资料
+                    <span className="ml-2 text-xs text-slate-400">{knowledgeBases.length} 份可用</span>
+                  </button>
+                  {categories.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {categories.map(category => (
+                        <button
+                          key={category.code}
+                          onClick={() => applyScope({ kind: 'CATEGORY', categoryCode: category.code })}
+                          title={category.pendingVectorCount > 0
+                            ? `${category.name}（${category.pendingVectorCount} 份未向量化）`
+                            : category.name}
+                          className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${scopeKind === 'CATEGORY' && scopeCategoryCode === category.code
+                            ? 'bg-primary-50 dark:bg-primary-900/30 border border-primary-500 text-primary-700 dark:text-primary-300'
+                            : 'border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          {category.name}
+                          <span className="ml-1 text-slate-400">{category.knowledgeBaseCount}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-400">
+                    {scopeKind === 'SELECTED' ? '按下方勾选资料检索' : '勾选下方资料可切换为「指定资料」'}
+                  </p>
                 </div>
 
                 {/* 知识库列表 */}

@@ -46,20 +46,52 @@ public interface KnowledgeBaseRepository extends JpaRepository<KnowledgeBaseEnti
     List<KnowledgeBaseEntity> findAllByOrderByUploadedAtDesc();
 
     /**
-     * 获取所有不同的分类
+     * 根据分类 code 查找知识库
      */
-    @Query("SELECT DISTINCT k.category FROM KnowledgeBaseEntity k WHERE k.category IS NOT NULL ORDER BY k.category")
-    List<String> findAllCategories();
-
-    /**
-     * 根据分类查找知识库
-     */
-    List<KnowledgeBaseEntity> findByCategoryOrderByUploadedAtDesc(String category);
+    List<KnowledgeBaseEntity> findByCategoryCodeOrderByUploadedAtDesc(String categoryCode);
 
     /**
      * 查找未分类的知识库
      */
-    List<KnowledgeBaseEntity> findByCategoryIsNullOrderByUploadedAtDesc();
+    List<KnowledgeBaseEntity> findByCategoryCodeIsNullOrderByUploadedAtDesc();
+
+    /**
+     * 分类下的资料 ID（检索范围解析用）：只取已完成向量化的
+     */
+    @Query("SELECT k.id FROM KnowledgeBaseEntity k WHERE k.categoryCode = :categoryCode "
+        + "AND k.vectorStatus = :vectorStatus ORDER BY k.uploadedAt DESC")
+    List<Long> findIdsByCategoryCodeAndVectorStatus(@Param("categoryCode") String categoryCode,
+                                                     @Param("vectorStatus") VectorStatus vectorStatus);
+
+    /**
+     * 分类下全部资料（不限向量化状态），用于范围校验与提示
+     */
+    List<KnowledgeBaseEntity> findByCategoryCode(String categoryCode);
+
+    /**
+     * 各分类的资料数
+     */
+    @Query("SELECT k.categoryCode, COUNT(k) FROM KnowledgeBaseEntity k "
+        + "WHERE k.categoryCode IS NOT NULL GROUP BY k.categoryCode")
+    List<Object[]> countGroupByCategoryCode();
+
+    /**
+     * 各分类中未完成向量化的资料数
+     */
+    @Query("SELECT k.categoryCode, COUNT(k) FROM KnowledgeBaseEntity k "
+        + "WHERE k.categoryCode IS NOT NULL AND k.vectorStatus <> :completed GROUP BY k.categoryCode")
+    List<Object[]> countPendingGroupByCategoryCode(@Param("completed") VectorStatus completed);
+
+    long countByCategoryCode(String categoryCode);
+
+    long countByCategoryCodeIsNull();
+
+    @Query("SELECT COUNT(k) FROM KnowledgeBaseEntity k WHERE k.categoryCode IS NULL AND k.vectorStatus <> :completed")
+    long countUncategorizedPending(@Param("completed") VectorStatus completed);
+
+    @Query("UPDATE KnowledgeBaseEntity k SET k.categoryCode = :categoryCode WHERE k.categoryCode = :oldCode")
+    @Modifying
+    int reassignCategory(@Param("oldCode") String oldCode, @Param("categoryCode") String categoryCode);
 
     /**
      * 按名称或文件名模糊搜索（不区分大小写）

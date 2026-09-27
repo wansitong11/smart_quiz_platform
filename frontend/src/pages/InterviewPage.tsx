@@ -63,7 +63,7 @@ export default function Interview({
 
   const questionCount = initialConfig?.questionCount ?? 8;
   const llmProvider = initialConfig?.llmProvider ?? '';
-  const skillId = initialConfig?.skillId ?? 'java-backend';
+  const skillId = initialConfig?.skillId ?? 'chinese';
   const difficulty = initialConfig?.difficulty ?? 'mid';
   const customCategories = initialConfig?.customCategories;
   const jdText = initialConfig?.jdText;
@@ -237,7 +237,7 @@ export default function Interview({
             <button
               onClick={() => {
                 // 重试应按入口类型走对应路径：恢复失败必须重试恢复，
-                // 否则会用 resumeText="" 创建一个新的默认 java-backend 普通面试，
+                // 否则会用 resumeText="" 创建一个新的默认学科的普通练习，
                 // 知识库面试场景下会让用户从错误页面突然跳进无关会话
                 const entry = resolveInterviewEntry(sessionIdToResume);
                 if (entry.type === 'resume') {

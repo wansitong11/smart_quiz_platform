@@ -34,6 +34,7 @@ public class KnowledgeBaseUploadService {
     private final FileValidationService fileValidationService;
     private final FileHashService fileHashService;
     private final VectorizeStreamProducer vectorizeStreamProducer;
+    private final KbCategoryService categoryService;
 
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
     
@@ -42,15 +43,17 @@ public class KnowledgeBaseUploadService {
      *
      * @param file 知识库文件
      * @param name 知识库名称（可选，如果为空则从文件名提取）
-     * @param category 分类（可选）
+     * @param categoryCode 分类 code（可选，空表示未分类）
      * @return 上传结果和存储信息（包含duplicate字段，表示是否为重复上传）
      */
-    public Map<String, Object> uploadKnowledgeBase(MultipartFile file, String name, String category) {
+    public Map<String, Object> uploadKnowledgeBase(MultipartFile file, String name, String categoryCode) {
         // 1. 验证文件
         fileValidationService.validateFile(file, MAX_FILE_SIZE, "知识库");
 
         String fileName = file.getOriginalFilename();
-        log.info("收到知识库上传请求: {}, 大小: {} bytes, category: {}", fileName, file.getSize(), category);
+        log.info("收到知识库上传请求: {}, 大小: {} bytes, categoryCode: {}", fileName, file.getSize(), categoryCode);
+        // 分类必须存在（空表示未分类）
+        String normalizedCategoryCode = categoryService.normalizeCode(categoryCode);
 
         // 2. 验证文件类型
         String contentType = parseService.detectContentType(file);
@@ -72,7 +75,7 @@ public class KnowledgeBaseUploadService {
         // 5. 保存知识库元数据到数据库（状态为 PENDING）；失败时补偿删除孤儿对象（按 fileKey，不删实体——此时还没有实体）
         KnowledgeBaseEntity savedKb;
         try {
-            savedKb = persistenceService.saveKnowledgeBase(file, name, category, fileKey, fileUrl, fileHash);
+            savedKb = persistenceService.saveKnowledgeBase(file, name, normalizedCategoryCode, fileKey, fileUrl, fileHash);
         } catch (Exception dbError) {
             compensateOrphanObject(fileKey, dbError);
             throw dbError;
@@ -85,11 +88,13 @@ public class KnowledgeBaseUploadService {
         log.info("知识库上传完成: {}, kbId={}, enqueueAccepted={}", fileName, savedKb.getId(), enqueueAccepted);
 
         // 7. 返回结果：状态与数据库真实状态一致，投递失败不伪装成 PENDING
+        String categoryName = categoryService.nameOf(savedKb.getCategoryCode());
         return Map.of(
             "knowledgeBase", Map.of(
                 "id", savedKb.getId(),
                 "name", savedKb.getName(),
-                "category", savedKb.getCategory() != null ? savedKb.getCategory() : "",
+                "categoryCode", savedKb.getCategoryCode() != null ? savedKb.getCategoryCode() : "",
+                "category", categoryName != null ? categoryName : "",
                 "fileSize", savedKb.getFileSize(),
                 "vectorStatus", enqueueAccepted ? VectorStatus.PENDING.name() : VectorStatus.FAILED.name()
             ),

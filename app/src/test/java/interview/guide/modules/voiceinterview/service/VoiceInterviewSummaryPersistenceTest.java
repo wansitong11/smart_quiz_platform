@@ -3,8 +3,8 @@ package interview.guide.modules.voiceinterview.service;
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.listener.VoiceEvaluateStreamProducer;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeMessageEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewEvaluationRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
@@ -61,7 +61,7 @@ class VoiceInterviewSummaryPersistenceTest {
   @Test
   @DisplayName("公开对话历史不应包含内部 SUMMARY 行")
   void conversationHistoryExcludesSummaryRows() {
-    VoiceInterviewMessageEntity dialogue = VoiceInterviewMessageEntity.builder()
+    OralPracticeMessageEntity dialogue = OralPracticeMessageEntity.builder()
         .id(2L)
         .sessionId(42L)
         .messageType("DIALOGUE")
@@ -69,10 +69,10 @@ class VoiceInterviewSummaryPersistenceTest {
         .sequenceNum(1)
         .build();
     when(messageRepository.findBySessionIdAndMessageTypeNotOrderBySequenceNumAsc(
-        42L, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY))
+        42L, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY))
         .thenReturn(List.of(dialogue));
 
-    List<VoiceInterviewMessageEntity> result = service.getConversationHistory("42");
+    List<OralPracticeMessageEntity> result = service.getConversationHistory("42");
 
     assertThat(result).containsExactly(dialogue);
   }
@@ -80,17 +80,17 @@ class VoiceInterviewSummaryPersistenceTest {
   @Test
   @DisplayName("更新摘要应复用已有行，避免先删后插的竞态窗口")
   void saveSummaryUpdatesExistingRow() {
-    VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder().id(42L).build();
-    VoiceInterviewMessageEntity existing = VoiceInterviewMessageEntity.builder()
+    OralPracticeSessionEntity session = OralPracticeSessionEntity.builder().id(42L).build();
+    OralPracticeMessageEntity existing = OralPracticeMessageEntity.builder()
         .id(7L)
         .sessionId(42L)
-        .messageType(VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY)
+        .messageType(OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY)
         .aiGeneratedText("旧摘要")
         .sequenceNum(-6)
         .build();
     when(sessionRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(session));
     when(messageRepository.findFirstBySessionIdAndMessageTypeOrderBySequenceNumAsc(
-        42L, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY))
+        42L, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY))
         .thenReturn(Optional.of(existing));
 
     existing.setSummaryCoveredSequenceNum(6);

@@ -3,7 +3,7 @@ package interview.guide.modules.voiceinterview.integration;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.dto.CreateSessionRequest;
 import interview.guide.modules.voiceinterview.dto.SessionResponseDTO;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
 import interview.guide.modules.voiceinterview.service.VoiceInterviewService;
 import org.junit.jupiter.api.*;
@@ -80,7 +80,7 @@ class VoiceInterviewIntegrationTest {
             Long sessionId = sessionResponse.getSessionId();
 
             // Verify session was saved to database
-            VoiceInterviewSessionEntity savedSession = sessionRepository.findById(sessionId).orElse(null);
+            OralPracticeSessionEntity savedSession = sessionRepository.findById(sessionId).orElse(null);
             assertNotNull(savedSession);
             assertEquals("ali-p8", savedSession.getRoleType());
 
@@ -98,9 +98,9 @@ class VoiceInterviewIntegrationTest {
             voiceInterviewService.endSession(sessionIdStr);
 
             // Verify session status
-            VoiceInterviewSessionEntity endedSession = sessionRepository.findById(sessionId).orElse(null);
+            OralPracticeSessionEntity endedSession = sessionRepository.findById(sessionId).orElse(null);
             assertNotNull(endedSession);
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.COMPLETED, endedSession.getCurrentPhase());
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.COMPLETED, endedSession.getCurrentPhase());
         }
 
         @Test
@@ -122,7 +122,7 @@ class VoiceInterviewIntegrationTest {
             // Initial phase should be INTRO
             assertEquals("INTRO", sessionResponse.getCurrentPhase());
 
-            VoiceInterviewSessionEntity session = sessionRepository.findById(sessionId).orElseThrow();
+            OralPracticeSessionEntity session = sessionRepository.findById(sessionId).orElseThrow();
 
             // Test phase transition conditions
             LocalDateTime phaseStartTime = LocalDateTime.now().minusMinutes(10); // 10 minutes ago
@@ -149,13 +149,13 @@ class VoiceInterviewIntegrationTest {
             Long sessionId = sessionResponse.getSessionId();
 
             // Verify database persistence
-            VoiceInterviewSessionEntity dbSession = sessionRepository.findById(sessionId).orElse(null);
+            OralPracticeSessionEntity dbSession = sessionRepository.findById(sessionId).orElse(null);
             assertNotNull(dbSession);
             assertEquals(sessionId, dbSession.getId());
             assertEquals("tencent-backend", dbSession.getRoleType());
 
             // Verify we can retrieve the session
-            VoiceInterviewSessionEntity retrievedSession = sessionRepository.findById(sessionId).orElse(null);
+            OralPracticeSessionEntity retrievedSession = sessionRepository.findById(sessionId).orElse(null);
             assertNotNull(retrievedSession);
             assertEquals(dbSession.getCurrentPhase(), retrievedSession.getCurrentPhase());
         }
@@ -175,22 +175,22 @@ class VoiceInterviewIntegrationTest {
             SessionResponseDTO sessionResponse = voiceInterviewService.createSession(request);
             Long sessionId = sessionResponse.getSessionId();
 
-            VoiceInterviewSessionEntity session = sessionRepository.findById(sessionId).orElseThrow();
+            OralPracticeSessionEntity session = sessionRepository.findById(sessionId).orElseThrow();
 
             // Verify all phases are properly configured
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.INTRO, session.getCurrentPhase());
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.INTRO, session.getCurrentPhase());
 
             // Test transition logic for each phase
             LocalDateTime startTime = LocalDateTime.now();
 
             // INTRO phase
-            session.setCurrentPhase(VoiceInterviewSessionEntity.InterviewPhase.INTRO);
+            session.setCurrentPhase(OralPracticeSessionEntity.InterviewPhase.INTRO);
             boolean introTransition = voiceInterviewService.shouldTransitionToNextPhase(
                 session, startTime.minusMinutes(10), 5
             );
 
             // TECH phase
-            session.setCurrentPhase(VoiceInterviewSessionEntity.InterviewPhase.TECH);
+            session.setCurrentPhase(OralPracticeSessionEntity.InterviewPhase.TECH);
             boolean techTransition = voiceInterviewService.shouldTransitionToNextPhase(
                 session, startTime.minusMinutes(12), 9
             );

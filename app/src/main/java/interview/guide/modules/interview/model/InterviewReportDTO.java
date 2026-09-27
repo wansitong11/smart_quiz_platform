@@ -8,7 +8,9 @@ import java.util.List;
 public record InterviewReportDTO(
     String sessionId,
     int totalQuestions,
-    int overallScore,                          // 总分 (0-100)
+    int overallScore,                          // 得分率 (0-100)
+    int totalFullScore,                        // 卷面总分（各题分值之和；无分值信息的场景为 0）
+    int paperScore,                            // 卷面得分（按各题分值折算求和；无分值信息的场景为 0）
     List<CategoryScore> categoryScores,        // 各类别得分
     List<QuestionEvaluation> questionDetails,  // 每题详情
     String overallFeedback,                    // 总体评价
@@ -33,8 +35,10 @@ public record InterviewReportDTO(
         String question,
         String category,
         String userAnswer,
-        int score,
-        String feedback
+        int score,             // 该题得分率 (0-100)
+        String feedback,
+        Integer fullScore,     // 该题分值（试卷场景；自动出题为 null）
+        Integer questionScore  // 该题卷面得分（得分率 × 分值折算）
     ) {}
     
     /**

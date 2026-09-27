@@ -20,7 +20,7 @@ RUN_RAG_EVAL=true APP_AI_RAG_REWRITE_ENABLED=true ./gradlew :app:ragEvaluation -
 
 ## 环境隔离
 
-- 每次运行使用独立的 PostgreSQL 逻辑库 `interview_guide_rag_eval`：启动前 drop & create（含 Flyway 迁移），结束后 drop，不触碰开发库。
+- 每次运行使用独立的 PostgreSQL 逻辑库 `smart-quiz-rag-eval`：启动前 drop & create（含 Flyway 迁移），结束后 drop，不触碰开发库。
 - 测评知识库为库内两条临时 `knowledge_bases` 记录，随库销毁。
 - Redis 使用独立 database index，Stream 消息与开发环境互不可见。
 

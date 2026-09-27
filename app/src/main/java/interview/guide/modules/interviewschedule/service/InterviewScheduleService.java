@@ -4,7 +4,7 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.interviewschedule.model.CreateInterviewRequest;
 import interview.guide.modules.interviewschedule.model.InterviewScheduleDTO;
-import interview.guide.modules.interviewschedule.model.InterviewScheduleEntity;
+import interview.guide.modules.interviewschedule.model.StudyPlanEntity;
 import interview.guide.modules.interviewschedule.model.InterviewStatus;
 import interview.guide.modules.interviewschedule.repository.InterviewScheduleRepository;
 import lombok.RequiredArgsConstructor;
@@ -29,7 +29,7 @@ public class InterviewScheduleService {
 
     @Transactional
     public InterviewScheduleDTO create(CreateInterviewRequest request) {
-        InterviewScheduleEntity entity = new InterviewScheduleEntity();
+        StudyPlanEntity entity = new StudyPlanEntity();
         BeanUtils.copyProperties(request, entity);
         entity.setStatus(InterviewStatus.PENDING);
 
@@ -38,7 +38,7 @@ public class InterviewScheduleService {
 
     @Transactional
     public InterviewScheduleDTO update(Long id, CreateInterviewRequest request) {
-        InterviewScheduleEntity entity = getByIdOrThrow(id);
+        StudyPlanEntity entity = getByIdOrThrow(id);
         BeanUtils.copyProperties(request, entity, "id", "status");
         return toDTO(repository.save(entity));
     }
@@ -50,13 +50,13 @@ public class InterviewScheduleService {
 
     @Transactional
     public InterviewScheduleDTO updateStatus(Long id, InterviewStatus status) {
-        InterviewScheduleEntity entity = getByIdOrThrow(id);
+        StudyPlanEntity entity = getByIdOrThrow(id);
         entity.setStatus(status);
         return toDTO(repository.save(entity));
     }
 
     public List<InterviewScheduleDTO> getAll(String status, LocalDateTime start, LocalDateTime end) {
-        List<InterviewScheduleEntity> entities;
+        List<StudyPlanEntity> entities;
 
         if (start != null && end != null) {
             entities = repository.findByInterviewTimeBetween(start, end);
@@ -75,12 +75,12 @@ public class InterviewScheduleService {
         return toDTO(getByIdOrThrow(id));
     }
 
-    private InterviewScheduleEntity getByIdOrThrow(Long id) {
+    private StudyPlanEntity getByIdOrThrow(Long id) {
         return repository.findById(id)
             .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_SCHEDULE_NOT_FOUND, "面试日程不存在: " + id));
     }
 
-    private InterviewScheduleDTO toDTO(InterviewScheduleEntity entity) {
+    private InterviewScheduleDTO toDTO(StudyPlanEntity entity) {
         InterviewScheduleDTO dto = new InterviewScheduleDTO();
         BeanUtils.copyProperties(entity, dto);
         return dto;

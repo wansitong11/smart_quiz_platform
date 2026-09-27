@@ -1,7 +1,7 @@
 package interview.guide.modules.voiceinterview.context;
 
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeMessageEntity;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.service.VoiceInterviewService;
 import lombok.extern.slf4j.Slf4j;
@@ -69,9 +69,9 @@ public class VoiceHistoryLoader {
     int batchSize = cfg.getSummaryBatchSize();
 
     // 1. 读取 SUMMARY 行（单行查询）
-    VoiceInterviewMessageEntity summaryRow = interviewService.loadSummaryRow(sessionId).orElse(null);
+    OralPracticeMessageEntity summaryRow = interviewService.loadSummaryRow(sessionId).orElse(null);
     String cachedSummary = summaryRow != null
-        ? VoiceInterviewMessageEntity.trimToNull(summaryRow.getAiGeneratedText()) : null;
+        ? OralPracticeMessageEntity.trimToNull(summaryRow.getAiGeneratedText()) : null;
     Integer coveredSequenceNum = summaryRow != null
         ? summaryRow.getSummaryCoveredSequenceNum() : null;
     if (summaryRow != null && coveredSequenceNum == null) {
@@ -82,28 +82,28 @@ public class VoiceHistoryLoader {
     }
 
     // 3. 倒序取最近窗口，内存恢复升序
-    List<VoiceInterviewMessageEntity> recentDesc = messageRepository
+    List<OralPracticeMessageEntity> recentDesc = messageRepository
         .findBySessionIdAndMessageTypeNotOrderBySequenceNumDesc(
-            sessionIdLong, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY,
+            sessionIdLong, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY,
             PageRequest.of(0, windowSize));
-    List<VoiceInterviewMessageEntity> recent = new ArrayList<>(recentDesc);
+    List<OralPracticeMessageEntity> recent = new ArrayList<>(recentDesc);
     java.util.Collections.reverse(recent);
 
     // 4. 边界之后、最近窗口之前的待摘要段（升序，最多一个批次）。
     //    无 SUMMARY 行的旧长会话同样适用（covered 取 0，每轮 window+batch 增量追上，无需全量迁移）
     Integer windowMin = recent.isEmpty() ? null : recent.getFirst().getSequenceNum();
-    List<VoiceInterviewMessageEntity> pending = List.of();
+    List<OralPracticeMessageEntity> pending = List.of();
     int after = coveredSequenceNum != null ? coveredSequenceNum : 0;
     // 窗口未填满时必然没有窗口外的未摘要消息，直接跳过 pending 查询
     if (windowMin != null && recent.size() >= windowSize && windowMin > after) {
       pending = messageRepository
           .findBySessionIdAndMessageTypeNotAndSequenceNumGreaterThanAndSequenceNumLessThanOrderBySequenceNumAsc(
-              sessionIdLong, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY,
+              sessionIdLong, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY,
               after, windowMin, PageRequest.of(0, batchSize));
     }
 
     // 5. 压缩：turns = pending + 窗口，coveredTurns 恒为 0（换算在 Loader 完成）
-    List<VoiceInterviewMessageEntity> turns = new ArrayList<>(pending);
+    List<OralPracticeMessageEntity> turns = new ArrayList<>(pending);
     turns.addAll(recent);
     var compressed = compressor.compress(turns, cachedSummary, 0, llmProvider);
 
@@ -136,9 +136,9 @@ public class VoiceHistoryLoader {
     if (coveredTurns <= 0) {
       return 0;
     }
-    VoiceInterviewMessageEntity nth = messageRepository
+    OralPracticeMessageEntity nth = messageRepository
         .findBySessionIdAndMessageTypeNotOrderBySequenceNumAsc(
-            sessionIdLong, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY,
+            sessionIdLong, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY,
             PageRequest.of(coveredTurns - 1, 1))
         .stream()
         .findFirst()
@@ -156,11 +156,11 @@ public class VoiceHistoryLoader {
   private List<String> loadWindowOnly(String sessionId) {
     Long sessionIdLong = Long.parseLong(sessionId);
     int windowSize = properties.getContextCompression().getWindowSize();
-    List<VoiceInterviewMessageEntity> recentDesc = messageRepository
+    List<OralPracticeMessageEntity> recentDesc = messageRepository
         .findBySessionIdAndMessageTypeNotOrderBySequenceNumDesc(
-            sessionIdLong, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY,
+            sessionIdLong, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY,
             PageRequest.of(0, windowSize));
-    List<VoiceInterviewMessageEntity> recent = new ArrayList<>(recentDesc);
+    List<OralPracticeMessageEntity> recent = new ArrayList<>(recentDesc);
     java.util.Collections.reverse(recent);
     return new ArrayList<>(compressor.formatRecentWithinBudget(recent));
   }
@@ -169,7 +169,7 @@ public class VoiceHistoryLoader {
    * enabled=false 的全量分支（仅本地排查）：行为与旧 getHistory 全量路径一致。
    */
   private List<String> loadUncompressed(String sessionId) {
-    List<VoiceInterviewMessageEntity> turns = interviewService.getConversationHistory(sessionId);
+    List<OralPracticeMessageEntity> turns = interviewService.getConversationHistory(sessionId);
     return new ArrayList<>(compressor.formatRecent(turns));
   }
 }

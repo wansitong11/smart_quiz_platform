@@ -9,13 +9,16 @@ import interview.guide.infrastructure.redis.InterviewSessionCache;
 import interview.guide.infrastructure.redis.InterviewSessionCache.CachedSession;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.interview.listener.EvaluateStreamProducer;
+import interview.guide.modules.interview.model.BatchSubmitAnswerRequest;
+import interview.guide.modules.interview.model.BatchSubmitAnswerResponse;
 import interview.guide.modules.interview.model.CreateInterviewRequest;
 import interview.guide.modules.interview.model.HistoricalQuestion;
-import interview.guide.modules.interview.model.InterviewAnswerEntity;
+import interview.guide.modules.interview.model.PracticeAnswerEntity;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
-import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.modules.interview.model.PaperTree;
+import interview.guide.modules.interview.model.PracticeSessionEntity;
 import interview.guide.modules.interview.model.SubmitAnswerRequest;
 import interview.guide.modules.interview.model.SubmitAnswerResponse;
 import interview.guide.modules.interview.model.InterviewSessionDTO.SessionStatus;
@@ -27,6 +30,8 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -83,7 +88,7 @@ public class InterviewSessionService {
             return getSession(cachedSessionId);
         }
 
-        Optional<InterviewSessionEntity> existing = persistenceService.findByRequestId(requestId);
+        Optional<PracticeSessionEntity> existing = persistenceService.findByRequestId(requestId);
         if (existing.isPresent()) {
             String existingSessionId = existing.get().getSessionId();
             log.info("从数据库恢复幂等创建请求: requestId={}, sessionId={}",
@@ -134,6 +139,7 @@ public class InterviewSessionService {
             request.customCategories(),
             request.jdText()
         );
+        PaperTree paperTree = buildFlatTree(questions, skillId);
 
         if (requestId != null) {
             try {
@@ -141,14 +147,14 @@ public class InterviewSessionService {
                     sessionId,
                     request.resumeId(),
                     questions.size(),
-                    questions,
+                    paperTree,
                     request.llmProvider(),
                     skillId,
                     difficulty,
                     requestId
                 );
             } catch (Exception e) {
-                Optional<InterviewSessionEntity> concurrentlyCreated =
+                Optional<PracticeSessionEntity> concurrentlyCreated =
                     persistenceService.findByRequestId(requestId);
                 if (concurrentlyCreated.isPresent()) {
                     return getSession(concurrentlyCreated.get().getSessionId());
@@ -159,7 +165,7 @@ public class InterviewSessionService {
         } else {
             try {
                 persistenceService.saveSession(sessionId, request.resumeId(),
-                    questions.size(), questions, request.llmProvider(), skillId, difficulty);
+                    questions.size(), paperTree, request.llmProvider(), skillId, difficulty);
             } catch (Exception e) {
                 log.warn("保存面试会话到数据库失败: {}", e.getMessage());
             }
@@ -172,7 +178,7 @@ public class InterviewSessionService {
             request.resumeId(),
             null,
             null,
-            questions,
+            paperTree,
             0,
             SessionStatus.CREATED
         );
@@ -185,7 +191,8 @@ public class InterviewSessionService {
             questions,
             SessionStatus.CREATED,
             null,
-            null
+            null,
+            paperTree
         );
     }
 
@@ -194,17 +201,54 @@ public class InterviewSessionService {
                                                           String skillId,
                                                           String difficulty,
                                                           Long knowledgeBaseId,
-                                                          String interviewCategory) {
+                                                          String subjectCategory) {
+        return createSessionFromQuestions(questions, llmProvider, skillId, difficulty,
+            knowledgeBaseId, subjectCategory, null, "KNOWLEDGE_BASE");
+    }
+
+    /**
+     * 用给定的题目列表创建练习会话（试卷切题、资料出题等场景共用）。
+     *
+     * @param paperId    试卷 / 材料 ID，可为空
+     * @param sourceType 会话来源：NORMAL / KNOWLEDGE_BASE / PAPER
+     */
+    public InterviewSessionDTO createSessionFromQuestions(List<InterviewQuestionDTO> questions,
+                                                          String llmProvider,
+                                                          String skillId,
+                                                          String difficulty,
+                                                          Long knowledgeBaseId,
+                                                          String subjectCategory,
+                                                          Long paperId,
+                                                          String sourceType) {
+        return createSessionFromQuestions(questions, null, llmProvider, skillId, difficulty,
+            knowledgeBaseId, subjectCategory, paperId, sourceType);
+    }
+
+    /**
+     * 用给定的题目列表与试卷结构创建练习会话。
+     *
+     * @param paperTree 试卷层级树；为空时按「卷 → 全部题目」构造最小树
+     */
+    public InterviewSessionDTO createSessionFromQuestions(List<InterviewQuestionDTO> questions,
+                                                          PaperTree paperTree,
+                                                          String llmProvider,
+                                                          String skillId,
+                                                          String difficulty,
+                                                          Long knowledgeBaseId,
+                                                          String subjectCategory,
+                                                          Long paperId,
+                                                          String sourceType) {
         if (questions == null || questions.isEmpty()) {
             throw new BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "面试题目不能为空");
         }
 
         String sessionId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        PaperTree tree = paperTree != null ? paperTree : buildFlatTree(questions, subjectCategory);
         persistenceService.saveSession(
-            sessionId, null, questions.size(), questions, llmProvider, skillId, difficulty,
-            "KNOWLEDGE_BASE", knowledgeBaseId, interviewCategory);
-        sessionCache.saveSession(sessionId, "", null, knowledgeBaseId, interviewCategory,
-            questions, 0, SessionStatus.CREATED);
+            sessionId, paperId, questions.size(), tree, llmProvider, skillId, difficulty,
+            sourceType, knowledgeBaseId, subjectCategory);
+        sessionCache.saveSession(sessionId, "", paperId, knowledgeBaseId, subjectCategory,
+            tree, 0, SessionStatus.CREATED);
 
         return new InterviewSessionDTO(
             sessionId,
@@ -214,8 +258,16 @@ public class InterviewSessionService {
             questions,
             SessionStatus.CREATED,
             knowledgeBaseId,
-            interviewCategory
+            subjectCategory,
+            tree
         );
+    }
+
+    /**
+     * 没有层级信息时构造「卷 → 全部题目」的最小树。
+     */
+    private PaperTree buildFlatTree(List<InterviewQuestionDTO> questions, String title) {
+        return PaperTree.fromFlatQuestions(questions, title);
     }
 
     private String normalizeRequestId(String requestId) {
@@ -266,12 +318,12 @@ public class InterviewSessionService {
             }
 
             // 2. 缓存未命中，从数据库查找
-            Optional<InterviewSessionEntity> entityOpt = persistenceService.findUnfinishedSession(resumeId);
+            Optional<PracticeSessionEntity> entityOpt = persistenceService.findUnfinishedSession(resumeId);
             if (entityOpt.isEmpty()) {
                 return Optional.empty();
             }
 
-            InterviewSessionEntity entity = entityOpt.get();
+            PracticeSessionEntity entity = entityOpt.get();
             CachedSession restoredSession = restoreSessionFromEntity(entity);
             if (restoredSession != null) {
                 return Optional.of(toDTO(restoredSession));
@@ -295,7 +347,7 @@ public class InterviewSessionService {
      */
     private CachedSession restoreSessionFromDatabase(String sessionId) {
         try {
-            Optional<InterviewSessionEntity> entityOpt = persistenceService.findBySessionId(sessionId);
+            Optional<PracticeSessionEntity> entityOpt = persistenceService.findBySessionId(sessionId);
             return entityOpt.map(this::restoreSessionFromEntity).orElse(null);
         } catch (Exception e) {
             log.error("从数据库恢复会话失败: {}", e.getMessage(), e);
@@ -306,17 +358,15 @@ public class InterviewSessionService {
     /**
      * 从实体恢复会话并缓存到 Redis
      */
-    private CachedSession restoreSessionFromEntity(InterviewSessionEntity entity) {
+    private CachedSession restoreSessionFromEntity(PracticeSessionEntity entity) {
         try {
-            // 解析问题列表
-            List<InterviewQuestionDTO> questions = objectMapper.readValue(
-                entity.getQuestionsJson(),
-                new TypeReference<>() {}
-            );
+            // 解析试卷层级树并派生扁平题目列表
+            PaperTree paperTree = PaperTree.parse(objectMapper, entity.getPaperJson());
+            List<InterviewQuestionDTO> questions = new ArrayList<>(paperTree.flattenQuestions());
 
             // 恢复已保存的答案
-            List<InterviewAnswerEntity> answers = persistenceService.findAnswersBySessionId(entity.getSessionId());
-            for (InterviewAnswerEntity answer : answers) {
+            List<PracticeAnswerEntity> answers = persistenceService.findAnswersBySessionId(entity.getSessionId());
+            for (PracticeAnswerEntity answer : answers) {
                 int index = answer.getQuestionIndex();
                 if (index >= 0 && index < questions.size()) {
                     InterviewQuestionDTO question = questions.get(index);
@@ -326,14 +376,14 @@ public class InterviewSessionService {
 
             SessionStatus status = convertStatus(entity.getStatus());
 
-            // 保存到 Redis 缓存
+            // 已保存的答案写回题目载荷，保持缓存中的树与数据库一致
             sessionCache.saveSession(
                 entity.getSessionId(),
                 entity.getResume() != null ? entity.getResume().getResumeText() : "",
                 entity.getResume() != null ? entity.getResume().getId() : null,
                 entity.getKnowledgeBaseId(),
-                entity.getInterviewCategory(),
-                questions,
+                entity.getSubjectCategory(),
+                paperTree.withQuestions(questions),
                 entity.getCurrentQuestionIndex(),
                 status
             );
@@ -349,7 +399,7 @@ public class InterviewSessionService {
         }
     }
 
-    private SessionStatus convertStatus(InterviewSessionEntity.SessionStatus status) {
+    private SessionStatus convertStatus(PracticeSessionEntity.SessionStatus status) {
         return switch (status) {
             case CREATED -> SessionStatus.CREATED;
             case IN_PROGRESS -> SessionStatus.IN_PROGRESS;
@@ -394,7 +444,7 @@ public class InterviewSessionService {
             // 同步到数据库
             try {
                 persistenceService.updateSessionStatus(sessionId,
-                    InterviewSessionEntity.SessionStatus.IN_PROGRESS);
+                    PracticeSessionEntity.SessionStatus.IN_PROGRESS);
             } catch (Exception e) {
                 log.warn("更新会话状态失败: {}", e.getMessage());
             }
@@ -463,8 +513,8 @@ public class InterviewSessionService {
             persistenceService.updateCurrentQuestionIndex(request.sessionId(), newIndex);
             persistenceService.updateSessionStatus(request.sessionId(),
                 newStatus == SessionStatus.COMPLETED
-                    ? InterviewSessionEntity.SessionStatus.COMPLETED
-                    : InterviewSessionEntity.SessionStatus.IN_PROGRESS);
+                    ? PracticeSessionEntity.SessionStatus.COMPLETED
+                    : PracticeSessionEntity.SessionStatus.IN_PROGRESS);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
@@ -479,6 +529,109 @@ public class InterviewSessionService {
         persistenceService.updateEvaluateStatus(sessionId, AsyncTaskStatus.PENDING, null);
         evaluateStreamProducer.sendEvaluateTask(sessionId);
         log.info("会话 {} 已完成所有问题，评估任务已入队", sessionId);
+    }
+
+    /**
+     * 整卷交卷：一次提交全部答案，批量落库后直接进入批改。
+     * <p>
+     * 与逐题提交的差异：允许跳题与回改（答案按索引整体覆盖），
+     * 交卷即结束会话，不做"提交后前进一题"的推进。
+     * </p>
+     */
+    public BatchSubmitAnswerResponse submitWholePaper(String sessionId,
+                                                      List<BatchSubmitAnswerRequest.AnswerItem> answers) {
+        CachedSession session = getOrRestoreSession(sessionId);
+        if (session.getStatus() == SessionStatus.COMPLETED
+            || session.getStatus() == SessionStatus.EVALUATED) {
+            throw new BusinessException(ErrorCode.INTERVIEW_ALREADY_COMPLETED);
+        }
+
+        List<InterviewQuestionDTO> questions = session.getQuestions(objectMapper);
+        if (questions.isEmpty()) {
+            throw new BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "会话没有题目");
+        }
+        if (answers == null || answers.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "答案列表不能为空");
+        }
+
+        // 索引 → 作答；重复索引视为请求错误，避免静默覆盖学生的作答
+        Map<Integer, BatchSubmitAnswerRequest.AnswerItem> submitted = new LinkedHashMap<>();
+        for (BatchSubmitAnswerRequest.AnswerItem item : answers) {
+            int index = item.questionIndex();
+            if (index < 0 || index >= questions.size()) {
+                throw new BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND,
+                    "无效的问题索引: " + index);
+            }
+            if (submitted.putIfAbsent(index, item) != null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "重复的问题索引: " + index);
+            }
+        }
+
+        List<InterviewPersistenceService.AnswerSubmission> submissions = new ArrayList<>();
+        submitted.forEach((index, item) -> {
+            InterviewQuestionDTO question = questions.get(index);
+            String answerText = buildAnswerText(question, item);
+            submissions.add(new InterviewPersistenceService.AnswerSubmission(
+                index, answerText, buildAnswerJson(item), question.isChoiceQuestion()));
+            questions.set(index, question.withAnswer(answerText));
+        });
+
+        persistenceService.saveWholePaperAnswers(sessionId, questions, submissions);
+        sessionCache.updateQuestions(sessionId, questions);
+        sessionCache.updateCurrentIndex(sessionId, questions.size());
+        sessionCache.updateSessionStatus(sessionId, SessionStatus.COMPLETED);
+        enqueueEvaluationTask(sessionId);
+
+        int blankCount = (int) submissions.stream()
+            .filter(submission -> submission.answerText() == null || submission.answerText().isBlank())
+            .count();
+        log.info("会话 {} 整卷交卷: 提交={} 题, 空答案={} 题, 总题数={}",
+            sessionId, submitted.size(), blankCount, questions.size());
+
+        return new BatchSubmitAnswerResponse(
+            sessionId,
+            submitted.size(),
+            questions.size(),
+            blankCount,
+            SessionStatus.COMPLETED.name(),
+            AsyncTaskStatus.PENDING.name()
+        );
+    }
+
+    private String normalizeAnswer(String answer) {
+        return answer == null ? "" : answer.trim();
+    }
+
+    /**
+     * 选择题以所选选项 key 作为作答文本（如 "BD"），其他题型用文本答案。
+     */
+    private String buildAnswerText(InterviewQuestionDTO question,
+                                   BatchSubmitAnswerRequest.AnswerItem item) {
+        List<String> keys = item.selectedKeys();
+        if (question.isChoiceQuestion() && keys != null && !keys.isEmpty()) {
+            return keys.stream()
+                .filter(key -> key != null && !key.isBlank())
+                .map(key -> key.trim().toUpperCase())
+                .distinct()
+                .sorted()
+                .collect(java.util.stream.Collectors.joining());
+        }
+        return normalizeAnswer(item.answer());
+    }
+
+    /**
+     * 结构化作答落库：{"selectedKeys":[...],"text":"..."}
+     */
+    private String buildAnswerJson(BatchSubmitAnswerRequest.AnswerItem item) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("selectedKeys", item.selectedKeys() != null ? item.selectedKeys() : List.of());
+        payload.put("text", item.answer() != null ? item.answer() : "");
+        try {
+            return objectMapper.writeValueAsString(payload);
+        } catch (Exception e) {
+            log.warn("结构化作答序列化失败，仅保存文本答案: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -514,7 +667,7 @@ public class InterviewSessionService {
                 request.answer(), 0, null
             );
             persistenceService.updateSessionStatus(request.sessionId(),
-                InterviewSessionEntity.SessionStatus.IN_PROGRESS);
+                PracticeSessionEntity.SessionStatus.IN_PROGRESS);
         } catch (Exception e) {
             log.warn("暂存答案到数据库失败: {}", e.getMessage());
         }
@@ -538,7 +691,7 @@ public class InterviewSessionService {
         // 更新数据库状态
         try {
             persistenceService.updateSessionStatus(sessionId,
-                InterviewSessionEntity.SessionStatus.COMPLETED);
+                PracticeSessionEntity.SessionStatus.COMPLETED);
             // 设置评估状态为 PENDING
             persistenceService.updateEvaluateStatus(sessionId, AsyncTaskStatus.PENDING, null);
         } catch (Exception e) {
@@ -588,7 +741,7 @@ public class InterviewSessionService {
 
         // 获取 LLM 客户端
         String provider = null;
-        Optional<InterviewSessionEntity> entityOpt = persistenceService.findBySessionId(sessionId);
+        Optional<PracticeSessionEntity> entityOpt = persistenceService.findBySessionId(sessionId);
         if (entityOpt.isPresent()) {
             provider = entityOpt.get().getLlmProvider();
         }
@@ -627,7 +780,8 @@ public class InterviewSessionService {
             questions,
             session.getStatus(),
             session.getKnowledgeBaseId(),
-            session.getInterviewCategory()
+            session.getSubjectCategory(),
+            session.getPaperTree(objectMapper)
         );
     }
 }

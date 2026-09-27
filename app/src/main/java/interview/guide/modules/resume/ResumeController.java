@@ -2,8 +2,10 @@ package interview.guide.modules.resume;
 
 import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.result.Result;
+import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.resume.model.ResumeDetailDTO;
 import interview.guide.modules.resume.model.ResumeListItemDTO;
+import interview.guide.modules.resume.service.PaperAttemptService;
 import interview.guide.modules.resume.service.ResumeDeleteService;
 import interview.guide.modules.resume.service.ResumeHistoryService;
 import interview.guide.modules.resume.service.ResumeUploadService;
@@ -39,6 +41,7 @@ public class ResumeController {
     private final ResumeUploadService uploadService;
     private final ResumeDeleteService deleteService;
     private final ResumeHistoryService historyService;
+    private final PaperAttemptService attemptService;
 
     /**
      * 上传简历并获取分析结果
@@ -120,6 +123,21 @@ public class ResumeController {
     public Result<Void> reanalyze(@PathVariable Long id) {
         uploadService.reanalyze(id);
         return Result.success(null);
+    }
+
+    /**
+     * 开始（或继续）一次作答。
+     * <p>
+     * 上一次没交卷就继续那一次；已经交过卷则基于同一份切题结果新开一次，
+     * 历史作答记录保留在面试记录里。
+     * </p>
+     *
+     * @param id 试卷 / 练习材料 ID
+     * @return 本次作答的练习会话
+     */
+    @PostMapping("/api/resumes/{id}/attempts")
+    public Result<InterviewSessionDTO> startAttempt(@PathVariable Long id) {
+        return Result.success(attemptService.startAttempt(id));
     }
 
     /**

@@ -35,7 +35,7 @@ public class KnowledgeBaseQuestionEntity {
   @Column(name = "knowledge_base_id", insertable = false, updatable = false)
   private Long knowledgeBaseId;
 
-  // 兼容旧面试会话表的 skill_id 非空约束，知识库题目固定写这个默认值
+  // skill_id 列非空，资料库自动生成的题目固定写入这个默认值
   public static final String DEFAULT_SKILL_ID = "knowledge-base";
 
   @Column(name = "skill_id", nullable = false, length = 64)
@@ -47,7 +47,7 @@ public class KnowledgeBaseQuestionEntity {
   @Column(length = 64)
   private String type;
 
-  // 面试方向，由模型生成（例如"整洁架构"/"Redis"/"测试策略"），用于筛选和开始面试
+  // 知识板块，由模型生成（例如"现代文阅读"/"数列"/"语法填空"），用于筛选与组卷
   @Column(length = 64)
   private String category;
 

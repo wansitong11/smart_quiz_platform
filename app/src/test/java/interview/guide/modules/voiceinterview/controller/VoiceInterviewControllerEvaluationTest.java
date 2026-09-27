@@ -4,7 +4,7 @@ import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.common.result.Result;
 import interview.guide.modules.voiceinterview.dto.VoiceEvaluationStatusDTO;
 import interview.guide.modules.voiceinterview.listener.VoiceEvaluateStreamProducer;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.service.VoiceInterviewEvaluationService;
 import interview.guide.modules.voiceinterview.service.VoiceInterviewService;
 import org.junit.jupiter.api.DisplayName;
@@ -41,7 +41,7 @@ class VoiceInterviewControllerEvaluationTest {
     @DisplayName("查询评估状态时应返回状态更新时间")
     void shouldExposeEvaluationStatusUpdatedAt() throws ReflectiveOperationException {
         LocalDateTime updatedAt = LocalDateTime.of(2026, 7, 27, 12, 30);
-        VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+        OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
             .id(1L)
             .evaluateStatus(AsyncTaskStatus.PENDING)
             .updatedAt(updatedAt)
@@ -58,7 +58,7 @@ class VoiceInterviewControllerEvaluationTest {
     @Test
     @DisplayName("用户对 PENDING 评估重新生成时应真实重新投递")
     void shouldRequeuePendingEvaluationOnExplicitRetry() {
-        VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+        OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
             .id(2L)
             .evaluateStatus(AsyncTaskStatus.PENDING)
             .build();

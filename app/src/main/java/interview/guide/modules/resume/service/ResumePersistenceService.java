@@ -4,9 +4,10 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.file.FileHashService;
 import interview.guide.infrastructure.mapper.ResumeMapper;
-import interview.guide.modules.interview.model.ResumeAnalysisResponse;
-import interview.guide.modules.resume.model.ResumeAnalysisEntity;
-import interview.guide.modules.resume.model.ResumeEntity;
+import interview.guide.modules.interview.model.InterviewQuestionDTO;
+import interview.guide.modules.resume.model.PaperAnalysisEntity;
+import interview.guide.modules.resume.model.PracticePaperEntity;
+import interview.guide.modules.resume.model.ResumeDetailDTO;
 import interview.guide.modules.resume.repository.ResumeAnalysisRepository;
 import interview.guide.modules.resume.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -43,14 +45,14 @@ public class ResumePersistenceService {
      * @param file 上传的文件
      * @return 如果存在返回已有的简历实体，否则返回空
      */
-    public Optional<ResumeEntity> findExistingResume(MultipartFile file) {
+    public Optional<PracticePaperEntity> findExistingResume(MultipartFile file) {
         try {
             String fileHash = fileHashService.calculateHash(file);
-            Optional<ResumeEntity> existing = resumeRepository.findByFileHash(fileHash);
+            Optional<PracticePaperEntity> existing = resumeRepository.findByFileHash(fileHash);
             
             if (existing.isPresent()) {
                 log.info("检测到重复简历: hash={}", fileHash);
-                ResumeEntity resume = existing.get();
+                PracticePaperEntity resume = existing.get();
                 resume.incrementAccessCount();
                 resumeRepository.save(resume);
             }
@@ -66,12 +68,12 @@ public class ResumePersistenceService {
      * 保存新简历
      */
     @Transactional(rollbackFor = Exception.class)
-    public ResumeEntity saveResume(MultipartFile file, String resumeText,
+    public PracticePaperEntity saveResume(MultipartFile file, String resumeText,
                                    String storageKey, String storageUrl) {
         try {
             String fileHash = fileHashService.calculateHash(file);
             
-            ResumeEntity resume = new ResumeEntity();
+            PracticePaperEntity resume = new PracticePaperEntity();
             resume.setFileHash(fileHash);
             resume.setOriginalFilename(file.getOriginalFilename());
             resume.setFileSize(file.getSize());
@@ -80,9 +82,9 @@ public class ResumePersistenceService {
             resume.setStorageUrl(storageUrl);
             resume.setResumeText(resumeText);
             // 进展时间初始化：NULL 会被 stale 扫描的阈值比较排除
-            resume.setAnalyzeUpdatedAt(java.time.LocalDateTime.now());
+            resume.setAnalysisUpdatedAt(java.time.LocalDateTime.now());
 
-            ResumeEntity saved = resumeRepository.save(resume);
+            PracticePaperEntity saved = resumeRepository.save(resume);
             log.info("简历已保存: id={}, hash={}", saved.getId(), fileHash);
             
             return saved;
@@ -97,122 +99,144 @@ public class ResumePersistenceService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void updateResumeText(Long resumeId, String resumeText) {
-        ResumeEntity resume = resumeRepository.findById(resumeId)
+        PracticePaperEntity resume = resumeRepository.findById(resumeId)
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
         resume.setResumeText(resumeText);
         resumeRepository.save(resume);
     }
 
     /**
-     * 保存简历评测结果
+     * 保存试卷解析摘要（结构化切题结果概览）。
      */
     @Transactional(rollbackFor = Exception.class)
-    public ResumeAnalysisEntity saveAnalysis(ResumeEntity resume, ResumeAnalysisResponse analysis) {
-        return saveAnalysisInternal(resume, analysis);
+    public PaperAnalysisEntity saveExtractionSummary(PracticePaperEntity paper,
+                                                     PaperExtractionResult result,
+                                                     String practiceSessionId) {
+        return saveExtractionSummaryInternal(paper, result, practiceSessionId);
     }
 
-    private ResumeAnalysisEntity saveAnalysisInternal(ResumeEntity resume,
-                                                       ResumeAnalysisResponse analysis) {
+    private PaperAnalysisEntity saveExtractionSummaryInternal(PracticePaperEntity paper,
+                                                              PaperExtractionResult result,
+                                                              String practiceSessionId) {
         try {
-            // 使用 MapStruct 映射基础字段
-            ResumeAnalysisEntity entity = resumeMapper.toAnalysisEntity(analysis);
-            entity.setResume(resume);
+            PaperAnalysisEntity entity = new PaperAnalysisEntity();
+            entity.setResume(paper);
+            entity.setQuestionCount(result.questions().size());
+            entity.setTotalScore(result.totalScore());
+            entity.setPracticeSessionId(practiceSessionId);
+            entity.setSummary(buildExtractionSummary(result));
+            entity.setTopicsJson(objectMapper.writeValueAsString(buildTopicStats(result)));
+            entity.setWarningsJson(objectMapper.writeValueAsString(result.warnings()));
 
-            // JSON 字段需要手动序列化
-            entity.setStrengthsJson(objectMapper.writeValueAsString(analysis.strengths()));
-            entity.setSuggestionsJson(objectMapper.writeValueAsString(analysis.suggestions()));
-
-            ResumeAnalysisEntity saved = analysisRepository.save(entity);
-            log.info("简历评测结果已保存: analysisId={}, resumeId={}, score={}",
-                    saved.getId(), resume.getId(), analysis.overallScore());
+            PaperAnalysisEntity saved = analysisRepository.save(entity);
+            log.info("试卷解析摘要已保存: analysisId={}, paperId={}, questions={}, totalScore={}",
+                saved.getId(), paper.getId(), result.questions().size(), result.totalScore());
 
             return saved;
         } catch (JacksonException e) {
-            log.error("序列化评测结果失败: {}", e.getMessage(), e);
-            throw new BusinessException(ErrorCode.RESUME_ANALYSIS_FAILED, "保存评测结果失败");
+            log.error("序列化试卷解析摘要失败: {}", e.getMessage(), e);
+            throw new BusinessException(ErrorCode.PAPER_EXTRACTION_FAILED, "保存试卷解析摘要失败");
         }
     }
 
     /**
-     * 锁定简历行并校验当前执行代次后保存分析，防止超时回收后的旧消费者落库。
+     * 锁定试卷行并校验执行代次后保存解析摘要，防止超时回收后的旧消费者落库。
      */
     @Transactional(rollbackFor = Exception.class)
-    public ResumeAnalysisEntity saveAnalysisIfOwned(Long resumeId, String attemptId,
-                                                     ResumeAnalysisResponse analysis) {
-        ResumeEntity resume = resumeRepository.findByIdForUpdate(resumeId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
-        if (resume.getAnalyzeStatus() != interview.guide.common.model.AsyncTaskStatus.PROCESSING
-            || !Objects.equals(resume.getAnalyzeAttemptId(), attemptId)) {
-            throw new BusinessException(ErrorCode.RESUME_ANALYSIS_FAILED, "简历分析任务执行权已失效");
+    public PaperAnalysisEntity saveExtractionSummaryIfOwned(Long paperId, String attemptId,
+                                                            PaperExtractionResult result,
+                                                            String practiceSessionId) {
+        PracticePaperEntity paper = resumeRepository.findByIdForUpdate(paperId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.PAPER_NOT_FOUND, "试卷不存在"));
+        if (paper.getAnalysisStatus() != interview.guide.common.model.AsyncTaskStatus.PROCESSING
+            || !Objects.equals(paper.getAnalysisAttemptId(), attemptId)) {
+            throw new BusinessException(ErrorCode.PAPER_EXTRACTION_FAILED, "试卷切题任务执行权已失效");
         }
-        resume.setAnalyzeUpdatedAt(java.time.LocalDateTime.now());
-        resumeRepository.save(resume);
-        return saveAnalysisInternal(resume, analysis);
+        paper.setAnalysisUpdatedAt(java.time.LocalDateTime.now());
+        resumeRepository.save(paper);
+        return saveExtractionSummaryInternal(paper, result, practiceSessionId);
+    }
+
+    /**
+     * 解析摘要文本：题量、题型分布、覆盖板块。
+     */
+    private String buildExtractionSummary(PaperExtractionResult result) {
+        Map<String, Long> typeCounts = result.questions().stream()
+            .collect(java.util.stream.Collectors.groupingBy(
+                question -> question.questionType() != null ? question.questionType() : "OTHER",
+                java.util.LinkedHashMap::new,
+                java.util.stream.Collectors.counting()));
+        String typeText = typeCounts.entrySet().stream()
+            .map(e -> e.getKey() + " " + e.getValue() + " 道")
+            .collect(java.util.stream.Collectors.joining("、"));
+        return "共识别 " + result.questions().size() + " 道题，卷面总分 " + result.totalScore()
+            + " 分；题型分布：" + typeText + "。";
+    }
+
+    /**
+     * 知识板块分布：板块标签 + 题数 + 该板块分值。
+     */
+    private List<String> buildTopicStats(PaperExtractionResult result) {
+        Map<String, int[]> stats = new java.util.LinkedHashMap<>();
+        for (InterviewQuestionDTO question : result.questions()) {
+            String label = question.category() != null && !question.category().isBlank()
+                ? question.category() : "未标注";
+            int[] acc = stats.computeIfAbsent(label, k -> new int[2]);
+            acc[0]++;
+            acc[1] += question.fullScore() != null ? question.fullScore() : 0;
+        }
+        return stats.entrySet().stream()
+            .map(e -> e.getKey() + "|" + e.getValue()[0] + " 题|" + e.getValue()[1] + " 分")
+            .toList();
     }
     
     /**
      * 获取简历的最新评测结果
      */
-    public Optional<ResumeAnalysisEntity> getLatestAnalysis(Long resumeId) {
+    public Optional<PaperAnalysisEntity> getLatestAnalysis(Long resumeId) {
         return Optional.ofNullable(analysisRepository.findFirstByResumeIdOrderByAnalyzedAtDesc(resumeId));
-    }
-    
-    /**
-     * 获取简历的最新评测结果（返回DTO）
-     */
-    public Optional<ResumeAnalysisResponse> getLatestAnalysisAsDTO(Long resumeId) {
-        return getLatestAnalysis(resumeId).map(this::entityToDTO);
     }
     
     /**
      * 获取所有简历列表
      */
-    public List<ResumeEntity> findAllResumes() {
+    public List<PracticePaperEntity> findAllResumes() {
         return resumeRepository.findAll();
     }
     
     /**
      * 获取简历的所有评测记录
      */
-    public List<ResumeAnalysisEntity> findAnalysesByResumeId(Long resumeId) {
+    public List<PaperAnalysisEntity> findAnalysesByResumeId(Long resumeId) {
         return analysisRepository.findByResumeIdOrderByAnalyzedAtDesc(resumeId);
     }
     
     /**
-     * 将实体转换为DTO
+     * 将解析摘要实体转换为 DTO（JSON 字段在此处解析）。
      */
-    public ResumeAnalysisResponse entityToDTO(ResumeAnalysisEntity entity) {
+    public ResumeDetailDTO.AnalysisHistoryDTO toAnalysisHistoryDTO(PaperAnalysisEntity entity) {
         try {
-            List<String> strengths = objectMapper.readValue(
-                entity.getStrengthsJson() != null ? entity.getStrengthsJson() : "[]",
-                    new TypeReference<>() {
-                    }
+            List<String> topics = objectMapper.readValue(
+                entity.getTopicsJson() != null ? entity.getTopicsJson() : "[]",
+                new TypeReference<>() {
+                }
             );
-            
-            List<ResumeAnalysisResponse.Suggestion> suggestions = objectMapper.readValue(
-                entity.getSuggestionsJson() != null ? entity.getSuggestionsJson() : "[]",
-                    new TypeReference<>() {
-                    }
+            List<String> warnings = objectMapper.readValue(
+                entity.getWarningsJson() != null ? entity.getWarningsJson() : "[]",
+                new TypeReference<>() {
+                }
             );
-            
-            return new ResumeAnalysisResponse(
-                entity.getOverallScore(),
-                resumeMapper.toScoreDetail(entity),  // 使用MapStruct自动映射
-                entity.getSummary(),
-                strengths,
-                suggestions,
-                entity.getResume().getResumeText()
-            );
+            return resumeMapper.toAnalysisHistoryDTO(entity, topics, warnings);
         } catch (JacksonException e) {
-            log.error("反序列化评测结果失败: {}", e.getMessage());
-            throw new BusinessException(ErrorCode.RESUME_ANALYSIS_FAILED, "获取评测结果失败");
+            log.error("反序列化试卷解析摘要失败: {}", e.getMessage());
+            throw new BusinessException(ErrorCode.PAPER_EXTRACTION_FAILED, "获取试卷解析结果失败");
         }
     }
     
     /**
      * 根据ID获取简历
      */
-    public Optional<ResumeEntity> findById(Long id) {
+    public Optional<PracticePaperEntity> findById(Long id) {
         return resumeRepository.findById(id);
     }
     
@@ -222,15 +246,15 @@ public class ResumePersistenceService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteResume(Long id) {
-        Optional<ResumeEntity> resumeOpt = resumeRepository.findById(id);
+        Optional<PracticePaperEntity> resumeOpt = resumeRepository.findById(id);
         if (resumeOpt.isEmpty()) {
             throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
         }
         
-        ResumeEntity resume = resumeOpt.get();
+        PracticePaperEntity resume = resumeOpt.get();
         
         // 1. 删除所有简历分析记录
-        List<ResumeAnalysisEntity> analyses = analysisRepository.findByResumeIdOrderByAnalyzedAtDesc(id);
+        List<PaperAnalysisEntity> analyses = analysisRepository.findByResumeIdOrderByAnalyzedAtDesc(id);
         if (!analyses.isEmpty()) {
             analysisRepository.deleteAll(analyses);
             log.info("已删除 {} 条简历分析记录", analyses.size());

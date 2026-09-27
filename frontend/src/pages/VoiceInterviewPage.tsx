@@ -47,7 +47,7 @@ export default function VoiceInterviewPage() {
       }
     : undefined;
   const presetVoiceConfig = entryState.voiceConfig ?? queryVoiceConfig;
-  const effectiveSkillId = presetVoiceConfig?.skillId ?? urlSkillId ?? 'java-backend';
+  const effectiveSkillId = presetVoiceConfig?.skillId ?? urlSkillId ?? 'chinese';
 
   const [isRecording, setIsRecording] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);

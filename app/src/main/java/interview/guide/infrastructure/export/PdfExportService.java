@@ -15,10 +15,12 @@ import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.layout.properties.UnitValue;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
-import interview.guide.modules.interview.model.InterviewAnswerEntity;
-import interview.guide.modules.interview.model.InterviewSessionEntity;
-import interview.guide.modules.interview.model.ResumeAnalysisResponse;
-import interview.guide.modules.resume.model.ResumeEntity;
+import interview.guide.modules.interview.model.PracticeAnswerEntity;
+import interview.guide.modules.interview.model.PracticeSessionEntity;
+import interview.guide.modules.interview.model.PaperNode;
+import interview.guide.modules.interview.model.PaperTree;
+import interview.guide.modules.resume.model.PracticePaperEntity;
+import interview.guide.modules.resume.model.ResumeDetailDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,7 +33,7 @@ import java.util.List;
 
 /**
  * PDF导出服务
- * PDF Export Service for resume analysis and interview reports
+ * PDF Export Service for paper extraction reports and practice reports
  */
 @Slf4j
 @Service
@@ -76,9 +78,9 @@ public class PdfExportService {
     }
     
     /**
-     * 导出简历分析报告为PDF
+     * 导出试卷解析报告为 PDF
      */
-    public byte[] exportResumeAnalysis(ResumeEntity resume, ResumeAnalysisResponse analysis) {
+    public byte[] exportPaperAnalysis(PracticePaperEntity paper, ResumeDetailDTO.AnalysisHistoryDTO analysis) {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         PdfWriter writer = new PdfWriter(baos);
         PdfDocument pdfDoc = new PdfDocument(writer);
@@ -89,7 +91,7 @@ public class PdfExportService {
         document.setFont(font);
         
         // 标题
-        Paragraph title = new Paragraph("简历分析报告")
+        Paragraph title = new Paragraph("试卷解析报告")
             .setFontSize(24)
             .setBold()
             .setTextAlignment(TextAlignment.CENTER)
@@ -99,71 +101,63 @@ public class PdfExportService {
         // 基本信息
         document.add(new Paragraph("\n"));
         document.add(createSectionTitle("基本信息"));
-        document.add(new Paragraph("文件名: " + resume.getOriginalFilename()));
+        document.add(new Paragraph("文件名: " + paper.getOriginalFilename()));
         document.add(new Paragraph("上传时间: " + 
-            (resume.getUploadedAt() != null ? DATE_FORMAT.format(resume.getUploadedAt()) : "未知")));
+            (paper.getUploadedAt() != null ? DATE_FORMAT.format(paper.getUploadedAt()) : "未知")));
         
-        // 总分
+        // 题量与卷面总分
         document.add(new Paragraph("\n"));
-        document.add(createSectionTitle("综合评分"));
-        Paragraph scoreP = new Paragraph("总分: " + analysis.overallScore() + " / 100")
+        document.add(createSectionTitle("试卷概览"));
+        Paragraph scoreP = new Paragraph("题目数量: " + valueOrZero(analysis.questionCount())
+            + " 道    卷面总分: " + valueOrZero(analysis.totalScore()) + " 分")
             .setFontSize(18)
             .setBold()
-            .setFontColor(getScoreColor(analysis.overallScore()));
+            .setFontColor(HEADER_COLOR);
         document.add(scoreP);
         
-        // 各维度评分
-        if (analysis.scoreDetail() != null) {
+        // 知识板块分布
+        if (analysis.topics() != null && !analysis.topics().isEmpty()) {
             document.add(new Paragraph("\n"));
-            document.add(createSectionTitle("各维度评分"));
-            
+            document.add(createSectionTitle("知识板块分布"));
             Table scoreTable = new Table(UnitValue.createPercentArray(new float[]{2, 1}))
                 .useAllAvailableWidth();
-            addScoreRow(scoreTable, "项目经验", analysis.scoreDetail().projectScore(), 40);
-            addScoreRow(scoreTable, "技能匹配度", analysis.scoreDetail().skillMatchScore(), 20);
-            addScoreRow(scoreTable, "内容完整性", analysis.scoreDetail().contentScore(), 15);
-            addScoreRow(scoreTable, "结构清晰度", analysis.scoreDetail().structureScore(), 15);
-            addScoreRow(scoreTable, "表达专业性", analysis.scoreDetail().expressionScore(), 10);
+            for (String topic : analysis.topics()) {
+                String[] parts = topic.split("\\|");
+                scoreTable.addCell(new Cell().add(new Paragraph(sanitizeText(parts[0]))));
+                scoreTable.addCell(new Cell().add(new Paragraph(
+                    parts.length > 2 ? sanitizeText(parts[1] + " / " + parts[2]) : "")));
+            }
             document.add(scoreTable);
         }
         
-        // 简历摘要
+        // 解析摘要
         if (analysis.summary() != null) {
             document.add(new Paragraph("\n"));
-            document.add(createSectionTitle("简历摘要"));
+            document.add(createSectionTitle("解析摘要"));
             document.add(new Paragraph(sanitizeText(analysis.summary())));
         }
         
-        // 优势亮点
-        if (analysis.strengths() != null && !analysis.strengths().isEmpty()) {
+        // 解析告警
+        if (analysis.warnings() != null && !analysis.warnings().isEmpty()) {
             document.add(new Paragraph("\n"));
-            document.add(createSectionTitle("优势亮点"));
-            for (String strength : analysis.strengths()) {
-                document.add(new Paragraph("• " + sanitizeText(strength)));
-            }
-        }
-        
-        // 改进建议
-        if (analysis.suggestions() != null && !analysis.suggestions().isEmpty()) {
-            document.add(new Paragraph("\n"));
-            document.add(createSectionTitle("改进建议"));
-            for (ResumeAnalysisResponse.Suggestion suggestion : analysis.suggestions()) {
-                document.add(new Paragraph("【" + suggestion.priority() + "】" + sanitizeText(suggestion.category()))
-                    .setBold());
-                document.add(new Paragraph("问题: " + sanitizeText(suggestion.issue())));
-                document.add(new Paragraph("建议: " + sanitizeText(suggestion.recommendation())));
-                document.add(new Paragraph("\n"));
+            document.add(createSectionTitle("解析告警"));
+            for (String warning : analysis.warnings()) {
+                document.add(new Paragraph("• " + sanitizeText(warning)));
             }
         }
         
         document.close();
         return baos.toByteArray();
     }
+
+    private int valueOrZero(Integer value) {
+        return value != null ? value : 0;
+    }
     
     /**
      * 导出面试报告为PDF
      */
-    public byte[] exportInterviewReport(InterviewSessionEntity session) {
+    public byte[] exportInterviewReport(PracticeSessionEntity session) {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         PdfWriter writer = new PdfWriter(baos);
         PdfDocument pdfDoc = new PdfDocument(writer);
@@ -248,14 +242,38 @@ public class PdfExportService {
         }
         
         // 问答详情
-        List<InterviewAnswerEntity> answers = session.getAnswers();
+        List<PracticeAnswerEntity> answers = session.getAnswers();
         if (answers != null && !answers.isEmpty()) {
             document.add(new Paragraph("\n"));
             document.add(createSectionTitle("问答详情"));
-            
-            for (InterviewAnswerEntity answer : answers) {
+
+            PaperTree paperTree = parsePaperTree(session.getPaperJson());
+            String currentSectionPath = null;
+            java.util.Set<String> printedMaterials = new java.util.HashSet<>();
+
+            for (PracticeAnswerEntity answer : answers) {
+                int index = answer.getQuestionIndex();
+                if (paperTree != null) {
+                    String sectionPath = paperTree.sectionPathOf(index);
+                    if (!sectionPath.isBlank() && !sectionPath.equals(currentSectionPath)) {
+                        currentSectionPath = sectionPath;
+                        document.add(new Paragraph("\n" + sanitizeText(sectionPath))
+                            .setBold()
+                            .setFontSize(13)
+                            .setFontColor(SECTION_COLOR));
+                    }
+                    for (PaperNode material : paperTree.materialsOf(index)) {
+                        if (!printedMaterials.add(material.id())) {
+                            continue;
+                        }
+                        if (material.title() != null && !material.title().isBlank()) {
+                            document.add(new Paragraph(sanitizeText(material.title())).setBold().setFontSize(10));
+                        }
+                        document.add(new Paragraph(sanitizeText(material.content())).setFontSize(9));
+                    }
+                }
                 document.add(new Paragraph("\n"));
-                document.add(new Paragraph("问题 " + (answer.getQuestionIndex() + 1) + 
+                document.add(new Paragraph("问题 " + (index + 1) +
                     " [" + (answer.getCategory() != null ? answer.getCategory() : "综合") + "]")
                     .setBold()
                     .setFontSize(12));
@@ -276,6 +294,21 @@ public class PdfExportService {
         
         document.close();
         return baos.toByteArray();
+    }
+
+    /**
+     * 读取会话的试卷层级树；结构缺失或非法时返回 null，退回平铺导出。
+     */
+    private PaperTree parsePaperTree(String paperJson) {
+        if (paperJson == null || paperJson.isBlank()) {
+            return null;
+        }
+        try {
+            return PaperTree.parse(objectMapper, paperJson);
+        } catch (Exception e) {
+            log.warn("试卷结构解析失败，PDF 按平铺导出: {}", e.getMessage());
+            return null;
+        }
     }
     
     private Paragraph createSectionTitle(String title) {
@@ -298,7 +331,7 @@ public class PdfExportService {
         return new DeviceRgb(231, 76, 60);                    // 红色
     }
     
-    private String getStatusText(InterviewSessionEntity.SessionStatus status) {
+    private String getStatusText(PracticeSessionEntity.SessionStatus status) {
         return switch (status) {
             case CREATED -> "已创建";
             case IN_PROGRESS -> "进行中";

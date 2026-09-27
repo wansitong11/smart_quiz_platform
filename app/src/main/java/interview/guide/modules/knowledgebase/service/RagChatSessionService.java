@@ -12,6 +12,9 @@ import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionDetailDTO;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionListItemDTO;
 import interview.guide.modules.knowledgebase.model.RagChatMessageEntity;
 import interview.guide.modules.knowledgebase.model.RagChatSessionEntity;
+import interview.guide.modules.knowledgebase.model.RagScopeKind;
+import interview.guide.modules.knowledgebase.service.scope.RagScopeService;
+import interview.guide.modules.knowledgebase.service.scope.ResolvedScope;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
 import interview.guide.modules.knowledgebase.repository.RagChatMessageRepository;
 import interview.guide.modules.knowledgebase.repository.RagChatSessionRepository;
@@ -27,6 +30,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 
 /**
  * RAG 聊天会话服务
@@ -44,41 +48,42 @@ public class RagChatSessionService {
     private final RagChatMapper ragChatMapper;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeBaseQueryProperties queryProperties;
+    private final KbCategoryService categoryService;
+    private final RagScopeService scopeService;
 
     /**
      * 创建新会话
      */
     @Transactional
     public SessionDTO createSession(CreateSessionRequest request) {
-        // 验证知识库存在
-        List<KnowledgeBaseEntity> knowledgeBases = knowledgeBaseRepository
-            .findAllById(request.knowledgeBaseIds());
+        ScopeSelection selection = resolveSelection(request.scope(), request.categoryCode(),
+            request.knowledgeBaseIds());
 
-        if (knowledgeBases.size() != request.knowledgeBaseIds().size()) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "部分知识库不存在");
-        }
-
-        // 创建会话
         RagChatSessionEntity session = new RagChatSessionEntity();
         session.setTitle(request.title() != null && !request.title().isBlank()
             ? request.title()
-            : generateTitle(knowledgeBases));
-        session.setKnowledgeBases(new HashSet<>(knowledgeBases));
+            : generateTitle(selection));
+        session.setKbScope(selection.kind().name());
+        session.setKbCategory(selection.categoryCode());
+        session.setKnowledgeBases(new HashSet<>(selection.knowledgeBases()));
 
         session = sessionRepository.save(session);
 
-        log.info("创建 RAG 聊天会话: id={}, title={}", session.getId(), session.getTitle());
+        log.info("创建 RAG 聊天会话: id={}, title={}, scope={}, category={}, kbCount={}",
+            session.getId(), session.getTitle(), session.getKbScope(), session.getKbCategory(),
+            selection.knowledgeBases().size());
 
-        return ragChatMapper.toSessionDTO(session);
+        return ragChatMapper.toSessionDTO(session, categoryService.nameByCode());
     }
 
     /**
      * 获取会话列表
      */
     public List<SessionListItemDTO> listSessions() {
+        Map<String, String> categoryNames = categoryService.nameByCode();
         return sessionRepository.findAllOrderByPinnedAndUpdatedAtDesc()
             .stream()
-            .map(ragChatMapper::toSessionListItemDTO)
+            .map(session -> ragChatMapper.toSessionListItemDTO(session, categoryNames))
             .toList();
     }
 
@@ -98,10 +103,10 @@ public class RagChatSessionService {
 
         // 转换知识库列表
         List<KnowledgeBaseListItemDTO> kbDTOs = knowledgeBaseMapper.toListItemDTOList(
-            new java.util.ArrayList<>(session.getKnowledgeBases())
+            new java.util.ArrayList<>(session.getKnowledgeBases()), categoryService.nameByCode()
         );
 
-        return ragChatMapper.toSessionDetailDTO(session, messages, kbDTOs);
+        return ragChatMapper.toSessionDetailDTO(session, messages, kbDTOs, categoryService.nameByCode());
     }
 
     /**
@@ -166,12 +171,15 @@ public class RagChatSessionService {
         RagChatSessionEntity session = sessionRepository.findByIdWithKnowledgeBases(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
 
-        List<Long> kbIds = session.getKnowledgeBaseIds();
+        // 每轮提问解析一次范围：会话内切换范围对下一条提问立即生效
+        ResolvedScope scope = scopeService.resolve(session);
         List<Message> history = queryProperties.getHistory().isEnabled()
             ? loadHistoryMessages(sessionId) : List.of();
 
-        log.info("加载历史上下文: sessionId={}, historySize={}", sessionId, history.size());
-        return queryService.answerQuestionStream(kbIds, question, history);
+        log.info("加载历史上下文: sessionId={}, historySize={}, scope={}, kbCount={}, toolsEnabled={}",
+            sessionId, history.size(), scope.kind(), scope.knowledgeBaseIds().size(),
+            queryProperties.getTools().isEnabled());
+        return queryService.answerQuestionStreamWithTools(scope, sessionId, question, history, null);
     }
 
     /**
@@ -205,20 +213,23 @@ public class RagChatSessionService {
     }
 
     /**
-     * 更新会话的知识库关联
+     * 更新会话的检索范围（全部 / 按分类 / 指定资料）
      */
     @Transactional
-    public void updateSessionKnowledgeBases(Long sessionId, List<Long> knowledgeBaseIds) {
+    public void updateSessionScope(Long sessionId, String scope, String categoryCode,
+                                   List<Long> knowledgeBaseIds) {
         RagChatSessionEntity session = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
 
-        List<KnowledgeBaseEntity> knowledgeBases = knowledgeBaseRepository
-            .findAllById(knowledgeBaseIds);
+        ScopeSelection selection = resolveSelection(scope, categoryCode, knowledgeBaseIds);
 
-        session.setKnowledgeBases(new HashSet<>(knowledgeBases));
+        session.setKbScope(selection.kind().name());
+        session.setKbCategory(selection.categoryCode());
+        session.setKnowledgeBases(new HashSet<>(selection.knowledgeBases()));
         sessionRepository.save(session);
 
-        log.info("更新会话知识库: sessionId={}, kbIds={}", sessionId, knowledgeBaseIds);
+        log.info("更新会话检索范围: sessionId={}, scope={}, category={}, kbCount={}",
+            sessionId, selection.kind(), selection.categoryCode(), selection.knowledgeBases().size());
     }
 
     /**
@@ -262,13 +273,66 @@ public class RagChatSessionService {
             .toList();
     }
 
-    private String generateTitle(List<KnowledgeBaseEntity> knowledgeBases) {
-        if (knowledgeBases.isEmpty()) {
-            return "新对话";
+    /**
+     * 解析请求里的范围声明：scope 缺省时按是否勾选资料推断。
+     */
+    private ScopeSelection resolveSelection(String scope, String categoryCode,
+                                            List<Long> knowledgeBaseIds) {
+        RagScopeKind kind = resolveKind(scope, knowledgeBaseIds);
+        if (kind == RagScopeKind.CATEGORY) {
+            String normalized = categoryService.normalizeCode(categoryCode);
+            if (normalized == null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "按分类检索时必须指定分类");
+            }
+            return new ScopeSelection(RagScopeKind.CATEGORY, normalized, List.of());
         }
-        if (knowledgeBases.size() == 1) {
-            return knowledgeBases.getFirst().getName();
+        if (kind == RagScopeKind.SELECTED) {
+            List<Long> ids = knowledgeBaseIds == null ? List.of() : knowledgeBaseIds.stream()
+                .filter(java.util.Objects::nonNull).distinct().toList();
+            if (ids.isEmpty()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "至少选择一个资料");
+            }
+            List<KnowledgeBaseEntity> knowledgeBases = knowledgeBaseRepository.findAllById(ids);
+            if (knowledgeBases.size() != ids.size()) {
+                throw new BusinessException(ErrorCode.NOT_FOUND, "部分资料不存在");
+            }
+            return new ScopeSelection(RagScopeKind.SELECTED, null, knowledgeBases);
         }
-        return knowledgeBases.size() + " 个知识库对话";
+        return new ScopeSelection(RagScopeKind.ALL, null, List.of());
+    }
+
+    private RagScopeKind resolveKind(String scope, List<Long> knowledgeBaseIds) {
+        if (scope != null && !scope.isBlank()) {
+            return RagScopeService.parseKind(scope);
+        }
+        return knowledgeBaseIds != null && !knowledgeBaseIds.isEmpty()
+            ? RagScopeKind.SELECTED
+            : RagScopeKind.ALL;
+    }
+
+    private String generateTitle(ScopeSelection selection) {
+        return switch (selection.kind()) {
+            case ALL -> "全部资料问答";
+            case CATEGORY -> {
+                String name = categoryService.nameOf(selection.categoryCode());
+                yield (name != null ? name : "分类") + " · 资料问答";
+            }
+            case SELECTED -> {
+                List<KnowledgeBaseEntity> knowledgeBases = selection.knowledgeBases();
+                if (knowledgeBases.isEmpty()) {
+                    yield "新对话";
+                }
+                yield knowledgeBases.size() == 1
+                    ? knowledgeBases.getFirst().getName()
+                    : knowledgeBases.size() + " 份资料对话";
+            }
+        };
+    }
+
+    /**
+     * 请求解析出的范围选择。
+     */
+    private record ScopeSelection(RagScopeKind kind, String categoryCode,
+                                  List<KnowledgeBaseEntity> knowledgeBases) {
     }
 }

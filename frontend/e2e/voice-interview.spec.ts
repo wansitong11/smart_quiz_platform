@@ -90,7 +90,7 @@ test.describe('语音面试', () => {
         body: JSON.stringify({
           code: 200,
           message: 'success',
-          data: [{ id: 'java-backend', name: 'Java 后端', description: '', categories: [], isPreset: true, sourceJd: null }],
+          data: [{ id: 'chinese', name: '语文', description: '', categories: [], isPreset: true, sourceJd: null }],
         }),
       });
     });
@@ -119,7 +119,7 @@ test.describe('语音面试', () => {
   });
 
   test('将虚拟麦克风音频发送到服务端，并展示字幕和 AI 追问', async ({ page }) => {
-    await page.goto('/voice-interview?skillId=java-backend&duration=15');
+    await page.goto('/voice-interview?skillId=chinese&duration=15');
 
     const recordButton = page.getByTestId('voice-recorder-toggle');
     await expect(recordButton).toBeEnabled();
@@ -136,7 +136,7 @@ test.describe('语音面试', () => {
   });
 
   test('提交后迟到的上一轮字幕不会污染下一轮回答', async ({ page }) => {
-    await page.goto('/voice-interview?skillId=java-backend&duration=15');
+    await page.goto('/voice-interview?skillId=chinese&duration=15');
 
     const recordButton = page.getByTestId('voice-recorder-toggle');
     await expect(recordButton).toBeEnabled();
@@ -171,7 +171,7 @@ test.describe('语音面试', () => {
   });
 
   test('结束面试后返回面试记录页', async ({ page }) => {
-    await page.goto('/voice-interview?skillId=java-backend&duration=15');
+    await page.goto('/voice-interview?skillId=chinese&duration=15');
 
     await page.getByTestId('voice-end-interview').click();
     await expect(page).toHaveURL(/\/interviews$/);

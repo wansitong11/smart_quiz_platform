@@ -3,10 +3,10 @@ package interview.guide.modules.voiceinterview.service;
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.common.log.ErrorLogSanitizer;
-import interview.guide.modules.resume.model.ResumeEntity;
+import interview.guide.modules.resume.model.PracticePaperEntity;
 import interview.guide.modules.resume.repository.ResumeRepository;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -31,7 +31,7 @@ public class DashscopeLlmService {
     private final VoiceInterviewProperties voiceInterviewProperties;
     private final PromptSanitizer promptSanitizer;
 
-    public String chat(String userInput, VoiceInterviewSessionEntity session, List<String> conversationHistory) {
+    public String chat(String userInput, OralPracticeSessionEntity session, List<String> conversationHistory) {
         try {
             PromptContext promptContext = buildPromptContext(userInput, session, conversationHistory);
 
@@ -60,7 +60,7 @@ public class DashscopeLlmService {
         }
     }
 
-    public String chatStream(String userInput, Consumer<String> onToken, VoiceInterviewSessionEntity session, List<String> conversationHistory) {
+    public String chatStream(String userInput, Consumer<String> onToken, OralPracticeSessionEntity session, List<String> conversationHistory) {
         return chatStreamSentences(userInput, onToken, null, session, conversationHistory);
     }
 
@@ -71,7 +71,7 @@ public class DashscopeLlmService {
     public String chatStreamSentences(String userInput,
                                        Consumer<String> onToken,
                                        Consumer<String> onSentence,
-                                       VoiceInterviewSessionEntity session,
+                                       OralPracticeSessionEntity session,
                                        List<String> conversationHistory) {
         try {
             PromptContext promptContext = buildPromptContext(userInput, session, conversationHistory);
@@ -157,10 +157,10 @@ public class DashscopeLlmService {
         }
     }
 
-    private PromptContext buildPromptContext(String userInput, VoiceInterviewSessionEntity session, List<String> conversationHistory) {
+    private PromptContext buildPromptContext(String userInput, OralPracticeSessionEntity session, List<String> conversationHistory) {
         String resumeText = null;
         if (session.getResumeId() != null) {
-            ResumeEntity resume = resumeRepository.findById(session.getResumeId()).orElse(null);
+            PracticePaperEntity resume = resumeRepository.findById(session.getResumeId()).orElse(null);
             if (resume != null) {
                 resumeText = resume.getResumeText();
             }

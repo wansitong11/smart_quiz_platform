@@ -23,8 +23,26 @@ public record InterviewDetailDTO(
     List<String> strengths,
     List<String> improvements,
     List<Object> referenceAnswers,
-    List<AnswerDetailDTO> answers
+    List<AnswerDetailDTO> answers,
+    /** 试卷层级树（唯一题目数据源） */
+    PaperTree paperTree,
+    /** 按小节汇总的得分 */
+    List<SectionScoreDTO> sectionScores
 ) {
+
+    /**
+     * 小节维度得分。
+     */
+    public record SectionScoreDTO(
+        String title,
+        String subtitle,
+        int level,
+        int questionCount,
+        int fullScore,
+        int score,
+        int scoreRate
+    ) {}
+
     /**
      * 答案详情DTO
      */

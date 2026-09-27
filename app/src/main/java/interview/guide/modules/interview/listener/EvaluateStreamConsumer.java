@@ -5,10 +5,11 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
 import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.infrastructure.redis.RedisService;
-import interview.guide.modules.interview.model.InterviewAnswerEntity;
+import interview.guide.modules.interview.model.PracticeAnswerEntity;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
-import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.modules.interview.model.PaperTree;
+import interview.guide.modules.interview.model.PracticeSessionEntity;
 import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import interview.guide.modules.interview.service.AnswerEvaluationService;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
@@ -110,20 +111,18 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
     @Override
     protected void processBusiness(EvaluatePayload payload) {
         String sessionId = payload.sessionId();
-        Optional<InterviewSessionEntity> sessionOpt = sessionRepository.findBySessionIdWithResume(sessionId);
+        Optional<PracticeSessionEntity> sessionOpt = sessionRepository.findBySessionIdWithResume(sessionId);
         if (sessionOpt.isEmpty()) {
             log.warn("会话已被删除，跳过评估任务: sessionId={}", sessionId);
             return;
         }
 
-        InterviewSessionEntity session = sessionOpt.get();
-        List<InterviewQuestionDTO> questions = objectMapper.readValue(
-            session.getQuestionsJson(),
-            new TypeReference<>() {}
-        );
+        PracticeSessionEntity session = sessionOpt.get();
+        List<InterviewQuestionDTO> questions = PaperTree.parse(objectMapper, session.getPaperJson())
+            .flattenQuestions();
 
-        List<InterviewAnswerEntity> answers = persistenceService.findAnswersBySessionId(sessionId);
-        for (InterviewAnswerEntity answer : answers) {
+        List<PracticeAnswerEntity> answers = persistenceService.findAnswersBySessionId(sessionId);
+        for (PracticeAnswerEntity answer : answers) {
             int index = answer.getQuestionIndex();
             if (index >= 0 && index < questions.size()) {
                 InterviewQuestionDTO question = questions.get(index);

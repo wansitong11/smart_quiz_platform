@@ -11,7 +11,7 @@ import interview.guide.modules.voiceinterview.dto.VoiceEvaluationDetailDTO;
 import interview.guide.modules.voiceinterview.dto.VoiceEvaluationStatusDTO;
 import interview.guide.modules.voiceinterview.listener.VoiceEvaluateStreamProducer;
 import interview.guide.modules.voiceinterview.dto.VoiceInterviewMessageDTO;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.service.VoiceInterviewEvaluationService;
 import interview.guide.modules.voiceinterview.service.VoiceInterviewService;
 import jakarta.validation.Valid;
@@ -157,7 +157,7 @@ public class VoiceInterviewController {
     public Result<VoiceEvaluationStatusDTO> getEvaluation(@PathVariable Long sessionId) {
         log.info("Getting evaluation status for session: {}", sessionId);
 
-        VoiceInterviewSessionEntity session = voiceInterviewService.getSession(sessionId);
+        OralPracticeSessionEntity session = voiceInterviewService.getSession(sessionId);
         if (session == null) {
             throw new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND, "会话不存在: " + sessionId);
         }
@@ -188,7 +188,7 @@ public class VoiceInterviewController {
     public Result<VoiceEvaluationStatusDTO> generateEvaluation(@PathVariable Long sessionId) {
         log.info("Triggering async evaluation for session: {}", sessionId);
 
-        VoiceInterviewSessionEntity session = voiceInterviewService.getSession(sessionId);
+        OralPracticeSessionEntity session = voiceInterviewService.getSession(sessionId);
         if (session == null) {
             throw new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND, "会话不存在: " + sessionId);
         }

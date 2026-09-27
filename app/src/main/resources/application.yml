@@ -39,7 +39,7 @@ spring:
 
   # PostgreSQL数据库配置
   datasource:
-    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:interview_guide}
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:smart-quiz}
     username: ${POSTGRES_USER:postgres}
     # 与 docker-compose.dev.yml 中 postgres 服务默认一致（本地只起依赖容器 + bootRun 时无需改）
     password: ${POSTGRES_PASSWORD:123456}
@@ -206,12 +206,22 @@ app:
       - application/vnd.openxmlformats-officedocument.wordprocessingml.document
       - text/plain
 
+  # 试卷 / 练习材料结构化切题
+  paper:
+    extraction:
+      # 单批送模型的材料字符上限，超出后按题号切块分批处理
+      batch-char-limit: ${APP_PAPER_EXTRACTION_BATCH_CHAR_LIMIT:3000}
+      # 材料整体字符上限，超出部分截断
+      max-paper-chars: ${APP_PAPER_EXTRACTION_MAX_PAPER_CHARS:30000}
+      # 单份材料允许抽取的最大题目数
+      max-questions: ${APP_PAPER_EXTRACTION_MAX_QUESTIONS:80}
+
   # RustFS (S3兼容) 存储配置
   storage:
     endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9000}
     access-key: ${APP_STORAGE_ACCESS_KEY:}
     secret-key: ${APP_STORAGE_SECRET_KEY:}
-    bucket: ${APP_STORAGE_BUCKET:interview-guide}
+    bucket: ${APP_STORAGE_BUCKET:smart-quiz}
     region: ${APP_STORAGE_REGION:us-east-1}
     api-call-timeout: ${APP_STORAGE_API_CALL_TIMEOUT:60s}
     api-call-attempt-timeout: ${APP_STORAGE_API_CALL_ATTEMPT_TIMEOUT:20s}

@@ -13,7 +13,9 @@ public record InterviewSessionDTO(
     List<InterviewQuestionDTO> questions,
     SessionStatus status,
     Long knowledgeBaseId,
-    String interviewCategory
+    String subjectCategory,
+    /** 试卷层级树（卷 → 大题 → 小节 → 材料/题目），供作答页按层级渲染 */
+    PaperTree paperTree
 ) {
     public enum SessionStatus {
         CREATED,      // 会话已创建

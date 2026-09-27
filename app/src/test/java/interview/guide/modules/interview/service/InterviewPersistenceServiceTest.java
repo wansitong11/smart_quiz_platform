@@ -1,6 +1,7 @@
 package interview.guide.modules.interview.service;
 
-import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.modules.interview.model.PaperTree;
+import interview.guide.modules.interview.model.PracticeSessionEntity;
 import interview.guide.modules.interview.repository.InterviewAnswerRepository;
 import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import interview.guide.modules.resume.repository.ResumeRepository;
@@ -34,36 +35,36 @@ class InterviewPersistenceServiceTest {
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Test
-  @DisplayName("知识库面试保存时写入 interviewCategory")
-  void shouldSaveInterviewCategoryForKnowledgeBaseSession() {
+  @DisplayName("知识库面试保存时写入 subjectCategory")
+  void shouldSaveSubjectCategoryForKnowledgeBaseSession() {
     InterviewPersistenceService service = newService();
-    when(sessionRepository.save(any(InterviewSessionEntity.class)))
+    when(sessionRepository.save(any(PracticeSessionEntity.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    service.saveSession("sid1", null, 1, List.of(), "dashscope",
+    service.saveSession("sid1", null, 1, PaperTree.fromFlatQuestions(List.of(), "测试"), "dashscope",
         "knowledge-base", "mid", "KNOWLEDGE_BASE", 9L, "MySQL");
 
-    ArgumentCaptor<InterviewSessionEntity> captor = ArgumentCaptor.forClass(InterviewSessionEntity.class);
+    ArgumentCaptor<PracticeSessionEntity> captor = ArgumentCaptor.forClass(PracticeSessionEntity.class);
     verify(sessionRepository).save(captor.capture());
-    InterviewSessionEntity saved = captor.getValue();
-    assertThat(saved.getInterviewCategory()).isEqualTo("MySQL");
+    PracticeSessionEntity saved = captor.getValue();
+    assertThat(saved.getSubjectCategory()).isEqualTo("MySQL");
     assertThat(saved.getKnowledgeBaseId()).isEqualTo(9L);
     assertThat(saved.getSourceType()).isEqualTo("KNOWLEDGE_BASE");
   }
 
   @Test
-  @DisplayName("普通面试保存时 interviewCategory 保持 null")
-  void shouldKeepInterviewCategoryNullForNormalSession() {
+  @DisplayName("普通面试保存时 subjectCategory 保持 null")
+  void shouldKeepSubjectCategoryNullForNormalSession() {
     InterviewPersistenceService service = newService();
-    when(sessionRepository.save(any(InterviewSessionEntity.class)))
+    when(sessionRepository.save(any(PracticeSessionEntity.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    service.saveSession("sid2", null, 1, List.of(), "dashscope", "java-backend", "mid");
+    service.saveSession("sid2", null, 1, PaperTree.fromFlatQuestions(List.of(), "测试"), "dashscope", "chinese", "mid");
 
-    ArgumentCaptor<InterviewSessionEntity> captor = ArgumentCaptor.forClass(InterviewSessionEntity.class);
+    ArgumentCaptor<PracticeSessionEntity> captor = ArgumentCaptor.forClass(PracticeSessionEntity.class);
     verify(sessionRepository).save(captor.capture());
-    InterviewSessionEntity saved = captor.getValue();
-    assertThat(saved.getInterviewCategory()).isNull();
+    PracticeSessionEntity saved = captor.getValue();
+    assertThat(saved.getSubjectCategory()).isNull();
     assertThat(saved.getSourceType()).isEqualTo("NORMAL");
     assertThat(saved.getKnowledgeBaseId()).isNull();
   }

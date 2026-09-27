@@ -12,12 +12,18 @@ interface ResumeDetailPageProps {
   resumeId: number;
   onBack: () => void;
   onStartInterview: (resumeId: number) => void;
+  onStartPractice?: (sessionId: string) => void;
 }
 
 type TabType = 'analysis' | 'interview';
 type DetailViewType = 'list' | 'interviewDetail';
 
-export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }: ResumeDetailPageProps) {
+export default function ResumeDetailPage({
+  resumeId,
+  onBack,
+  onStartInterview,
+  onStartPractice,
+}: ResumeDetailPageProps) {
   const location = useLocation();
   const [resume, setResume] = useState<ResumeDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,9 +65,9 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
   // 待处理判断：显式的 PENDING/PROCESSING 状态，或状态未定义且无分析结果
   useEffect(() => {
     const isProcessing = resume && (
-      resume.analyzeStatus === 'PENDING' ||
-      resume.analyzeStatus === 'PROCESSING' ||
-      (resume.analyzeStatus === undefined && (!resume.analyses || resume.analyses.length === 0))
+      resume.analysisStatus === 'PENDING' ||
+      resume.analysisStatus === 'PROCESSING' ||
+      (resume.analysisStatus === undefined && (!resume.analyses || resume.analyses.length === 0))
     );
 
     if (isProcessing && !loading) {
@@ -147,7 +153,14 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
     }
   };
 
-  const handleViewInterview = async (sessionId: string) => {
+  /**
+   * 试卷来源的场次直接复用试卷分析页（作答 / 报告），其余走面试详情。
+   */
+  const handleViewInterview = async (sessionId: string, sourceType?: string | null) => {
+    if (sourceType === 'PAPER') {
+      onStartPractice?.(sessionId);
+      return;
+    }
     setLoadingInterview(true);
     try {
       const detail = await historyApi.getInterviewDetail(sessionId);
@@ -157,6 +170,19 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
       alert('加载面试详情失败');
     } finally {
       setLoadingInterview(false);
+    }
+  };
+
+  /**
+   * 开始作答：后端会复用未交卷的练习，已经交卷则基于同一份切题结果新开一次。
+   */
+  const handleStartPractice = async () => {
+    try {
+      const session = await historyApi.startPaperAttempt(resumeId);
+      onStartPractice?.(session.sessionId);
+    } catch (err) {
+      console.error('开始作答失败', err);
+      alert(err instanceof Error ? err.message : '开始作答失败，请稍后重试');
     }
   };
 
@@ -333,12 +359,13 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
               {activeTab === 'analysis' ? (
                 <AnalysisPanel
                   analysis={latestAnalysis}
-                  analyzeStatus={resume.analyzeStatus}
-                  analyzeError={resume.analyzeError}
+                  analysisStatus={resume.analysisStatus}
+                  analysisError={resume.analysisError}
                   onExport={handleExportAnalysisPdf}
                   exporting={exporting === 'analysis'}
                   onReanalyze={handleReanalyze}
                   reanalyzing={reanalyzing}
+                  onStartPractice={handleStartPractice}
                 />
               ) : (
                   <InterviewPanel

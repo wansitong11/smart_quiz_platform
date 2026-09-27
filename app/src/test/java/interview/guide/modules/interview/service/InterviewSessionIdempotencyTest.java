@@ -9,7 +9,8 @@ import interview.guide.modules.interview.model.CreateInterviewRequest;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO.SessionStatus;
-import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.modules.interview.model.PaperTree;
+import interview.guide.modules.interview.model.PracticeSessionEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -78,7 +79,7 @@ class InterviewSessionIdempotencyTest {
     String requestId = "request-20260803";
     String existingSessionId = "existing-session";
     InterviewQuestionDTO question = InterviewQuestionDTO.create(0, "什么是 JVM？", "JVM", "JVM");
-    InterviewSessionEntity entity = new InterviewSessionEntity();
+    PracticeSessionEntity entity = new PracticeSessionEntity();
     entity.setSessionId(existingSessionId);
     entity.setRequestId(requestId);
     when(redisService.get("interview:create:result:" + requestId)).thenReturn(null);
@@ -89,7 +90,7 @@ class InterviewSessionIdempotencyTest {
         null,
         null,
         null,
-        List.of(question),
+        PaperTree.fromFlatQuestions(List.of(question), "幂等测试"),
         0,
         SessionStatus.CREATED,
         objectMapper
@@ -101,7 +102,7 @@ class InterviewSessionIdempotencyTest {
         null,
         true,
         "glm",
-        "java-backend",
+        "chinese",
         "mid",
         null,
         null,

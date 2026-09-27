@@ -80,7 +80,7 @@ app:
     evaluation:
       batch-size: 8
   resume:
-    upload-dir: ${java.io.tmpdir}/ai-interview/resumes
+    upload-dir: ${java.io.tmpdir}/smart-quiz-platform/resumes
     allowed-types:
       - application/pdf
       - application/msword
@@ -91,7 +91,7 @@ app:
     endpoint: http://localhost:9000
     access-key: minioadmin
     secret-key: minioadmin
-    bucket: interview-guide
+    bucket: smart-quiz
     region: us-east-1
     auto-create-bucket: false
 

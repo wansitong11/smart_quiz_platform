@@ -105,6 +105,9 @@ java {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 25
+    // 保留方法参数名：Spring AI 的 @Tool / @ToolParam 依赖参数名生成工具 schema，
+    // 关闭后模型看到的入参会退化成 arg0、arg1。
+    options.compilerArgs << '-parameters'
 }
 
 tasks.named('test') {

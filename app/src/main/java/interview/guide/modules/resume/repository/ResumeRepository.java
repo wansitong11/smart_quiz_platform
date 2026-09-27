@@ -1,6 +1,6 @@
 package interview.guide.modules.resume.repository;
 
-import interview.guide.modules.resume.model.ResumeEntity;
+import interview.guide.modules.resume.model.PracticePaperEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import java.util.List;
@@ -19,16 +19,16 @@ import jakarta.persistence.LockModeType;
  * 简历Repository
  */
 @Repository
-public interface ResumeRepository extends JpaRepository<ResumeEntity, Long> {
+public interface ResumeRepository extends JpaRepository<PracticePaperEntity, Long> {
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT r FROM ResumeEntity r WHERE r.id = :id")
-    Optional<ResumeEntity> findByIdForUpdate(@Param("id") Long id);
+    @Query("SELECT r FROM PracticePaperEntity r WHERE r.id = :id")
+    Optional<PracticePaperEntity> findByIdForUpdate(@Param("id") Long id);
     
     /**
      * 根据文件哈希查找简历（用于去重）
      */
-    Optional<ResumeEntity> findByFileHash(String fileHash);
+    Optional<PracticePaperEntity> findByFileHash(String fileHash);
     
     /**
      * 检查文件哈希是否存在
@@ -40,88 +40,88 @@ public interface ResumeRepository extends JpaRepository<ResumeEntity, Long> {
     /** PENDING → PROCESSING 条件领取，返回是否领取成功 */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeStatus = 'PROCESSING', "
-        + "r.analyzeAttemptId = :attemptId, r.analyzeUpdatedAt = :now "
-        + "WHERE r.id = :id AND r.analyzeStatus = 'PENDING'")
+    @Query("UPDATE PracticePaperEntity r SET r.analysisStatus = 'PROCESSING', "
+        + "r.analysisAttemptId = :attemptId, r.analysisUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.analysisStatus = 'PENDING'")
     int tryMarkAnalyzeProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
                                  @Param("now") LocalDateTime now);
 
     /** 心跳：仍为 PROCESSING 才推进进展时间 */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeUpdatedAt = :now "
-        + "WHERE r.id = :id AND r.analyzeStatus = 'PROCESSING' "
-        + "AND r.analyzeAttemptId = :attemptId")
+    @Query("UPDATE PracticePaperEntity r SET r.analysisUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.analysisStatus = 'PROCESSING' "
+        + "AND r.analysisAttemptId = :attemptId")
     int heartbeatAnalyzeProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
                                    @Param("now") LocalDateTime now);
 
     /** PROCESSING → COMPLETED（非 PROCESSING 时 no-op） */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeStatus = 'COMPLETED', r.analyzeError = null, "
-        + "r.analyzeAttemptId = null, r.analyzeUpdatedAt = :now "
-        + "WHERE r.id = :id AND r.analyzeStatus = 'PROCESSING' "
-        + "AND r.analyzeAttemptId = :attemptId")
+    @Query("UPDATE PracticePaperEntity r SET r.analysisStatus = 'COMPLETED', r.analysisError = null, "
+        + "r.analysisAttemptId = null, r.analysisUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.analysisStatus = 'PROCESSING' "
+        + "AND r.analysisAttemptId = :attemptId")
     int completeAnalyzeIfProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
                                     @Param("now") LocalDateTime now);
 
     /** 当前执行代次 PROCESSING → FAILED。 */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeStatus = 'FAILED', r.analyzeError = :error, "
-        + "r.analyzeAttemptId = null, r.analyzeUpdatedAt = :now "
-        + "WHERE r.id = :id AND r.analyzeStatus = 'PROCESSING' "
-        + "AND r.analyzeAttemptId = :attemptId")
+    @Query("UPDATE PracticePaperEntity r SET r.analysisStatus = 'FAILED', r.analysisError = :error, "
+        + "r.analysisAttemptId = null, r.analysisUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.analysisStatus = 'PROCESSING' "
+        + "AND r.analysisAttemptId = :attemptId")
     int failAnalyzeIfProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
                                 @Param("error") String error, @Param("now") LocalDateTime now);
 
     /** 尚未领取的 PENDING → FAILED，用于生产者或恢复补投失败。 */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeStatus = 'FAILED', r.analyzeError = :error, "
-        + "r.analyzeAttemptId = null, r.analyzeUpdatedAt = :now "
-        + "WHERE r.id = :id AND r.analyzeStatus = 'PENDING'")
+    @Query("UPDATE PracticePaperEntity r SET r.analysisStatus = 'FAILED', r.analysisError = :error, "
+        + "r.analysisAttemptId = null, r.analysisUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.analysisStatus = 'PENDING'")
     int failAnalyzeIfPending(@Param("id") Long id, @Param("error") String error,
                              @Param("now") LocalDateTime now);
 
     /** PROCESSING → PENDING（重试重置） */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeStatus = 'PENDING', r.analyzeAttemptId = null, "
-        + "r.analyzeUpdatedAt = :now WHERE r.id = :id AND r.analyzeStatus = 'PROCESSING' "
-        + "AND r.analyzeAttemptId = :attemptId")
+    @Query("UPDATE PracticePaperEntity r SET r.analysisStatus = 'PENDING', r.analysisAttemptId = null, "
+        + "r.analysisUpdatedAt = :now WHERE r.id = :id AND r.analysisStatus = 'PROCESSING' "
+        + "AND r.analysisAttemptId = :attemptId")
     int resetAnalyzeToPending(@Param("id") Long id, @Param("attemptId") String attemptId,
                               @Param("now") LocalDateTime now);
 
     /** 恢复补投前原子推进时间（PENDING 且早于阈值） */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeUpdatedAt = :now WHERE r.id = :id AND r.analyzeStatus = 'PENDING' AND r.analyzeUpdatedAt < :threshold")
+    @Query("UPDATE PracticePaperEntity r SET r.analysisUpdatedAt = :now WHERE r.id = :id AND r.analysisStatus = 'PENDING' AND r.analysisUpdatedAt < :threshold")
     int touchQueuedAnalyzeForRecovery(@Param("id") Long id, @Param("threshold") LocalDateTime threshold, @Param("now") LocalDateTime now);
 
     /** PROCESSING 无进展超阈值 → PENDING */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeStatus = 'PENDING', r.analyzeAttemptId = null, "
-        + "r.analyzeUpdatedAt = :now WHERE r.id = :id AND r.analyzeStatus = 'PROCESSING' "
-        + "AND r.analyzeUpdatedAt < :threshold")
+    @Query("UPDATE PracticePaperEntity r SET r.analysisStatus = 'PENDING', r.analysisAttemptId = null, "
+        + "r.analysisUpdatedAt = :now WHERE r.id = :id AND r.analysisStatus = 'PROCESSING' "
+        + "AND r.analysisUpdatedAt < :threshold")
     int resetStaleAnalyzeProcessing(@Param("id") Long id, @Param("threshold") LocalDateTime threshold, @Param("now") LocalDateTime now);
 
     /** 恢复计数 +1 */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeRecoveryCount = r.analyzeRecoveryCount + 1 WHERE r.id = :id")
-    int incrementAnalyzeRecoveryCount(@Param("id") Long id);
+    @Query("UPDATE PracticePaperEntity r SET r.analysisRecoveryCount = r.analysisRecoveryCount + 1 WHERE r.id = :id")
+    int incrementAnalysisRecoveryCount(@Param("id") Long id);
 
     /** 手动重试清零恢复计数 */
     @Transactional
     @Modifying
-    @Query("UPDATE ResumeEntity r SET r.analyzeRecoveryCount = 0 WHERE r.id = :id")
-    int resetAnalyzeRecoveryCount(@Param("id") Long id);
+    @Query("UPDATE PracticePaperEntity r SET r.analysisRecoveryCount = 0 WHERE r.id = :id")
+    int resetAnalysisRecoveryCount(@Param("id") Long id);
 
     /** 卡住任务扫描（带每轮上限） */
-    @Query("SELECT r FROM ResumeEntity r WHERE r.analyzeStatus = :status AND r.analyzeUpdatedAt < :threshold ORDER BY r.analyzeUpdatedAt ASC")
-    List<ResumeEntity> findStaleByAnalyzeStatus(@Param("status") interview.guide.common.model.AsyncTaskStatus status,
+    @Query("SELECT r FROM PracticePaperEntity r WHERE r.analysisStatus = :status AND r.analysisUpdatedAt < :threshold ORDER BY r.analysisUpdatedAt ASC")
+    List<PracticePaperEntity> findStaleByAnalysisStatus(@Param("status") interview.guide.common.model.AsyncTaskStatus status,
                                                 @Param("threshold") LocalDateTime threshold,
                                                 Pageable pageable);
 }

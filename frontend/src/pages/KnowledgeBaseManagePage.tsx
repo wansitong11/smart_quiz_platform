@@ -1,14 +1,12 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
-import {AnimatePresence, motion} from 'framer-motion';
+import {useCallback, useEffect, useState} from 'react';
+import {motion} from 'framer-motion';
 import {
   AlertCircle,
-  Check,
   CheckCircle,
   ChevronDown,
   Clock,
   Database,
   Download,
-  Edit3,
   Eye,
   FileText,
   HardDrive,
@@ -21,11 +19,14 @@ import {
   X,
 } from 'lucide-react';
 import {knowledgeBaseApi, KnowledgeBaseItem, KnowledgeBaseStats, SortOption, VectorStatus,} from '../api/knowledgebase';
+import {kbCategoryApi, type KbCategory} from '../api/kbCategory';
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
 
 interface KnowledgeBaseManagePageProps {
   onUpload: () => void;
   onChat: () => void;
+  /** 带分类去上传：上传页会预选该分类 */
+  onUploadToCategory?: (categoryCode: string) => void;
 }
 
 // 格式化文件大小
@@ -112,23 +113,25 @@ function StatCard({
   );
 }
 
-export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeBaseManagePageProps) {
+export default function KnowledgeBaseManagePage({
+  onUpload, onChat, onUploadToCategory,
+}: KnowledgeBaseManagePageProps) {
   const [stats, setStats] = useState<KnowledgeBaseStats | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('time');
+  // 分类筛选：null = 全部，'' = 未分类，其余为分类 code
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedVectorStatus, setSelectedVectorStatus] = useState<VectorStatus | ''>('');
-  const [categories, setCategories] = useState<string[]>([]);
+  const [categories, setCategories] = useState<KbCategory[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
   const [deleteItem, setDeleteItem] = useState<KnowledgeBaseItem | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // 分类编辑状态
-  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
-  const [editingCategoryValue, setEditingCategoryValue] = useState('');
-  const [savingCategory, setSavingCategory] = useState(false);
-  const categoryInputRef = useRef<HTMLInputElement>(null);
+  // 分类保存状态（行内下拉直接保存，记录正在保存的资料 ID）
+  const [savingCategoryId, setSavingCategoryId] = useState<number | null>(null);
 
   // 重新向量化状态
   const [revectorizing, setRevectorizing] = useState<number | null>(null);
@@ -140,10 +143,12 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
         knowledgeBaseApi.getStatistics(),
         searchKeyword
           ? knowledgeBaseApi.search(searchKeyword)
+          : selectedCategory === ''
+          ? knowledgeBaseApi.getUncategorized()
           : selectedCategory
           ? knowledgeBaseApi.getByCategory(selectedCategory)
           : knowledgeBaseApi.getAllKnowledgeBases(sortBy, selectedVectorStatus || undefined),
-        knowledgeBaseApi.getAllCategories(),
+        kbCategoryApi.list(),
       ]);
       setStats(statsData);
       setKnowledgeBases(kbList);
@@ -161,10 +166,12 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
         knowledgeBaseApi.getStatistics(),
         searchKeyword
           ? knowledgeBaseApi.search(searchKeyword)
+          : selectedCategory === ''
+          ? knowledgeBaseApi.getUncategorized()
           : selectedCategory
           ? knowledgeBaseApi.getByCategory(selectedCategory)
           : knowledgeBaseApi.getAllKnowledgeBases(sortBy, selectedVectorStatus || undefined),
-        knowledgeBaseApi.getAllCategories(),
+        kbCategoryApi.list(),
       ]);
       setStats(statsData);
       setKnowledgeBases(kbList);
@@ -240,44 +247,66 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
         }
   };
 
-  // 开始编辑分类
-  const handleStartEditCategory = (kb: KnowledgeBaseItem) => {
-    setEditingCategoryId(kb.id);
-    setEditingCategoryValue(kb.category || '');
-    setTimeout(() => {
-      categoryInputRef.current?.focus();
-    }, 50);
-  };
-
-  // 取消编辑分类
-  const handleCancelEditCategory = () => {
-    setEditingCategoryId(null);
-    setEditingCategoryValue('');
-  };
-
-  // 保存分类
-  const handleSaveCategory = async (id: number) => {
+  /**
+   * 行内下拉改分类：选中即保存，先本地更新（立即反馈），失败再回滚。
+   */
+  const handleCategoryChange = async (kb: KnowledgeBaseItem, nextCategoryCode: string) => {
+    const previous = kb.categoryCode ?? '';
+    const next = nextCategoryCode || null;
+    setSavingCategoryId(kb.id);
+    setKnowledgeBases(prev => prev.map(item => item.id === kb.id
+      ? {
+        ...item,
+        categoryCode: next,
+        category: categories.find(category => category.code === next)?.name ?? null,
+      }
+      : item));
     try {
-      setSavingCategory(true);
-      const categoryToSave = editingCategoryValue.trim() || null;
-      await knowledgeBaseApi.updateCategory(id, categoryToSave);
-      setEditingCategoryId(null);
-      setEditingCategoryValue('');
-      await loadData();
+      await knowledgeBaseApi.updateCategory(kb.id, next);
+      // 分类计数在服务端，刷新一次保证侧边统计一致
+      await loadDataSilent();
     } catch (error) {
       console.error('更新分类失败:', error);
+      setKnowledgeBases(prev => prev.map(item => item.id === kb.id
+        ? {
+          ...item,
+          categoryCode: previous || null,
+          category: categories.find(category => category.code === previous)?.name ?? null,
+        }
+        : item));
+      alert('修改分类失败，请稍后重试');
     } finally {
-      setSavingCategory(false);
+      setSavingCategoryId(null);
     }
   };
 
-  // 处理分类输入框按键
-  const handleCategoryKeyDown = (e: React.KeyboardEvent, id: number) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSaveCategory(id);
-    } else if (e.key === 'Escape') {
-      handleCancelEditCategory();
+  // 新建分类
+  const handleCreateCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    try {
+      setCreatingCategory(true);
+      await kbCategoryApi.create({ name });
+      setNewCategoryName('');
+      await loadData();
+    } catch (error) {
+      console.error('新建分类失败:', error);
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+
+  // 删除分类（其下资料落回未分类）
+  const handleDeleteCategory = async (category: KbCategory) => {
+    if (category.id === null) return;
+    try {
+      await kbCategoryApi.remove(category.id);
+      if (selectedCategory === category.code) {
+        setSelectedCategory(null);
+      }
+      await loadData();
+    } catch (error) {
+      console.error('删除分类失败:', error);
     }
   };
 
@@ -383,22 +412,46 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
           {/* 分类筛选 */}
           <div className="relative">
             <select
-              value={selectedCategory || ''}
+              value={selectedCategory === null ? '__all__' : selectedCategory}
               onChange={(e) => {
-                setSelectedCategory(e.target.value || null);
+                const value = e.target.value;
+                setSelectedCategory(value === '__all__' ? null : value);
                 setSearchKeyword('');
                 setSelectedVectorStatus('');
               }}
               className="appearance-none pl-4 pr-10 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white cursor-pointer"
             >
-              <option value="">全部分类</option>
+              <option value="__all__">全部分类</option>
               {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
+                <option key={cat.code ?? 'uncategorized'} value={cat.code ?? ''}>
+                  {cat.name}（{cat.knowledgeBaseCount}）
                 </option>
               ))}
             </select>
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+          </div>
+
+          {/* 新建分类 */}
+          <div className="flex items-center gap-2">
+            <input
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleCreateCategory();
+                }
+              }}
+              placeholder="新建分类，如 物理"
+              className="w-40 px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm"
+            />
+            <button
+              onClick={handleCreateCategory}
+              disabled={creatingCategory || !newCategoryName.trim()}
+              className="px-3 py-2 text-sm bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50"
+            >
+              {creatingCategory ? '新建中...' : '新建分类'}
+            </button>
           </div>
 
           {/* 向量化状态筛选 */}
@@ -422,6 +475,46 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
           </div>
         </div>
+
+        {/* 分类管理：语数英为系统预置（可改名，不可删），自定义分类可删除 */}
+        {categories.length > 0 && (
+          <div className="flex items-center flex-wrap gap-2 mt-3 text-sm">
+            <span className="text-slate-500 dark:text-slate-400">分类：</span>
+            {categories.map(category => (
+              <span
+                key={category.code ?? 'uncategorized'}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-slate-600 dark:text-slate-300 ${selectedCategory === category.code
+                  ? 'bg-primary-50 dark:bg-primary-900/30 ring-1 ring-primary-400'
+                  : 'bg-slate-100 dark:bg-slate-700'
+                }`}
+                title={category.pendingVectorCount > 0
+                  ? `${category.pendingVectorCount} 份未完成向量化`
+                  : `${category.knowledgeBaseCount} 份资料`}
+              >
+                {category.name}
+                <span className="text-xs text-slate-400">{category.knowledgeBaseCount}</span>
+                {onUploadToCategory && category.code && (
+                  <button
+                    onClick={() => onUploadToCategory(category.code as string)}
+                    className="text-slate-400 hover:text-primary-500 transition-colors"
+                    title={`上传资料到「${category.name}」`}
+                  >
+                    <Upload className="w-3 h-3" />
+                  </button>
+                )}
+                {!category.isSystem && category.id !== null && (
+                  <button
+                    onClick={() => handleDeleteCategory(category)}
+                    className="text-slate-400 hover:text-red-500 transition-colors"
+                    title="删除分类（资料会落回未分类）"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 知识库列表 */}
@@ -488,78 +581,27 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <AnimatePresence mode="wait">
-                      {editingCategoryId === kb.id ? (
-                        <motion.div
-                          key="editing"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="flex items-center gap-2"
-                        >
-                          <input
-                            ref={categoryInputRef}
-                            type="text"
-                            value={editingCategoryValue}
-                            onChange={(e) => setEditingCategoryValue(e.target.value)}
-                            onKeyDown={(e) => handleCategoryKeyDown(e, kb.id)}
-                            placeholder="输入分类名称"
-                            list="category-suggestions"
-                            className="w-24 px-2 py-1 text-sm border border-primary-300 dark:border-primary-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-                            disabled={savingCategory}
-                          />
-                          <datalist id="category-suggestions">
-                            {categories.map((cat) => (
-                              <option key={cat} value={cat} />
-                            ))}
-                          </datalist>
-                          <button
-                            onClick={() => handleSaveCategory(kb.id)}
-                            disabled={savingCategory}
-                            className="p-1 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors disabled:opacity-50"
-                            title="保存"
-                          >
-                            {savingCategory ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Check className="w-4 h-4" />
-                            )}
-                          </button>
-                          <button
-                            onClick={handleCancelEditCategory}
-                            disabled={savingCategory}
-                            className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 rounded transition-colors disabled:opacity-50"
-                            title="取消"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </motion.div>
-                      ) : (
-                        <motion.div
-                          key="display"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="flex items-center gap-2 group/category"
-                        >
-                          {kb.category ? (
-                              <span
-                                  className="px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-sm">
-                              {kb.category}
-                            </span>
-                          ) : (
-                              <span className="text-slate-400 dark:text-slate-500 text-sm">未分类</span>
-                          )}
-                          <button
-                            onClick={() => handleStartEditCategory(kb)}
-                            className="p-1 text-slate-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/30 rounded opacity-0 group-hover/category:opacity-100 transition-all"
-                            title="编辑分类"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                        </motion.div>
+                    {/* 分类始终可见，选中即保存，不再需要「悬浮出现铅笔 → 保存」两步 */}
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={kb.categoryCode ?? ''}
+                        onChange={(e) => handleCategoryChange(kb, e.target.value)}
+                        disabled={savingCategoryId === kb.id}
+                        title="修改分类（选中即保存）"
+                        className={`w-32 px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-700 disabled:opacity-60 ${kb.categoryCode
+                          ? 'border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200'
+                          : 'border-dashed border-slate-300 dark:border-slate-500 text-slate-400 dark:text-slate-500'
+                        }`}
+                      >
+                        <option value="">未分类</option>
+                        {categories.filter(item => item.code).map((cat) => (
+                          <option key={cat.code} value={cat.code ?? ''}>{cat.name}</option>
+                        ))}
+                      </select>
+                      {savingCategoryId === kb.id && (
+                        <Loader2 className="w-4 h-4 animate-spin text-primary-500" />
                       )}
-                    </AnimatePresence>
+                    </div>
                   </td>
                     <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
                     {formatFileSize(kb.fileSize)}

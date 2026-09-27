@@ -13,11 +13,11 @@ services:
   postgres:
     # 使用带有 pgvector 插件的 PostgreSQL 16 镜像
     image: pgvector/pgvector:pg16
-    container_name: interview-postgres
+    container_name: smart-quiz-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: interview_guide
+      POSTGRES_DB: smart-quiz
     volumes:
       # 数据持久化：确保容器重启或删除后，数据库数据不丢失
       - postgres_data:/var/lib/postgresql/data
@@ -46,7 +46,7 @@ services:
   # =========================================
   redis:
     image: redis:7
-    container_name: interview-redis
+    container_name: smart-quiz-redis
     ports:
       - "6379:6379"
     volumes:
@@ -71,7 +71,7 @@ services:
   # =========================================
   minio:
     image: minio/minio
-    container_name: interview-minio
+    container_name: smart-quiz-minio
     # 启动命令：指定数据目录和控制台地址
     command: server /data --console-address ":9001"
     environment:
@@ -109,11 +109,11 @@ services:
       set -eu;
       /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin &&
       (
-        /usr/bin/mc ls myminio/interview-guide > /dev/null 2>&1 ||
-        /usr/bin/mc mb myminio/interview-guide
+        /usr/bin/mc ls myminio/smart-quiz > /dev/null 2>&1 ||
+        /usr/bin/mc mb myminio/smart-quiz
       ) &&
-      /usr/bin/mc anonymous set public myminio/interview-guide &&
-      /usr/bin/mc ls myminio/interview-guide
+      /usr/bin/mc anonymous set public myminio/smart-quiz &&
+      /usr/bin/mc ls myminio/smart-quiz
       "
 
   # =========================================
@@ -127,7 +127,7 @@ services:
     build:
       context: .
       dockerfile: app/Dockerfile
-    container_name: interview-app
+    container_name: smart-quiz-app
     # 依赖管理：确保基础设施准备好后再启动后端
     depends_on:
       postgres:
@@ -143,7 +143,7 @@ services:
       # 使用服务名 'postgres' 作为主机名，Docker 内部 DNS 会自动解析
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_DB: interview_guide
+      POSTGRES_DB: smart-quiz
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       
@@ -156,7 +156,7 @@ services:
       APP_STORAGE_ENDPOINT: http://minio:9000
       APP_STORAGE_ACCESS_KEY: minioadmin
       APP_STORAGE_SECRET_KEY: minioadmin
-      APP_STORAGE_BUCKET: interview-guide
+      APP_STORAGE_BUCKET: smart-quiz
       APP_STORAGE_REGION: us-east-1
       
       # === AI 模型配置 (必须配置) ===
@@ -180,7 +180,7 @@ services:
   # =========================================
   frontend:
     build: ./frontend
-    container_name: interview-frontend
+    container_name: smart-quiz-frontend
     depends_on:
       - app
     ports:

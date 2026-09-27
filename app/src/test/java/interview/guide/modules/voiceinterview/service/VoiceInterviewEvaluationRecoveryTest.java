@@ -4,7 +4,7 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.listener.VoiceEvaluateStreamProducer;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewEvaluationRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
@@ -58,7 +58,7 @@ class VoiceInterviewEvaluationRecoveryTest {
     private LlmProviderRegistry llmProviderRegistry;
 
     @Mock
-    private RBucket<VoiceInterviewSessionEntity> sessionBucket;
+    private RBucket<OralPracticeSessionEntity> sessionBucket;
 
     private VoiceInterviewService voiceInterviewService;
 
@@ -73,14 +73,14 @@ class VoiceInterviewEvaluationRecoveryTest {
             voiceEvaluateStreamProducer,
             llmProviderRegistry
         );
-        lenient().when(redissonClient.<VoiceInterviewSessionEntity>getBucket(anyString()))
+        lenient().when(redissonClient.<OralPracticeSessionEntity>getBucket(anyString()))
             .thenReturn(sessionBucket);
     }
 
     @Test
     @DisplayName("WebSocket 异常断开结束会话后也应投递评估任务")
     void shouldEnqueueEvaluationAfterDisconnectEndsSession() {
-        VoiceInterviewSessionEntity session = inProgressSession(1L);
+        OralPracticeSessionEntity session = inProgressSession(1L);
         when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
 
         voiceInterviewService.endSessionIfInProgress("1");
@@ -93,7 +93,7 @@ class VoiceInterviewEvaluationRecoveryTest {
     @Test
     @DisplayName("定时结束超时会话后应投递评估任务")
     void shouldEnqueueEvaluationAfterCleaningStaleInterview() {
-        VoiceInterviewSessionEntity session = inProgressSession(2L);
+        OralPracticeSessionEntity session = inProgressSession(2L);
         when(sessionRepository.findByStatusAndStartTimeBefore(
             eq(VoiceInterviewSessionStatus.IN_PROGRESS),
             any(LocalDateTime.class)
@@ -109,7 +109,7 @@ class VoiceInterviewEvaluationRecoveryTest {
     @Test
     @DisplayName("长时间停留在 PENDING 的评估应自动重新投递")
     void shouldRequeueStalePendingEvaluation() {
-        VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+        OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
             .id(3L)
             .status(VoiceInterviewSessionStatus.COMPLETED)
             .evaluateStatus(AsyncTaskStatus.PENDING)
@@ -137,7 +137,7 @@ class VoiceInterviewEvaluationRecoveryTest {
     @Test
     @DisplayName("评估状态更新后应清除会话缓存")
     void shouldInvalidateSessionCacheAfterEvaluationStatusChanges() {
-        VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+        OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
             .id(4L)
             .evaluateStatus(AsyncTaskStatus.PENDING)
             .build();
@@ -173,8 +173,8 @@ class VoiceInterviewEvaluationRecoveryTest {
         assertThat(thresholdAgeMinutes).isEqualTo(3);
     }
 
-    private VoiceInterviewSessionEntity inProgressSession(Long sessionId) {
-        return VoiceInterviewSessionEntity.builder()
+    private OralPracticeSessionEntity inProgressSession(Long sessionId) {
+        return OralPracticeSessionEntity.builder()
             .id(sessionId)
             .status(VoiceInterviewSessionStatus.IN_PROGRESS)
             .startTime(LocalDateTime.now().minusMinutes(5))

@@ -3,9 +3,16 @@ import { streamSse } from './stream';
 
 // ========== 类型定义 ==========
 
+/** 会话检索范围：全部资料 / 指定分类 / 指定资料 */
+export type RagScope = 'ALL' | 'CATEGORY' | 'SELECTED';
+
 export interface RagChatSession {
   id: number;
   title: string;
+  scope: RagScope;
+  categoryCode: string | null;
+  /** 后端算好的范围描述，如「全部资料」「分类：数学」 */
+  scopeDescription: string;
   knowledgeBaseIds: number[];
   createdAt: string;
 }
@@ -14,6 +21,9 @@ export interface RagChatSessionListItem {
   id: number;
   title: string;
   messageCount: number;
+  scope: RagScope;
+  categoryCode: string | null;
+  scopeDescription: string;
   knowledgeBaseNames: string[];
   updatedAt: string;
   isPinned: boolean;
@@ -41,21 +51,33 @@ export interface KnowledgeBaseItem {
 export interface RagChatSessionDetail {
   id: number;
   title: string;
+  scope: RagScope;
+  categoryCode: string | null;
+  scopeDescription: string;
   knowledgeBases: KnowledgeBaseItem[];
   messages: RagChatMessage[];
   createdAt: string;
   updatedAt: string;
 }
 
+/** 创建/切换范围时的入参 */
+export interface RagScopeRequest {
+  scope: RagScope;
+  categoryCode?: string | null;
+  knowledgeBaseIds?: number[];
+}
+
 // ========== API 函数 ==========
 
 export const ragChatApi = {
   /**
-   * 创建新会话
+   * 创建新会话（不传范围 = 全部资料）
    */
-  async createSession(knowledgeBaseIds: number[], title?: string): Promise<RagChatSession> {
+  async createSession(scope: RagScopeRequest, title?: string): Promise<RagChatSession> {
     return request.post<RagChatSession>('/api/rag-chat/sessions', {
-      knowledgeBaseIds,
+      scope: scope.scope,
+      categoryCode: scope.categoryCode ?? null,
+      knowledgeBaseIds: scope.knowledgeBaseIds ?? [],
       title,
     });
   },
@@ -82,11 +104,13 @@ export const ragChatApi = {
   },
 
   /**
-   * 更新会话知识库
+   * 更新会话检索范围
    */
-  async updateKnowledgeBases(sessionId: number, knowledgeBaseIds: number[]): Promise<void> {
-    return request.put(`/api/rag-chat/sessions/${sessionId}/knowledge-bases`, {
-      knowledgeBaseIds,
+  async updateScope(sessionId: number, scope: RagScopeRequest): Promise<void> {
+    return request.put(`/api/rag-chat/sessions/${sessionId}/scope`, {
+      scope: scope.scope,
+      categoryCode: scope.categoryCode ?? null,
+      knowledgeBaseIds: scope.knowledgeBaseIds ?? [],
     });
   },
 

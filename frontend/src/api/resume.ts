@@ -17,4 +17,11 @@ export const resumeApi = {
   async healthCheck(): Promise<{ status: string; service: string }> {
     return request.get('/api/resumes/health');
   },
+
+  /**
+   * 重新切题（重新解析该材料并生成练习）
+   */
+  async reanalyze(resumeId: number): Promise<void> {
+    return request.post<void>(`/api/resumes/${resumeId}/reanalyze`);
+  },
 };

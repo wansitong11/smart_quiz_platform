@@ -31,7 +31,7 @@ class FileStorageServiceTest {
         MockitoAnnotations.openMocks(this);
         StorageConfigProperties storageConfig = new StorageConfigProperties();
         storageConfig.setEndpoint("http://localhost:9000");
-        storageConfig.setBucket("interview-guide");
+        storageConfig.setBucket("smart-quiz");
         fileStorageService = new FileStorageService(s3Client, storageConfig);
     }
 

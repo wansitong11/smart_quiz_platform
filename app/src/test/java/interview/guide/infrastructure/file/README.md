@@ -17,7 +17,7 @@
 
 ```bash
 # 在项目根目录运行
-cd /Users/guide/Desktop/interview-guide
+cd smart_quiz_platform
 
 # 运行所有测试
 ./gradlew test

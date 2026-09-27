@@ -22,6 +22,14 @@ public class InterviewEvaluationProperties {
      * 可二分拆分的最小组数；小于该值按不可拆处理（整段再试一次）。
      */
     private int fallbackMinGroups = 2;
+    /**
+     * 多选题漏选（未选全但没有错选）是否给部分分。
+     */
+    private boolean multiChoicePartialCredit = true;
+    /**
+     * 多选题漏选可得的得分率（0-100），仅在 multiChoicePartialCredit 开启时生效。
+     */
+    private int multiChoicePartialCreditRate = 50;
     private String systemPromptPath = "classpath:prompts/interview-evaluation-system.st";
     private String userPromptPath = "classpath:prompts/interview-evaluation-user.st";
     private String summarySystemPromptPath = "classpath:prompts/interview-evaluation-summary-system.st";

@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -167,11 +166,9 @@ public class VoiceInterviewProperties {
     @Data
     public static class OpeningConfig {
         private Map<String, String> skillQuestions = new LinkedHashMap<>();
-        private List<String> algorithmSkills = List.of("bytedance-backend", "algorithm");
-        private String algorithmQuestion =
-            "你好，我是本场面试官。先做一道算法与数据结构热身题：请你从“哈希表/堆/栈/队列/树/图”里选两个，结合一道你熟悉的题，口述“为什么选这个结构、核心步骤、时间复杂度、空间复杂度、边界条件与反例”。本场不需要写代码，重点看你的思路和取舍。";
-        private String backendQuestion =
-            "你好，我是本场面试官。第一个问题：请用 1 分钟介绍一个你深度参与的项目，按三点回答：业务目标、你负责的核心模块、核心技术栈。说完我会立刻追问一个关键技术决策。";
+        private String defaultQuestion =
+            "你好，我是本次练习的陪练老师。第一个环节：请用 1 分钟口头说说你最近在学的知识点，"
+                + "按三点回答：学的是什么、你掌握到什么程度、还有哪里没弄明白。说完我会追问一个关键概念。";
     }
 
     @Data

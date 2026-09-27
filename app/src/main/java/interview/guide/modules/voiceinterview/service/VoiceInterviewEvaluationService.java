@@ -9,9 +9,9 @@ import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.interview.skill.InterviewSkillService;
 import interview.guide.modules.voiceinterview.dto.VoiceEvaluationDetailDTO;
 import interview.guide.modules.voiceinterview.dto.VoiceEvaluationDetailDTO.AnswerDetail;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewEvaluationEntity;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeEvaluationEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeMessageEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewEvaluationRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
@@ -53,10 +53,10 @@ public class VoiceInterviewEvaluationService {
         try {
             log.info("开始生成语音面试评估: sessionId={}", sessionId);
 
-            VoiceInterviewSessionEntity session = getSession(sessionId);
-            List<VoiceInterviewMessageEntity> messages = messageRepository
+            OralPracticeSessionEntity session = getSession(sessionId);
+            List<OralPracticeMessageEntity> messages = messageRepository
                 .findBySessionIdAndMessageTypeNotOrderBySequenceNumAsc(
-                    sessionId, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY);
+                    sessionId, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY);
 
             if (messages.isEmpty()) {
                 log.warn("语音面试会话无对话记录，生成空评估结果: sessionId={}", sessionId);
@@ -86,21 +86,21 @@ public class VoiceInterviewEvaluationService {
     }
 
     public VoiceEvaluationDetailDTO getEvaluation(Long sessionId) {
-        VoiceInterviewEvaluationEntity evaluation = evaluationRepository.findBySessionId(sessionId)
+        OralPracticeEvaluationEntity evaluation = evaluationRepository.findBySessionId(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.VOICE_EVALUATION_NOT_FOUND,
                 "评估结果不存在: " + sessionId));
 
         return buildDetailDTO(evaluation);
     }
 
-    private List<QaRecord> buildQaRecords(List<VoiceInterviewMessageEntity> messages) {
+    private List<QaRecord> buildQaRecords(List<OralPracticeMessageEntity> messages) {
         List<QaRecord> records = new ArrayList<>();
         int index = 0;
         PendingQuestion pendingQuestion = null;
 
-        for (VoiceInterviewMessageEntity msg : messages) {
-            String aiText = VoiceInterviewMessageEntity.trimToNull(msg.getAiGeneratedText());
-            String userText = VoiceInterviewMessageEntity.trimToNull(msg.getUserRecognizedText());
+        for (OralPracticeMessageEntity msg : messages) {
+            String aiText = OralPracticeMessageEntity.trimToNull(msg.getAiGeneratedText());
+            String userText = OralPracticeMessageEntity.trimToNull(msg.getUserRecognizedText());
 
             if (pendingQuestion != null && userText != null) {
                 records.add(new QaRecord(
@@ -162,13 +162,13 @@ public class VoiceInterviewEvaluationService {
     }
 
     @Transactional
-    public void saveEvaluationTransactional(Long sessionId, VoiceInterviewSessionEntity session,
+    public void saveEvaluationTransactional(Long sessionId, OralPracticeSessionEntity session,
                                  EvaluationReport report) {
         try {
             List<EvaluationReport.QuestionEvaluation> questionItems = report.questionDetails();
             List<EvaluationReport.ReferenceAnswer> refAnswerItems = report.referenceAnswers();
 
-            VoiceInterviewEvaluationEntity entity = VoiceInterviewEvaluationEntity.builder()
+            OralPracticeEvaluationEntity entity = OralPracticeEvaluationEntity.builder()
                 .sessionId(sessionId)
                 .overallScore(report.overallScore())
                 .overallFeedback(report.overallFeedback())
@@ -190,10 +190,10 @@ public class VoiceInterviewEvaluationService {
     }
 
     @Transactional
-    public void saveEmptyEvaluationTransactional(Long sessionId, VoiceInterviewSessionEntity session) {
+    public void saveEmptyEvaluationTransactional(Long sessionId, OralPracticeSessionEntity session) {
         try {
-            VoiceInterviewEvaluationEntity entity = evaluationRepository.findBySessionId(sessionId)
-                .orElseGet(() -> VoiceInterviewEvaluationEntity.builder().sessionId(sessionId).build());
+            OralPracticeEvaluationEntity entity = evaluationRepository.findBySessionId(sessionId)
+                .orElseGet(() -> OralPracticeEvaluationEntity.builder().sessionId(sessionId).build());
 
             entity.setOverallScore(null);
             entity.setOverallFeedback("本次语音面试未形成有效对话记录，暂无可评估内容。");
@@ -213,7 +213,7 @@ public class VoiceInterviewEvaluationService {
         }
     }
 
-    private VoiceEvaluationDetailDTO buildDetailDTO(VoiceInterviewEvaluationEntity entity) {
+    private VoiceEvaluationDetailDTO buildDetailDTO(OralPracticeEvaluationEntity entity) {
         try {
             List<EvaluationReport.QuestionEvaluation> questionItems = objectMapper.readValue(
                 entity.getQuestionEvaluationsJson(),
@@ -271,7 +271,7 @@ public class VoiceInterviewEvaluationService {
         }
     }
 
-    private VoiceInterviewSessionEntity getSession(Long sessionId) {
+    private OralPracticeSessionEntity getSession(Long sessionId) {
         return sessionRepository.findById(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND,
                 "语音面试会话不存在: " + sessionId));

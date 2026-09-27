@@ -11,8 +11,8 @@ import interview.guide.modules.voiceinterview.dto.VoiceInterviewMessageDTO;
 import interview.guide.modules.voiceinterview.dto.SessionMetaDTO;
 import interview.guide.modules.voiceinterview.dto.SessionResponseDTO;
 import interview.guide.modules.voiceinterview.listener.VoiceEvaluateStreamProducer;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeMessageEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewEvaluationRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
@@ -76,7 +76,7 @@ public class VoiceInterviewService {
             ? request.getLlmProvider()
             : null;
 
-        VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+        OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
                 .userId(DEFAULT_USER_ID)
                 .roleType(effectiveSkillId)
                 .skillId(effectiveSkillId)
@@ -92,7 +92,7 @@ public class VoiceInterviewService {
                 .currentPhase(determineFirstPhase(request))
                 .build();
 
-        VoiceInterviewSessionEntity saved = sessionRepository.save(session);
+        OralPracticeSessionEntity saved = sessionRepository.save(session);
         cacheSession(saved);
 
         log.info("Created voice interview session: {} with template: {}, phase: {}",
@@ -108,7 +108,7 @@ public class VoiceInterviewService {
     @Transactional
     public void endSessionIfInProgress(String sessionId) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = sessionRepository.findById(sessionIdLong).orElse(null);
+        OralPracticeSessionEntity session = sessionRepository.findById(sessionIdLong).orElse(null);
         if (session == null || session.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS) {
             return;
         }
@@ -126,7 +126,7 @@ public class VoiceInterviewService {
     @Transactional
     public void endSession(String sessionId) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = getSession(sessionIdLong);
+        OralPracticeSessionEntity session = getSession(sessionIdLong);
 
         if (session == null) {
             log.warn("Session not found: {}", sessionId);
@@ -137,9 +137,9 @@ public class VoiceInterviewService {
         sendEvaluateTaskAfterCommit(sessionIdLong);
     }
 
-    private void endSession(VoiceInterviewSessionEntity session) {
+    private void endSession(OralPracticeSessionEntity session) {
         session.setEndTime(LocalDateTime.now());
-        session.setCurrentPhase(VoiceInterviewSessionEntity.InterviewPhase.COMPLETED);
+        session.setCurrentPhase(OralPracticeSessionEntity.InterviewPhase.COMPLETED);
         session.setStatus(VoiceInterviewSessionStatus.COMPLETED);
         session.setActualDuration((int) Duration.between(session.getStartTime(), LocalDateTime.now()).toSeconds());
         session.setEvaluateStatus(AsyncTaskStatus.PENDING);
@@ -156,9 +156,9 @@ public class VoiceInterviewService {
      * 通过ID获取会话，支持Redis缓存
      *
      * @param sessionId Session ID (String format, will be converted to Long)
-     * @return VoiceInterviewSessionEntity or null if not found
+     * @return OralPracticeSessionEntity or null if not found
      */
-    public VoiceInterviewSessionEntity getSession(String sessionId) {
+    public OralPracticeSessionEntity getSession(String sessionId) {
         return getSession(parseSessionId(sessionId));
     }
 
@@ -167,17 +167,17 @@ public class VoiceInterviewService {
      * 通过ID获取会话，支持Redis缓存
      *
      * @param sessionId Session ID as Long
-     * @return VoiceInterviewSessionEntity or null if not found
+     * @return OralPracticeSessionEntity or null if not found
      */
-    public VoiceInterviewSessionEntity getSession(Long sessionId) {
+    public OralPracticeSessionEntity getSession(Long sessionId) {
         if (sessionId == null) {
             return null;
         }
 
         // Try cache first
         String cacheKey = getSessionCacheKey(sessionId);
-        RBucket<VoiceInterviewSessionEntity> bucket = redissonClient.getBucket(cacheKey);
-        VoiceInterviewSessionEntity cached = bucket.get();
+        RBucket<OralPracticeSessionEntity> bucket = redissonClient.getBucket(cacheKey);
+        OralPracticeSessionEntity cached = bucket.get();
 
         if (cached != null) {
             log.debug("Session {} found in cache", sessionId);
@@ -198,7 +198,7 @@ public class VoiceInterviewService {
     @Transactional
     public void startPhase(String sessionId, String phaseStr) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = getSession(sessionIdLong);
+        OralPracticeSessionEntity session = getSession(sessionIdLong);
 
         if (session == null) {
             log.warn("Cannot start phase - session not found: {}", sessionId);
@@ -206,10 +206,10 @@ public class VoiceInterviewService {
         }
 
         try {
-            VoiceInterviewSessionEntity.InterviewPhase newPhase =
-                    VoiceInterviewSessionEntity.InterviewPhase.valueOf(phaseStr.toUpperCase());
+            OralPracticeSessionEntity.InterviewPhase newPhase =
+                    OralPracticeSessionEntity.InterviewPhase.valueOf(phaseStr.toUpperCase());
 
-            VoiceInterviewSessionEntity.InterviewPhase oldPhase = session.getCurrentPhase();
+            OralPracticeSessionEntity.InterviewPhase oldPhase = session.getCurrentPhase();
             session.setCurrentPhase(newPhase);
             sessionRepository.save(session);
             cacheSession(session); // Update cache
@@ -228,8 +228,8 @@ public class VoiceInterviewService {
      * @param sessionId Session ID (String format)
      * @return Current InterviewPhase or null if session not found
      */
-    public VoiceInterviewSessionEntity.InterviewPhase getCurrentPhase(String sessionId) {
-        VoiceInterviewSessionEntity session = getSession(sessionId);
+    public OralPracticeSessionEntity.InterviewPhase getCurrentPhase(String sessionId) {
+        OralPracticeSessionEntity session = getSession(sessionId);
         return session != null ? session.getCurrentPhase() : null;
     }
 
@@ -244,15 +244,15 @@ public class VoiceInterviewService {
     @Transactional
     public void saveMessage(String sessionId, String userText, String aiText) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = getSession(sessionIdLong);
+        OralPracticeSessionEntity session = getSession(sessionIdLong);
 
         if (session == null) {
             log.warn("Cannot save message - session not found: {}", sessionId);
             return;
         }
 
-        String normalizedUserText = VoiceInterviewMessageEntity.trimToNull(userText);
-        String normalizedAiText = VoiceInterviewMessageEntity.trimToNull(aiText);
+        String normalizedUserText = OralPracticeMessageEntity.trimToNull(userText);
+        String normalizedAiText = OralPracticeMessageEntity.trimToNull(aiText);
 
         boolean answerAttached = normalizedUserText != null
             && fillLatestUnansweredQuestion(sessionIdLong, normalizedUserText);
@@ -260,7 +260,7 @@ public class VoiceInterviewService {
             return;
         }
 
-        VoiceInterviewMessageEntity message = VoiceInterviewMessageEntity.builder()
+        OralPracticeMessageEntity message = OralPracticeMessageEntity.builder()
                 .sessionId(sessionIdLong)
                 .messageType("DIALOGUE")
                 .phase(session.getCurrentPhase())
@@ -297,19 +297,19 @@ public class VoiceInterviewService {
      * @param sessionId Session ID (String format)
      * @return List of messages ordered by sequence number
      */
-    public List<VoiceInterviewMessageEntity> getConversationHistory(String sessionId) {
+    public List<OralPracticeMessageEntity> getConversationHistory(String sessionId) {
         Long sessionIdLong = parseSessionId(sessionId);
         return messageRepository.findBySessionIdAndMessageTypeNotOrderBySequenceNumAsc(
-            sessionIdLong, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY);
+            sessionIdLong, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY);
     }
 
     /**
      * 读取会话已持久化的上下文摘要行（message_type=SUMMARY）。无则空 Optional。
      */
-    public Optional<VoiceInterviewMessageEntity> loadSummaryRow(String sessionId) {
+    public Optional<OralPracticeMessageEntity> loadSummaryRow(String sessionId) {
         Long sessionIdLong = parseSessionId(sessionId);
         return messageRepository.findFirstBySessionIdAndMessageTypeOrderBySequenceNumAsc(
-            sessionIdLong, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY);
+            sessionIdLong, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY);
     }
 
     /**
@@ -322,12 +322,12 @@ public class VoiceInterviewService {
         Long sessionIdLong = parseSessionId(sessionId);
         sessionRepository.findByIdForUpdate(sessionIdLong)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId));
-        VoiceInterviewMessageEntity row = messageRepository
+        OralPracticeMessageEntity row = messageRepository
             .findFirstBySessionIdAndMessageTypeOrderBySequenceNumAsc(
-                sessionIdLong, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY)
-            .orElseGet(() -> VoiceInterviewMessageEntity.builder()
+                sessionIdLong, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY)
+            .orElseGet(() -> OralPracticeMessageEntity.builder()
                 .sessionId(sessionIdLong)
-                .messageType(VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY)
+                .messageType(OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY)
                 .sequenceNum(-1)
                 .build());
         Integer existingBoundary = row.getSummaryCoveredSequenceNum();
@@ -354,12 +354,12 @@ public class VoiceInterviewService {
         Long sessionIdLong = parseSessionId(sessionId);
         sessionRepository.findByIdForUpdate(sessionIdLong)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId));
-        VoiceInterviewMessageEntity row = messageRepository
+        OralPracticeMessageEntity row = messageRepository
             .findFirstBySessionIdAndMessageTypeOrderBySequenceNumAsc(
-                sessionIdLong, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY)
-            .orElseGet(() -> VoiceInterviewMessageEntity.builder()
+                sessionIdLong, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY)
+            .orElseGet(() -> OralPracticeMessageEntity.builder()
                 .sessionId(sessionIdLong)
-                .messageType(VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY)
+                .messageType(OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY)
                 .build());
         row.setAiGeneratedText(summary);
         row.setSequenceNum(-(coveredTurns + 1));
@@ -395,7 +395,7 @@ public class VoiceInterviewService {
     public void pauseSession(String sessionId, String reason) {
         Long sessionIdLong = parseSessionId(sessionId);
 
-        VoiceInterviewSessionEntity session = sessionRepository.findById(sessionIdLong)
+        OralPracticeSessionEntity session = sessionRepository.findById(sessionIdLong)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId));
 
         if (session.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS) {
@@ -424,7 +424,7 @@ public class VoiceInterviewService {
     public SessionResponseDTO resumeSession(String sessionId) {
         Long sessionIdLong = parseSessionId(sessionId);
 
-        VoiceInterviewSessionEntity session = sessionRepository.findById(sessionIdLong)
+        OralPracticeSessionEntity session = sessionRepository.findById(sessionIdLong)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId));
 
         if (session.getStatus() != VoiceInterviewSessionStatus.PAUSED) {
@@ -436,7 +436,7 @@ public class VoiceInterviewService {
         session.setStatus(VoiceInterviewSessionStatus.IN_PROGRESS);
         session.setResumedAt(LocalDateTime.now());
 
-        VoiceInterviewSessionEntity saved = sessionRepository.save(session);
+        OralPracticeSessionEntity saved = sessionRepository.save(session);
         cacheSession(saved);
 
         log.info("Session {} resumed with {} messages in conversation history",
@@ -456,7 +456,7 @@ public class VoiceInterviewService {
     public List<SessionMetaDTO> getAllSessions(String userId, String status) {
         userId = userId != null ? userId : DEFAULT_USER_ID;
 
-        List<VoiceInterviewSessionEntity> sessions;
+        List<OralPracticeSessionEntity> sessions;
         if (status != null && !status.isEmpty()) {
             VoiceInterviewSessionStatus statusEnum =
                 VoiceInterviewSessionStatus.valueOf(status.toUpperCase());
@@ -489,7 +489,7 @@ public class VoiceInterviewService {
      * @return SessionResponseDTO with session details or null if not found
      */
     public SessionResponseDTO getSessionDTO(Long sessionId) {
-        VoiceInterviewSessionEntity session = getSession(sessionId);
+        OralPracticeSessionEntity session = getSession(sessionId);
 
         if (session == null) {
             return null;
@@ -507,11 +507,11 @@ public class VoiceInterviewService {
      * @param questionCount  Number of questions asked in current phase
      * @return true if should transition, false otherwise
      */
-    public boolean shouldTransitionToNextPhase(VoiceInterviewSessionEntity session,
+    public boolean shouldTransitionToNextPhase(OralPracticeSessionEntity session,
                                                 LocalDateTime phaseStartTime,
                                                 int questionCount) {
-        VoiceInterviewSessionEntity.InterviewPhase currentPhase = session.getCurrentPhase();
-        if (currentPhase == null || currentPhase == VoiceInterviewSessionEntity.InterviewPhase.COMPLETED) {
+        OralPracticeSessionEntity.InterviewPhase currentPhase = session.getCurrentPhase();
+        if (currentPhase == null || currentPhase == OralPracticeSessionEntity.InterviewPhase.COMPLETED) {
             return false;
         }
 
@@ -551,23 +551,23 @@ public class VoiceInterviewService {
      * @param session Current session
      * @return Next InterviewPhase or COMPLETED if no more phases
      */
-    public VoiceInterviewSessionEntity.InterviewPhase getNextPhase(VoiceInterviewSessionEntity session) {
-        VoiceInterviewSessionEntity.InterviewPhase current = session.getCurrentPhase();
+    public OralPracticeSessionEntity.InterviewPhase getNextPhase(OralPracticeSessionEntity session) {
+        OralPracticeSessionEntity.InterviewPhase current = session.getCurrentPhase();
         if (current == null) {
             return getFirstEnabledPhase(session);
         }
 
         return switch (current) {
-            case INTRO -> session.getTechEnabled() ? VoiceInterviewSessionEntity.InterviewPhase.TECH :
-                    session.getProjectEnabled() ? VoiceInterviewSessionEntity.InterviewPhase.PROJECT :
-                            session.getHrEnabled() ? VoiceInterviewSessionEntity.InterviewPhase.HR :
-                                    VoiceInterviewSessionEntity.InterviewPhase.COMPLETED;
-            case TECH -> session.getProjectEnabled() ? VoiceInterviewSessionEntity.InterviewPhase.PROJECT :
-                    session.getHrEnabled() ? VoiceInterviewSessionEntity.InterviewPhase.HR :
-                            VoiceInterviewSessionEntity.InterviewPhase.COMPLETED;
-            case PROJECT -> session.getHrEnabled() ? VoiceInterviewSessionEntity.InterviewPhase.HR :
-                    VoiceInterviewSessionEntity.InterviewPhase.COMPLETED;
-            case HR, COMPLETED -> VoiceInterviewSessionEntity.InterviewPhase.COMPLETED;
+            case INTRO -> session.getTechEnabled() ? OralPracticeSessionEntity.InterviewPhase.TECH :
+                    session.getProjectEnabled() ? OralPracticeSessionEntity.InterviewPhase.PROJECT :
+                            session.getHrEnabled() ? OralPracticeSessionEntity.InterviewPhase.HR :
+                                    OralPracticeSessionEntity.InterviewPhase.COMPLETED;
+            case TECH -> session.getProjectEnabled() ? OralPracticeSessionEntity.InterviewPhase.PROJECT :
+                    session.getHrEnabled() ? OralPracticeSessionEntity.InterviewPhase.HR :
+                            OralPracticeSessionEntity.InterviewPhase.COMPLETED;
+            case PROJECT -> session.getHrEnabled() ? OralPracticeSessionEntity.InterviewPhase.HR :
+                    OralPracticeSessionEntity.InterviewPhase.COMPLETED;
+            case HR, COMPLETED -> OralPracticeSessionEntity.InterviewPhase.COMPLETED;
         };
     }
 
@@ -577,26 +577,26 @@ public class VoiceInterviewService {
      * Determine the first phase based on enabled phases
      * 根据启用的阶段确定第一个阶段
      */
-    private VoiceInterviewSessionEntity.InterviewPhase determineFirstPhase(CreateSessionRequest request) {
-        if (request.getIntroEnabled()) return VoiceInterviewSessionEntity.InterviewPhase.INTRO;
-        if (request.getTechEnabled()) return VoiceInterviewSessionEntity.InterviewPhase.TECH;
-        if (request.getProjectEnabled()) return VoiceInterviewSessionEntity.InterviewPhase.PROJECT;
-        if (request.getHrEnabled()) return VoiceInterviewSessionEntity.InterviewPhase.HR;
-        return VoiceInterviewSessionEntity.InterviewPhase.COMPLETED;
+    private OralPracticeSessionEntity.InterviewPhase determineFirstPhase(CreateSessionRequest request) {
+        if (request.getIntroEnabled()) return OralPracticeSessionEntity.InterviewPhase.INTRO;
+        if (request.getTechEnabled()) return OralPracticeSessionEntity.InterviewPhase.TECH;
+        if (request.getProjectEnabled()) return OralPracticeSessionEntity.InterviewPhase.PROJECT;
+        if (request.getHrEnabled()) return OralPracticeSessionEntity.InterviewPhase.HR;
+        return OralPracticeSessionEntity.InterviewPhase.COMPLETED;
     }
 
     /**
      * Get first enabled phase from session
      */
-    private VoiceInterviewSessionEntity.InterviewPhase getFirstEnabledPhase(VoiceInterviewSessionEntity session) {
-        if (session.getIntroEnabled()) return VoiceInterviewSessionEntity.InterviewPhase.INTRO;
-        if (session.getTechEnabled()) return VoiceInterviewSessionEntity.InterviewPhase.TECH;
-        if (session.getProjectEnabled()) return VoiceInterviewSessionEntity.InterviewPhase.PROJECT;
-        if (session.getHrEnabled()) return VoiceInterviewSessionEntity.InterviewPhase.HR;
-        return VoiceInterviewSessionEntity.InterviewPhase.COMPLETED;
+    private OralPracticeSessionEntity.InterviewPhase getFirstEnabledPhase(OralPracticeSessionEntity session) {
+        if (session.getIntroEnabled()) return OralPracticeSessionEntity.InterviewPhase.INTRO;
+        if (session.getTechEnabled()) return OralPracticeSessionEntity.InterviewPhase.TECH;
+        if (session.getProjectEnabled()) return OralPracticeSessionEntity.InterviewPhase.PROJECT;
+        if (session.getHrEnabled()) return OralPracticeSessionEntity.InterviewPhase.HR;
+        return OralPracticeSessionEntity.InterviewPhase.COMPLETED;
     }
 
-    private SessionResponseDTO buildSessionResponse(VoiceInterviewSessionEntity session) {
+    private SessionResponseDTO buildSessionResponse(OralPracticeSessionEntity session) {
         return SessionResponseDTO.builder()
                 .sessionId(session.getId())
                 .roleType(session.getRoleType())
@@ -611,7 +611,7 @@ public class VoiceInterviewService {
     /**
      * Get phase configuration from properties
      */
-    private VoiceInterviewProperties.DurationConfig getPhaseConfig(VoiceInterviewSessionEntity.InterviewPhase phase) {
+    private VoiceInterviewProperties.DurationConfig getPhaseConfig(OralPracticeSessionEntity.InterviewPhase phase) {
         return switch (phase) {
             case INTRO -> properties.getPhase().getIntro();
             case TECH -> properties.getPhase().getTech();
@@ -630,7 +630,7 @@ public class VoiceInterviewService {
 
     private long countDialogueMessages(Long sessionId) {
         return messageRepository.countBySessionIdAndMessageTypeNot(
-            sessionId, VoiceInterviewMessageEntity.MESSAGE_TYPE_SUMMARY);
+            sessionId, OralPracticeMessageEntity.MESSAGE_TYPE_SUMMARY);
     }
 
     /**
@@ -692,9 +692,9 @@ public class VoiceInterviewService {
     /**
      * Cache session in Redis
      */
-    private void cacheSession(VoiceInterviewSessionEntity session) {
+    private void cacheSession(OralPracticeSessionEntity session) {
         String cacheKey = getSessionCacheKey(session.getId());
-        RBucket<VoiceInterviewSessionEntity> bucket = redissonClient.getBucket(cacheKey);
+        RBucket<OralPracticeSessionEntity> bucket = redissonClient.getBucket(cacheKey);
         bucket.set(session, Duration.ofHours(CACHE_TTL_HOURS));
         log.debug("Cached session: {}", session.getId());
     }
@@ -704,7 +704,7 @@ public class VoiceInterviewService {
      */
     private void invalidateSessionCache(Long sessionId) {
         String cacheKey = getSessionCacheKey(sessionId);
-        RBucket<VoiceInterviewSessionEntity> bucket = redissonClient.getBucket(cacheKey);
+        RBucket<OralPracticeSessionEntity> bucket = redissonClient.getBucket(cacheKey);
         bucket.delete();
         log.debug("Invalidated cache for session: {}", sessionId);
     }
@@ -739,11 +739,11 @@ public class VoiceInterviewService {
     public int cleanupStaleSessions() {
         LocalDateTime staleThreshold = LocalDateTime.now().minusHours(2);
 
-        List<VoiceInterviewSessionEntity> staleSessions = sessionRepository
+        List<OralPracticeSessionEntity> staleSessions = sessionRepository
             .findByStatusAndStartTimeBefore(VoiceInterviewSessionStatus.IN_PROGRESS, staleThreshold);
 
         int cleaned = 0;
-        for (VoiceInterviewSessionEntity session : staleSessions) {
+        for (OralPracticeSessionEntity session : staleSessions) {
             log.info("Cleaning up stale IN_PROGRESS session {}, started at {}",
                 session.getId(), session.getStartTime());
             endSession(session);
@@ -753,10 +753,10 @@ public class VoiceInterviewService {
 
         LocalDateTime pendingStaleThreshold = LocalDateTime.now()
             .minus(PENDING_EVALUATION_REQUEUE_DELAY);
-        List<VoiceInterviewSessionEntity> pendingEvals = sessionRepository
+        List<OralPracticeSessionEntity> pendingEvals = sessionRepository
             .findByEvaluateStatusAndUpdatedAtBefore(AsyncTaskStatus.PENDING, pendingStaleThreshold);
 
-        for (VoiceInterviewSessionEntity session : pendingEvals) {
+        for (OralPracticeSessionEntity session : pendingEvals) {
             log.warn("Requeueing stale PENDING evaluation for session {}, last updated at {}",
                 session.getId(), session.getUpdatedAt());
             session.setEvaluateError(null);
@@ -769,10 +769,10 @@ public class VoiceInterviewService {
 
         LocalDateTime evalStaleThreshold = LocalDateTime.now()
             .minus(PROCESSING_EVALUATION_TIMEOUT);
-        List<VoiceInterviewSessionEntity> stuckEvals = sessionRepository
+        List<OralPracticeSessionEntity> stuckEvals = sessionRepository
             .findByEvaluateStatusAndUpdatedAtBefore(AsyncTaskStatus.PROCESSING, evalStaleThreshold);
 
-        for (VoiceInterviewSessionEntity session : stuckEvals) {
+        for (OralPracticeSessionEntity session : stuckEvals) {
             log.info("Resetting stuck PROCESSING evaluation for session {}", session.getId());
             session.setEvaluateStatus(AsyncTaskStatus.FAILED);
             session.setEvaluateError("评估超时，请重新触发");

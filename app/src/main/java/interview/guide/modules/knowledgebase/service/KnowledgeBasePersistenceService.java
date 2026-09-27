@@ -26,6 +26,7 @@ public class KnowledgeBasePersistenceService {
 
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final VectorRepository vectorRepository;
+    private final KbCategoryService categoryService;
 
     /**
      * 处理重复知识库（更新访问计数）
@@ -43,7 +44,9 @@ public class KnowledgeBasePersistenceService {
             "knowledgeBase", Map.of(
                 "id", kb.getId(),
                 "name", kb.getName(),
-                "category", kb.getCategory() != null ? kb.getCategory() : "",
+                "categoryCode", kb.getCategoryCode() != null ? kb.getCategoryCode() : "",
+                "category", categoryService.nameOf(kb.getCategoryCode()) != null
+                    ? categoryService.nameOf(kb.getCategoryCode()) : "",
                 "fileSize", kb.getFileSize(),
                 "vectorStatus", kb.getVectorStatus() != null ? kb.getVectorStatus().name() : "PENDING"
             ),
@@ -99,13 +102,13 @@ public class KnowledgeBasePersistenceService {
      * 保存新知识库元数据到数据库
      */
     @Transactional(rollbackFor = Exception.class)
-    public KnowledgeBaseEntity saveKnowledgeBase(MultipartFile file, String name, String category,
+    public KnowledgeBaseEntity saveKnowledgeBase(MultipartFile file, String name, String categoryCode,
                                                   String storageKey, String storageUrl, String fileHash) {
         try {
             KnowledgeBaseEntity kb = new KnowledgeBaseEntity();
             kb.setFileHash(fileHash);
             kb.setName(name != null && !name.trim().isEmpty() ? name : extractNameFromFilename(file.getOriginalFilename()));
-            kb.setCategory(category != null && !category.trim().isEmpty() ? category.trim() : null);
+            kb.setCategoryCode(categoryCode != null && !categoryCode.trim().isEmpty() ? categoryCode.trim() : null);
             kb.setOriginalFilename(file.getOriginalFilename());
             kb.setFileSize(file.getSize());
             kb.setContentType(file.getContentType());
@@ -115,7 +118,8 @@ public class KnowledgeBasePersistenceService {
             kb.setVectorUpdatedAt(java.time.LocalDateTime.now());
 
             KnowledgeBaseEntity saved = knowledgeBaseRepository.save(kb);
-            log.info("知识库已保存: id={}, name={}, category={}, hash={}", saved.getId(), saved.getName(), saved.getCategory(), fileHash);
+            log.info("知识库已保存: id={}, name={}, categoryCode={}, hash={}", saved.getId(), saved.getName(),
+                saved.getCategoryCode(), fileHash);
             return saved;
         } catch (Exception e) {
             log.error("保存知识库失败: {}", e.getMessage(), e);

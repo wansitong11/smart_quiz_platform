@@ -1,34 +1,20 @@
 import type { IconType } from 'react-icons';
 import {
-  SiOpenjdk,
-  SiReact,
-  SiPython,
-  SiBytedance,
-  SiAlibabadotcom,
-} from 'react-icons/si';
-import {
+  TbBook2,
+  TbLanguage,
   TbMathFunction,
-  TbTopologyStarRing3,
   TbSparkles,
-  TbTestPipe,
-  TbRobot,
 } from 'react-icons/tb';
 
 /**
  * Skill ID → react-icons 图标映射
- * 优先使用品牌图标（Si*），通用类使用 Tabler Icons（Tb*）
+ * 学科使用 Tabler Icons（Tb*）通用图标
  * 未命中的 skill 使用后端返回的 emoji 作为兜底
  */
 const SKILL_ICON_MAP: Record<string, IconType> = {
-  'java-backend': SiOpenjdk,
-  'frontend': SiReact,
-  'python-backend': SiPython,
-  'bytedance-backend': SiBytedance,
-  'ali-backend': SiAlibabadotcom,
-  'algorithm': TbMathFunction,
-  'system-design': TbTopologyStarRing3,
-  'test-development': TbTestPipe,
-  'ai-agent-dev': TbRobot,
+  'chinese': TbBook2,
+  'math': TbMathFunction,
+  'english': TbLanguage,
   'custom': TbSparkles,
 };
 

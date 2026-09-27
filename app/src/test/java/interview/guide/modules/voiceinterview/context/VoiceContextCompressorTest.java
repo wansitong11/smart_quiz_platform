@@ -2,7 +2,7 @@ package interview.guide.modules.voiceinterview.context;
 
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeMessageEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -45,16 +45,16 @@ class VoiceContextCompressorTest {
             llmProviderRegistry, properties, new DefaultResourceLoader());
     }
 
-    private VoiceInterviewMessageEntity turn(int seq, String ai, String user) {
-        return VoiceInterviewMessageEntity.builder()
+    private OralPracticeMessageEntity turn(int seq, String ai, String user) {
+        return OralPracticeMessageEntity.builder()
                 .sequenceNum(seq)
                 .aiGeneratedText(ai)
                 .userRecognizedText(user)
                 .build();
     }
 
-    private List<VoiceInterviewMessageEntity> turns(int n) {
-        List<VoiceInterviewMessageEntity> list = new ArrayList<>();
+    private List<OralPracticeMessageEntity> turns(int n) {
+        List<OralPracticeMessageEntity> list = new ArrayList<>();
         for (int i = 0; i < n; i++) {
             list.add(turn(i + 1, "面试官问题" + i, "候选人回答" + i));
         }
@@ -69,7 +69,7 @@ class VoiceContextCompressorTest {
         @DisplayName("关闭时返回全量，且与 formatRecent 等价（向后兼容）")
         void disabledReturnsAll() {
             properties.getContextCompression().setEnabled(false);
-            List<VoiceInterviewMessageEntity> all = turns(30);
+            List<OralPracticeMessageEntity> all = turns(30);
 
             VoiceContextCompressor.CompressedHistory r = compressor.compress(all, null, 0);
 
@@ -85,7 +85,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setEnabled(true);
             properties.getContextCompression().setMode(VoiceInterviewProperties.Mode.WINDOW);
             properties.getContextCompression().setWindowSize(20);
-            List<VoiceInterviewMessageEntity> all = turns(30);
+            List<OralPracticeMessageEntity> all = turns(30);
 
             VoiceContextCompressor.CompressedHistory r = compressor.compress(all, null, 0);
 
@@ -103,7 +103,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setWindowSize(20);
             properties.getContextCompression().setSummaryBatchSize(10);
             // total=35 → earlyCount=15 >= 10 → 触发
-            List<VoiceInterviewMessageEntity> all = turns(35);
+            List<OralPracticeMessageEntity> all = turns(35);
             ChatClient chatClient = mockChatClient("合并后的摘要");
 
             VoiceContextCompressor.CompressedHistory r = compressor.compress(all, null, 0);
@@ -122,7 +122,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setMode(VoiceInterviewProperties.Mode.SUMMARY);
             properties.getContextCompression().setWindowSize(20);
             properties.getContextCompression().setSummaryBatchSize(10);
-            List<VoiceInterviewMessageEntity> all = turns(35);
+            List<OralPracticeMessageEntity> all = turns(35);
             ChatClient chatClient = mockChatClient("glm", "合并后的摘要");
 
             VoiceContextCompressor.CompressedHistory result =
@@ -153,7 +153,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setEnabled(true);
             properties.getContextCompression().setMode(VoiceInterviewProperties.Mode.SUMMARY);
             properties.getContextCompression().setWindowSize(20);
-            List<VoiceInterviewMessageEntity> all = turns(15);
+            List<OralPracticeMessageEntity> all = turns(15);
 
             VoiceContextCompressor.CompressedHistory r = compressor.compress(all, null, 0);
 
@@ -170,7 +170,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setWindowSize(20);
             properties.getContextCompression().setSummaryBatchSize(10);
             // total=25 → earlyCount=5 < 10 → 不触发
-            List<VoiceInterviewMessageEntity> all = turns(25);
+            List<OralPracticeMessageEntity> all = turns(25);
 
             VoiceContextCompressor.CompressedHistory r = compressor.compress(all, "已有摘要", 0);
 
@@ -189,7 +189,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setWindowSize(20);
             properties.getContextCompression().setSummaryBatchSize(10);
             // total=35 → earlyCount=15，但传入脏数据 coveredTurns=20（> earlyCount）
-            List<VoiceInterviewMessageEntity> all = turns(35);
+            List<OralPracticeMessageEntity> all = turns(35);
 
             VoiceContextCompressor.CompressedHistory r = compressor.compress(all, "已有摘要", 20);
 
@@ -212,7 +212,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setMode(VoiceInterviewProperties.Mode.SUMMARY);
             properties.getContextCompression().setWindowSize(20);
             properties.getContextCompression().setSummaryBatchSize(10);
-            List<VoiceInterviewMessageEntity> all = turns(35);
+            List<OralPracticeMessageEntity> all = turns(35);
             ChatClient chatClient = mock(ChatClient.class);
             ChatClient.ChatClientRequestSpec spec = mock(ChatClient.ChatClientRequestSpec.class);
             ChatClient.CallResponseSpec callSpec = mock(ChatClient.CallResponseSpec.class);
@@ -238,7 +238,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setMode(VoiceInterviewProperties.Mode.SUMMARY);
             properties.getContextCompression().setWindowSize(20);
             properties.getContextCompression().setSummaryBatchSize(10);
-            List<VoiceInterviewMessageEntity> all = turns(35);
+            List<OralPracticeMessageEntity> all = turns(35);
             ChatClient chatClient = mock(ChatClient.class);
             ChatClient.ChatClientRequestSpec spec = mock(ChatClient.ChatClientRequestSpec.class);
             ChatClient.CallResponseSpec callSpec = mock(ChatClient.CallResponseSpec.class);
@@ -259,7 +259,7 @@ class VoiceContextCompressorTest {
         @Test
         @DisplayName("formatRecent 与原 getHistory 格式化一致：AI+用户成对、孤立 AI 暂挂起")
         void formatRecentMatchesLegacy() {
-            List<VoiceInterviewMessageEntity> all = new ArrayList<>();
+            List<OralPracticeMessageEntity> all = new ArrayList<>();
             all.add(turn(1, "你介绍一下项目", "做过订单系统"));
             all.add(turn(2, "用了什么数据库", null));      // 孤立 AI：挂起
             all.add(turn(3, null, "MySQL 和 Redis"));        // 用户回答，配对上一条 AI
@@ -291,7 +291,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setMaxSummaryChars(maxSummaryChars);
         }
 
-        private int formattedChars(String summary, List<VoiceInterviewMessageEntity> recent) {
+        private int formattedChars(String summary, List<OralPracticeMessageEntity> recent) {
             int chars = summary != null ? summary.length() : 0;
             for (String line : compressor.formatRecent(recent)) {
                 chars += line.length();
@@ -303,7 +303,7 @@ class VoiceContextCompressorTest {
         @DisplayName("5 轮但单轮超长：未达窗口仍受字符预算约束")
         void longSingleTurnRespectsBudget() {
             enableSummary(500, 300);
-            List<VoiceInterviewMessageEntity> all = new ArrayList<>();
+            List<OralPracticeMessageEntity> all = new ArrayList<>();
             all.add(turn(1, "问题".repeat(400), "回答".repeat(400)));
             for (int i = 2; i <= 5; i++) {
                 all.add(turn(i, "短问题" + i, "短回答" + i));
@@ -332,7 +332,7 @@ class VoiceContextCompressorTest {
         @DisplayName("35 轮且摘要成功：摘要 + 最近窗口不超过预算")
         void summaryPlusWindowWithinBudget() {
             enableSummary(5000, 4000);
-            List<VoiceInterviewMessageEntity> all = turns(35);
+            List<OralPracticeMessageEntity> all = turns(35);
             mockChatClient("摘要".repeat(100));
 
             VoiceContextCompressor.CompressedHistory r = compressor.compress(all, null, 0);
@@ -347,7 +347,7 @@ class VoiceContextCompressorTest {
         void budgetTrimsRecentKeepsSummary() {
             enableSummary(12000, 4000);
             // 35 轮：前 15 轮进入摘要，后 20 轮各约 460 字 → 近期约 9200 字
-            List<VoiceInterviewMessageEntity> all = new ArrayList<>();
+            List<OralPracticeMessageEntity> all = new ArrayList<>();
             for (int i = 1; i <= 35; i++) {
                 if (i <= 15) {
                     all.add(turn(i, "短问题" + i, "短回答" + i));
@@ -372,7 +372,7 @@ class VoiceContextCompressorTest {
         @DisplayName("摘要超过 maxSummaryChars：从尾部截断并附加标记")
         void summaryTruncatedWithMarker() {
             enableSummary(5000, 100);
-            List<VoiceInterviewMessageEntity> all = turns(35);
+            List<OralPracticeMessageEntity> all = turns(35);
             mockChatClient("摘".repeat(300));
 
             VoiceContextCompressor.CompressedHistory r = compressor.compress(all, null, 0);
@@ -393,7 +393,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setMode(VoiceInterviewProperties.Mode.WINDOW);
             properties.getContextCompression().setWindowSize(20);
             properties.getContextCompression().setMaxHistoryChars(1000);
-            List<VoiceInterviewMessageEntity> all = new ArrayList<>();
+            List<OralPracticeMessageEntity> all = new ArrayList<>();
             for (int i = 1; i <= 30; i++) {
                 all.add(turn(i, "问".repeat(100), "答".repeat(100)));
             }
@@ -411,7 +411,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setEnabled(true);
             properties.getContextCompression().setMode(VoiceInterviewProperties.Mode.NONE);
             properties.getContextCompression().setMaxHistoryChars(1000);
-            List<VoiceInterviewMessageEntity> all = new ArrayList<>();
+            List<OralPracticeMessageEntity> all = new ArrayList<>();
             for (int i = 1; i <= 30; i++) {
                 all.add(turn(i, "问".repeat(100), "答".repeat(100)));
             }
@@ -432,7 +432,7 @@ class VoiceContextCompressorTest {
             properties.getContextCompression().setMode(VoiceInterviewProperties.Mode.WINDOW);
             properties.getContextCompression().setWindowSize(3);
             properties.getContextCompression().setMaxHistoryChars(50);
-            List<VoiceInterviewMessageEntity> all = List.of(
+            List<OralPracticeMessageEntity> all = List.of(
                 turn(1, "短问题", "短回答"),
                 turn(2, "短问题", "短回答"),
                 turn(3, "超".repeat(500), "长".repeat(500)));
@@ -453,7 +453,7 @@ class VoiceContextCompressorTest {
         @DisplayName("重连：已有摘要覆盖全部早期轮次时不重复摘要")
         void reconnectReusesPersistedSummary() {
             enableSummary(12000, 4000);
-            List<VoiceInterviewMessageEntity> all = turns(35);
+            List<OralPracticeMessageEntity> all = turns(35);
 
             VoiceContextCompressor.CompressedHistory r =
                 compressor.compress(all, "已有摘要", 15);

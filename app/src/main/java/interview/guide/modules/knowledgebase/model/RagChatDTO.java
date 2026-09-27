@@ -1,7 +1,6 @@
 package interview.guide.modules.knowledgebase.model;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,9 +14,17 @@ public class RagChatDTO {
 
     /**
      * 创建会话请求
+     * <p>
+     * scope 缺省时按 knowledgeBaseIds 推断：非空 → SELECTED，空 → ALL（全部资料）。
+     *
+     * @param scope            检索范围：ALL / CATEGORY / SELECTED
+     * @param categoryCode     scope = CATEGORY 时的分类 code
+     * @param knowledgeBaseIds scope = SELECTED 时勾选的资料
+     * @param title            会话标题，可空（自动生成）
      */
     public record CreateSessionRequest(
-        @NotEmpty(message = "至少选择一个知识库")
+        String scope,
+        String categoryCode,
         List<Long> knowledgeBaseIds,
 
         String title  // 可选，为空则自动生成
@@ -40,10 +47,11 @@ public class RagChatDTO {
     ) {}
 
     /**
-     * 更新知识库请求
+     * 更新检索范围请求
      */
-    public record UpdateKnowledgeBasesRequest(
-        @NotEmpty(message = "至少选择一个知识库")
+    public record UpdateScopeRequest(
+        String scope,
+        String categoryCode,
         List<Long> knowledgeBaseIds
     ) {}
 
@@ -55,6 +63,9 @@ public class RagChatDTO {
     public record SessionDTO(
         Long id,
         String title,
+        String scope,
+        String categoryCode,
+        String scopeDescription,
         List<Long> knowledgeBaseIds,
         LocalDateTime createdAt
     ) {}
@@ -66,6 +77,9 @@ public class RagChatDTO {
         Long id,
         String title,
         Integer messageCount,
+        String scope,
+        String categoryCode,
+        String scopeDescription,
         List<String> knowledgeBaseNames,
         LocalDateTime updatedAt,
         Boolean isPinned
@@ -77,6 +91,9 @@ public class RagChatDTO {
     public record SessionDetailDTO(
         Long id,
         String title,
+        String scope,
+        String categoryCode,
+        String scopeDescription,
         List<KnowledgeBaseListItemDTO> knowledgeBases,
         List<MessageDTO> messages,
         LocalDateTime createdAt,

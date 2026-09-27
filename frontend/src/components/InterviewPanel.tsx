@@ -11,7 +11,8 @@ import {Calendar, ChevronRight, Download, MessageSquare, Mic, Trash2, TrendingUp
 interface InterviewPanelProps {
   interviews: InterviewItem[];
   onStartInterview: () => void;
-  onViewInterview: (sessionId: string) => void;
+  /** sourceType 为 PAPER 时外层会跳到试卷分析页，而不是面试详情 */
+  onViewInterview: (sessionId: string, sourceType?: string | null) => void;
   onExportInterview: (sessionId: string) => void;
   onDeleteInterview: (sessionId: string) => void;
   exporting: string | null;
@@ -163,7 +164,7 @@ export default function InterviewPanel({
               total={interviews.length}
               exporting={exporting === interview.sessionId}
               deleting={deletingSessionId === interview.sessionId}
-              onView={() => onViewInterview(interview.sessionId)}
+              onView={() => onViewInterview(interview.sessionId, interview.sourceType)}
               onExport={() => onExportInterview(interview.sessionId)}
               onDelete={(e) => handleDeleteClick(interview.sessionId, e)}
             />

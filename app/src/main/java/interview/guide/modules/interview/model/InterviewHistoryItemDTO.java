@@ -15,6 +15,7 @@ public record InterviewHistoryItemDTO(
     String evaluateStatus,
     String evaluateError,
     Integer overallScore,
+    String sourceType,
     LocalDateTime createdAt,
     LocalDateTime completedAt
 ) {}

@@ -20,6 +20,7 @@ import {
 import {skillApi, type SkillDTO} from '../api/skill';
 import {getTemplateName} from '../utils/voiceInterview';
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
+import {ROUTES} from '../constants/routes';
 import {
   AlertCircle,
   CheckCircle,
@@ -76,7 +77,7 @@ interface UnifiedInterviewItem {
   createdAt: string;
   resumeId?: number;
   knowledgeBaseId?: number;
-  interviewCategory?: string | null;
+  subjectCategory?: string | null;
   voiceSessionId?: number;
 }
 
@@ -195,7 +196,8 @@ function TypeBadge({ item }: { item: UnifiedInterviewItem }) {
 
 interface InterviewHistoryPageProps {
   onBack: () => void;
-  onViewInterview: (sessionId: string, resumeId?: number) => void;
+  /** sourceType 为 PAPER 时由外层跳到试卷分析页（作答 / 报告） */
+  onViewInterview: (sessionId: string, resumeId?: number, sourceType?: string | null) => void;
   onRestartInterview?: (resumeId: number) => void;
   onContinueInterview?: (sessionId: string) => void;
   knowledgeBaseId?: number;
@@ -304,7 +306,7 @@ export default function InterviewHistoryPage({
         createdAt: session.createdAt,
         resumeId: session.resumeId ?? undefined,
         knowledgeBaseId: session.knowledgeBaseId ?? undefined,
-        interviewCategory: session.interviewCategory ?? null,
+        subjectCategory: session.subjectCategory ?? null,
       }));
     } catch {
       return [];
@@ -359,7 +361,7 @@ export default function InterviewHistoryPage({
 
   const handleRowClick = (item: UnifiedInterviewItem) => {
     if (item.type === 'text') {
-      onViewInterview(item.sessionId, item.resumeId);
+      onViewInterview(item.sessionId, item.resumeId, item.sourceType);
     } else if (item.voiceSessionId) {
       const isLive = isLiveStatus(item.status);
       if (isLive) {
@@ -436,10 +438,10 @@ export default function InterviewHistoryPage({
     if (typeFilter !== 'all' && item.type !== typeFilter) return false;
     if (searchTerm && !item.title.toLowerCase().includes(searchTerm.toLowerCase())) return false;
     if (isKnowledgeBaseView) {
-      if (categoryFilter === ALL_DIRECTIONS_VALUE && item.interviewCategory) return false;
+      if (categoryFilter === ALL_DIRECTIONS_VALUE && item.subjectCategory) return false;
       if (categoryFilter !== 'all'
           && categoryFilter !== ALL_DIRECTIONS_VALUE
-          && item.interviewCategory !== categoryFilter) return false;
+          && item.subjectCategory !== categoryFilter) return false;
       if (timeFilter !== 'all') {
         const days = timeFilter === '7d' ? 7 : timeFilter === '30d' ? 30 : 90;
         const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -458,8 +460,8 @@ export default function InterviewHistoryPage({
     const values = new Set<string>();
     let hasUncategorized = false;
     items.forEach(item => {
-      if (item.interviewCategory) {
-        values.add(item.interviewCategory);
+      if (item.subjectCategory) {
+        values.add(item.subjectCategory);
       } else {
         hasUncategorized = true;
       }
@@ -739,7 +741,7 @@ export default function InterviewHistoryPage({
                                 title="面试方向"
                               >
                                 <Tag className="w-3 h-3" />
-                                {getKnowledgeBaseInterviewCategoryLabel(item.interviewCategory)}
+                                {getKnowledgeBaseInterviewCategoryLabel(item.subjectCategory)}
                               </span>
                             )}
                           </div>
@@ -798,7 +800,10 @@ export default function InterviewHistoryPage({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (item.sourceType === 'KNOWLEDGE_BASE') {
+                              if (item.sourceType === 'PAPER') {
+                                // 试卷练习：回到试卷分析页继续作答
+                                navigate(ROUTES.paperPractice(item.sessionId));
+                              } else if (item.sourceType === 'KNOWLEDGE_BASE') {
                                 navigate(`/knowledgebase-interview/${item.sessionId}`, {
                                   state: { knowledgeBaseId: item.knowledgeBaseId },
                                 });

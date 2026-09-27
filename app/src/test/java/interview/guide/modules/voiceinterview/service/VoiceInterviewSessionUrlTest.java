@@ -1,6 +1,6 @@
 package interview.guide.modules.voiceinterview.service;
 
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,16 +19,16 @@ import static org.mockito.Mockito.when;
 class VoiceInterviewSessionUrlTest {
 
   @Mock private RedissonClient redissonClient;
-  @Mock private RBucket<VoiceInterviewSessionEntity> bucket;
+  @Mock private RBucket<OralPracticeSessionEntity> bucket;
   @InjectMocks private VoiceInterviewService service;
 
   @Test
   @DisplayName("会话返回相对 WebSocket 路径，不绑定后端主机和 HTTP 协议")
   void returnsDeploymentIndependentSocketPath() {
-    when(redissonClient.<VoiceInterviewSessionEntity>getBucket(anyString())).thenReturn(bucket);
-    when(bucket.get()).thenReturn(VoiceInterviewSessionEntity.builder()
+    when(redissonClient.<OralPracticeSessionEntity>getBucket(anyString())).thenReturn(bucket);
+    when(bucket.get()).thenReturn(OralPracticeSessionEntity.builder()
         .id(42L)
-        .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.TECH)
+        .currentPhase(OralPracticeSessionEntity.InterviewPhase.TECH)
         .status(VoiceInterviewSessionStatus.IN_PROGRESS)
         .build());
 

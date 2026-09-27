@@ -33,10 +33,10 @@ public final class CommonConstants {
     }
 
     /**
-     * 面试默认值
+     * 练习默认值
      */
     public static final class InterviewDefaults {
-        public static final String SKILL_ID = "java-backend";
+        public static final String SKILL_ID = "chinese";
         public static final String DIFFICULTY = "mid";
 
         private InterviewDefaults() {}

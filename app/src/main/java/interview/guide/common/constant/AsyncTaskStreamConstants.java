@@ -71,27 +71,27 @@ public final class AsyncTaskStreamConstants {
      */
     public static final String FIELD_KB_ID = "kbId";
 
-    // ========== 简历分析 Stream 配置 ==========
+    // ========== 试卷切题 Stream 配置 ==========
 
     /**
-     * 简历分析 Stream Key
+     * 试卷切题 Stream Key
      */
-    public static final String RESUME_ANALYZE_STREAM_KEY = "resume:analyze:stream";
+    public static final String PAPER_EXTRACT_STREAM_KEY = "paper:extract:stream";
 
     /**
-     * 简历分析 Consumer Group 名称
+     * 试卷切题 Consumer Group 名称
      */
-    public static final String RESUME_ANALYZE_GROUP_NAME = "analyze-group";
+    public static final String PAPER_EXTRACT_GROUP_NAME = "paper-extract-group";
 
     /**
-     * 简历分析 Consumer 名称前缀
+     * 试卷切题 Consumer 名称前缀
      */
-    public static final String RESUME_ANALYZE_CONSUMER_PREFIX = "analyze-consumer-";
+    public static final String PAPER_EXTRACT_CONSUMER_PREFIX = "paper-extract-consumer-";
 
     /**
-     * 简历ID字段
+     * 试卷ID字段
      */
-    public static final String FIELD_RESUME_ID = "resumeId";
+    public static final String FIELD_PAPER_ID = "paperId";
 
     // ========== 面试评估 Stream 配置 ==========
 

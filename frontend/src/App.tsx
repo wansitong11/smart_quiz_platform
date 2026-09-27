@@ -9,6 +9,7 @@ import { ROUTE_PATTERNS, ROUTES } from './constants/routes';
 
 // Lazy load components
 const UploadPage = lazy(() => import('./pages/UploadPage'));
+const PaperAnalysisPage = lazy(() => import('./pages/PaperAnalysisPage'));
 const HistoryList = lazy(() => import('./pages/HistoryPage'));
 const ResumeDetailPage = lazy(() => import('./pages/ResumeDetailPage'));
 const Interview = lazy(() => import('./pages/InterviewPage'));
@@ -69,11 +70,16 @@ function ResumeDetailWrapper() {
     openInterviewModalWithResume(id);
   };
 
+  const handleStartPractice = (sessionId: string) => {
+    navigate(ROUTES.paperPractice(sessionId));
+  };
+
   return (
     <ResumeDetailPage
       resumeId={parseInt(resumeId, 10)}
       onBack={handleBack}
       onStartInterview={handleStartInterview}
+      onStartPractice={handleStartPractice}
     />
   );
 }
@@ -192,6 +198,9 @@ function App() {
             {/* 上传页面 */}
             <Route path="upload" element={<UploadPageWrapper />} />
 
+            {/* 试卷分析：上传 → 切题 → 整卷作答 → 报告 */}
+            <Route path="papers" element={<PaperAnalysisPage />} />
+
             {/* 历史记录列表（简历库） */}
             <Route path="history" element={<HistoryListWrapper />} />
 
@@ -263,7 +272,12 @@ function InterviewHistoryWrapper() {
     navigate('/history');
   };
 
-  const handleViewInterview = async (sessionId: string, _resumeId?: number) => {
+  const handleViewInterview = async (sessionId: string, _resumeId?: number, sourceType?: string | null) => {
+    // 试卷来源的场次直接复用试卷分析页：未交卷进作答、已交卷看分析结果
+    if (sourceType === 'PAPER') {
+      navigate(ROUTES.paperPractice(sessionId));
+      return;
+    }
     navigate(`/interviews/${sessionId}`);
   };
 
@@ -388,11 +402,19 @@ function KnowledgeBaseManagePageWrapper() {
     navigate(ROUTES.knowledgebaseUpload);
   };
 
+  const handleUploadToCategory = (categoryCode: string) => {
+    navigate(`${ROUTES.knowledgebaseUpload}?categoryCode=${encodeURIComponent(categoryCode)}`);
+  };
+
   const handleChat = () => {
     navigate('/knowledgebase/chat');
   };
 
-  return <KnowledgeBaseManagePage onUpload={handleUpload} onChat={handleChat} />;
+  return <KnowledgeBaseManagePage
+    onUpload={handleUpload}
+    onChat={handleChat}
+    onUploadToCategory={handleUploadToCategory}
+  />;
 }
 
 // 知识库问答页面包装器

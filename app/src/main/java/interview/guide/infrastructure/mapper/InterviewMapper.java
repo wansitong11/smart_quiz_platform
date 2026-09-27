@@ -1,10 +1,11 @@
 package interview.guide.infrastructure.mapper;
 
-import interview.guide.modules.interview.model.InterviewAnswerEntity;
+import interview.guide.modules.interview.model.PracticeAnswerEntity;
 import interview.guide.modules.interview.model.InterviewDetailDTO;
 import interview.guide.modules.interview.model.InterviewHistoryItemDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
-import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.modules.interview.model.PracticeSessionEntity;
+import interview.guide.modules.interview.model.PaperTree;
 import org.mapstruct.*;
 
 import java.util.List;
@@ -30,22 +31,22 @@ public interface InterviewMapper {
     @Mapping(target = "userAnswer", source = "userAnswer")
     @Mapping(target = "score", source = "score", qualifiedByName = "nullScoreToZero")
     @Mapping(target = "feedback", source = "feedback")
-    InterviewReportDTO.QuestionEvaluation toQuestionEvaluation(InterviewAnswerEntity entity);
+    InterviewReportDTO.QuestionEvaluation toQuestionEvaluation(PracticeAnswerEntity entity);
 
     /**
      * 批量转换面试答案实体
      */
-    List<InterviewReportDTO.QuestionEvaluation> toQuestionEvaluations(List<InterviewAnswerEntity> entities);
+    List<InterviewReportDTO.QuestionEvaluation> toQuestionEvaluations(List<PracticeAnswerEntity> entities);
 
     // ========== AnswerDetailDTO 映射 ==========
 
     /**
-     * InterviewAnswerEntity 转换为 AnswerDetailDTO
+     * PracticeAnswerEntity 转换为 AnswerDetailDTO
      * 注意：keyPoints 需要从 JSON 解析后传入
      */
     @Mapping(target = "keyPoints", source = "keyPoints")
     InterviewDetailDTO.AnswerDetailDTO toAnswerDetailDTO(
-        InterviewAnswerEntity entity,
+        PracticeAnswerEntity entity,
         List<String> keyPoints
     );
 
@@ -53,8 +54,8 @@ public interface InterviewMapper {
      * 批量转换（需要在 Service 层处理 JSON）
      */
     default List<InterviewDetailDTO.AnswerDetailDTO> toAnswerDetailDTOList(
-        List<InterviewAnswerEntity> entities,
-        Function<InterviewAnswerEntity, List<String>> keyPointsExtractor
+        List<PracticeAnswerEntity> entities,
+        Function<PracticeAnswerEntity, List<String>> keyPointsExtractor
     ) {
         return entities.stream()
             .map(e -> toAnswerDetailDTO(e, keyPointsExtractor.apply(e)))
@@ -64,7 +65,7 @@ public interface InterviewMapper {
     // ========== InterviewDetailDTO 映射 ==========
 
     /**
-     * InterviewSessionEntity 转换为 InterviewDetailDTO
+     * PracticeSessionEntity 转换为 InterviewDetailDTO
      * 注意：questions, strengths, improvements, referenceAnswers, answers 需要在 Service 层处理
      */
     @Mapping(target = "status", expression = "java(session.getStatus().toString())")
@@ -76,18 +77,20 @@ public interface InterviewMapper {
     @Mapping(target = "referenceAnswers", source = "referenceAnswers")
     @Mapping(target = "answers", source = "answers")
     InterviewDetailDTO toDetailDTO(
-        InterviewSessionEntity session,
+        PracticeSessionEntity session,
         List<Object> questions,
         List<String> strengths,
         List<String> improvements,
         List<Object> referenceAnswers,
-        List<InterviewDetailDTO.AnswerDetailDTO> answers
+        List<InterviewDetailDTO.AnswerDetailDTO> answers,
+        PaperTree paperTree,
+        List<InterviewDetailDTO.SectionScoreDTO> sectionScores
     );
 
-    // ========== InterviewSessionEntity 更新映射 ==========
+    // ========== PracticeSessionEntity 更新映射 ==========
 
     /**
-     * 从 InterviewReportDTO 更新 InterviewSessionEntity
+     * 从 InterviewReportDTO 更新 PracticeSessionEntity
      * 注意：JSON 字段需要在 Service 层单独设置
      */
     @Mapping(target = "id", ignore = true)
@@ -95,7 +98,6 @@ public interface InterviewMapper {
     @Mapping(target = "resume", ignore = true)
     @Mapping(target = "totalQuestions", ignore = true)
     @Mapping(target = "currentQuestionIndex", ignore = true)
-    @Mapping(target = "questionsJson", ignore = true)
     @Mapping(target = "strengthsJson", ignore = true)
     @Mapping(target = "improvementsJson", ignore = true)
     @Mapping(target = "referenceAnswersJson", ignore = true)
@@ -103,14 +105,14 @@ public interface InterviewMapper {
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "status", ignore = true)
     @Mapping(target = "completedAt", ignore = true)
-    void updateSessionFromReport(InterviewReportDTO report, @MappingTarget InterviewSessionEntity session);
+    void updateSessionFromReport(InterviewReportDTO report, @MappingTarget PracticeSessionEntity session);
 
     // ========== 面试历史列表项映射 ==========
 
     /**
-     * InterviewSessionEntity 转换为面试历史列表项 DTO
+     * PracticeSessionEntity 转换为面试历史列表项 DTO
      */
-    default InterviewHistoryItemDTO toInterviewHistoryItem(InterviewSessionEntity session) {
+    default InterviewHistoryItemDTO toInterviewHistoryItem(PracticeSessionEntity session) {
         return new InterviewHistoryItemDTO(
             session.getId(),
             session.getSessionId(),
@@ -119,6 +121,7 @@ public interface InterviewMapper {
             session.getEvaluateStatus() != null ? session.getEvaluateStatus().name() : null,
             session.getEvaluateError(),
             session.getOverallScore(),
+            session.getSourceType(),
             session.getCreatedAt(),
             session.getCompletedAt()
         );
@@ -127,7 +130,7 @@ public interface InterviewMapper {
     /**
      * 批量转换面试历史
      */
-    default List<InterviewHistoryItemDTO> toInterviewHistoryList(List<InterviewSessionEntity> sessions) {
+    default List<InterviewHistoryItemDTO> toInterviewHistoryList(List<PracticeSessionEntity> sessions) {
         return sessions.stream()
             .map(this::toInterviewHistoryItem)
             .toList();

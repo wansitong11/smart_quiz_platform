@@ -4,8 +4,8 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.dto.CreateSessionRequest;
 import interview.guide.modules.voiceinterview.dto.SessionResponseDTO;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
-import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeMessageEntity;
+import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
@@ -69,7 +69,7 @@ class VoiceInterviewServiceTest {
     private VoiceInterviewProperties properties;
 
     @Mock
-    private RBucket<VoiceInterviewSessionEntity> bucket;
+    private RBucket<OralPracticeSessionEntity> bucket;
 
     @InjectMocks
     private VoiceInterviewService voiceInterviewService;
@@ -88,7 +88,7 @@ class VoiceInterviewServiceTest {
         defaultProperties.setPhase(phaseConfig);
 
         // Setup Redis bucket mock - use lenient to avoid stubbing issues
-        lenient().when(redissonClient.<VoiceInterviewSessionEntity>getBucket(anyString())).thenReturn(bucket);
+        lenient().when(redissonClient.<OralPracticeSessionEntity>getBucket(anyString())).thenReturn(bucket);
         lenient().when(bucket.get()).thenReturn(null);
 
         // Setup properties mock to return default phase config
@@ -114,14 +114,14 @@ class VoiceInterviewServiceTest {
                     .plannedDuration(30)
                     .build();
 
-            VoiceInterviewSessionEntity savedSession = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity savedSession = OralPracticeSessionEntity.builder()
                     .id(1L)
                     .roleType("ali-p8")
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.INTRO)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.INTRO)
                     .status(VoiceInterviewSessionStatus.IN_PROGRESS)
                     .build();
 
-            when(sessionRepository.save(any(VoiceInterviewSessionEntity.class))).thenReturn(savedSession);
+            when(sessionRepository.save(any(OralPracticeSessionEntity.class))).thenReturn(savedSession);
 
             // When
             SessionResponseDTO response = voiceInterviewService.createSession(request);
@@ -134,7 +134,7 @@ class VoiceInterviewServiceTest {
             assertEquals("IN_PROGRESS", response.getStatus());
             assertNotNull(response.getWebSocketUrl());
 
-            verify(sessionRepository, times(1)).save(any(VoiceInterviewSessionEntity.class));
+            verify(sessionRepository, times(1)).save(any(OralPracticeSessionEntity.class));
             verify(bucket, times(1)).set(any(), eq(1L), any());
         }
 
@@ -151,14 +151,14 @@ class VoiceInterviewServiceTest {
                     .plannedDuration(15)
                     .build();
 
-            VoiceInterviewSessionEntity savedSession = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity savedSession = OralPracticeSessionEntity.builder()
                     .id(2L)
                     .roleType("byteance-algo")
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.TECH)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.TECH)
                     .status(VoiceInterviewSessionStatus.IN_PROGRESS)
                     .build();
 
-            when(sessionRepository.save(any(VoiceInterviewSessionEntity.class))).thenReturn(savedSession);
+            when(sessionRepository.save(any(OralPracticeSessionEntity.class))).thenReturn(savedSession);
 
             // When
             SessionResponseDTO response = voiceInterviewService.createSession(request);
@@ -178,25 +178,25 @@ class VoiceInterviewServiceTest {
                     .plannedDuration(25)
                     .build();
 
-            VoiceInterviewSessionEntity savedSession = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity savedSession = OralPracticeSessionEntity.builder()
                     .id(3L)
                     .roleType("tencent-backend")
                     .customJdText("高级Java工程师，熟悉Spring Cloud")
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.INTRO)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.INTRO)
                     .status(VoiceInterviewSessionStatus.IN_PROGRESS)
                     .build();
 
-            when(sessionRepository.save(any(VoiceInterviewSessionEntity.class))).thenReturn(savedSession);
+            when(sessionRepository.save(any(OralPracticeSessionEntity.class))).thenReturn(savedSession);
 
             // When
-            ArgumentCaptor<VoiceInterviewSessionEntity> captor =
-                    ArgumentCaptor.forClass(VoiceInterviewSessionEntity.class);
+            ArgumentCaptor<OralPracticeSessionEntity> captor =
+                    ArgumentCaptor.forClass(OralPracticeSessionEntity.class);
             when(sessionRepository.save(captor.capture())).thenReturn(savedSession);
 
             voiceInterviewService.createSession(request);
 
             // Then
-            VoiceInterviewSessionEntity captured = captor.getValue();
+            OralPracticeSessionEntity captured = captor.getValue();
             assertEquals("高级Java工程师，熟悉Spring Cloud", captured.getCustomJdText());
         }
     }
@@ -213,23 +213,23 @@ class VoiceInterviewServiceTest {
             // Given
             Long sessionId = 1L;
             LocalDateTime startTime = LocalDateTime.now().minusMinutes(10);
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
                     .id(sessionId)
                     .roleType("ali-p8")
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.TECH)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.TECH)
                     .status(VoiceInterviewSessionStatus.IN_PROGRESS)
                     .startTime(startTime)
                     .plannedDuration(30)
                     .build();
 
             when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
-            when(sessionRepository.save(any(VoiceInterviewSessionEntity.class))).thenReturn(session);
+            when(sessionRepository.save(any(OralPracticeSessionEntity.class))).thenReturn(session);
 
             // When
             voiceInterviewService.endSession(sessionId.toString());
 
             // Then
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.COMPLETED, session.getCurrentPhase());
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.COMPLETED, session.getCurrentPhase());
             assertEquals(VoiceInterviewSessionStatus.COMPLETED, session.getStatus());
             assertNotNull(session.getEndTime());
             assertNotNull(session.getActualDuration());
@@ -277,22 +277,22 @@ class VoiceInterviewServiceTest {
         void testResumeSession_LoadsConversationHistory() {
             // Given
             Long sessionId = 1L;
-            VoiceInterviewSessionEntity pausedSession = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity pausedSession = OralPracticeSessionEntity.builder()
                     .id(sessionId)
                     .roleType("ali-p8")
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.TECH)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.TECH)
                     .status(VoiceInterviewSessionStatus.PAUSED)
                     .startTime(LocalDateTime.now().minusMinutes(10))
                     .plannedDuration(30)
                     .build();
 
-            List<VoiceInterviewMessageEntity> history = Arrays.asList(
+            List<OralPracticeMessageEntity> history = Arrays.asList(
                     createMessage(sessionId, 1, "用户：你好"),
                     createMessage(sessionId, 2, "AI：你好，请自我介绍")
             );
 
             when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(pausedSession));
-            when(sessionRepository.save(any(VoiceInterviewSessionEntity.class))).thenReturn(pausedSession);
+            when(sessionRepository.save(any(OralPracticeSessionEntity.class))).thenReturn(pausedSession);
             when(messageRepository.findBySessionIdOrderBySequenceNumAsc(sessionId)).thenReturn(history);
 
             // When
@@ -317,7 +317,7 @@ class VoiceInterviewServiceTest {
         void testResumeSession_InvalidStatus() {
             // Given
             Long sessionId = 1L;
-            VoiceInterviewSessionEntity inProgressSession = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity inProgressSession = OralPracticeSessionEntity.builder()
                     .id(sessionId)
                     .status(VoiceInterviewSessionStatus.IN_PROGRESS)
                     .build();
@@ -345,8 +345,8 @@ class VoiceInterviewServiceTest {
             );
         }
 
-        private VoiceInterviewMessageEntity createMessage(Long sessionId, int sequenceNum, String content) {
-            VoiceInterviewMessageEntity message = new VoiceInterviewMessageEntity();
+        private OralPracticeMessageEntity createMessage(Long sessionId, int sequenceNum, String content) {
+            OralPracticeMessageEntity message = new OralPracticeMessageEntity();
             message.setSessionId(sessionId);
             message.setSequenceNum(sequenceNum);
             message.setUserRecognizedText(content);
@@ -365,9 +365,9 @@ class VoiceInterviewServiceTest {
         void testStartPhase_IntroToTech() {
             // Given
             Long sessionId = 1L;
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
                     .id(sessionId)
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.INTRO)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.INTRO)
                     .build();
 
             when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
@@ -376,7 +376,7 @@ class VoiceInterviewServiceTest {
             voiceInterviewService.startPhase(sessionId.toString(), "TECH");
 
             // Then
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.TECH, session.getCurrentPhase());
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.TECH, session.getCurrentPhase());
             verify(sessionRepository, times(1)).save(session);
             verify(bucket, times(1)).set(any(), eq(1L), any());
         }
@@ -386,9 +386,9 @@ class VoiceInterviewServiceTest {
         void testStartPhase_InvalidPhase() {
             // Given
             Long sessionId = 1L;
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
                     .id(sessionId)
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.INTRO)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.INTRO)
                     .build();
 
             when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
@@ -397,7 +397,7 @@ class VoiceInterviewServiceTest {
             voiceInterviewService.startPhase(sessionId.toString(), "INVALID_PHASE");
 
             // Then - 阶段不应改变
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.INTRO, session.getCurrentPhase());
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.INTRO, session.getCurrentPhase());
             verify(sessionRepository, never()).save(any());
         }
 
@@ -405,65 +405,65 @@ class VoiceInterviewServiceTest {
         @DisplayName("获取下一阶段 - INTRO -> TECH")
         void testGetNextPhase_IntroToTech() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.INTRO)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.INTRO)
                     .techEnabled(true)
                     .build();
 
             // When
-            VoiceInterviewSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
+            OralPracticeSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
 
             // Then
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.TECH, next);
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.TECH, next);
         }
 
         @Test
         @DisplayName("获取下一阶段 - TECH -> PROJECT")
         void testGetNextPhase_TechToProject() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.TECH)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.TECH)
                     .projectEnabled(true)
                     .build();
 
             // When
-            VoiceInterviewSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
+            OralPracticeSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
 
             // Then
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.PROJECT, next);
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.PROJECT, next);
         }
 
         @Test
         @DisplayName("获取下一阶段 - HR -> COMPLETED")
         void testGetNextPhase_HrToCompleted() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.HR)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.HR)
                     .build();
 
             // When
-            VoiceInterviewSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
+            OralPracticeSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
 
             // Then
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.COMPLETED, next);
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.COMPLETED, next);
         }
 
         @Test
         @DisplayName("获取下一阶段 - 跳过未启用的阶段")
         void testGetNextPhase_SkipDisabledPhases() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.INTRO)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.INTRO)
                     .techEnabled(false)
                     .projectEnabled(false)
                     .hrEnabled(true)
                     .build();
 
             // When
-            VoiceInterviewSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
+            OralPracticeSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
 
             // Then
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.HR, next);
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.HR, next);
         }
     }
 
@@ -481,30 +481,30 @@ class VoiceInterviewServiceTest {
             String userText = "我叫张三，有3年Java开发经验";
             String aiText = "你好张三，能详细介绍一下你的项目经验吗？";
 
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
                     .id(sessionId)
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.INTRO)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.INTRO)
                     .build();
 
             when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
             when(messageRepository.findBySessionIdOrderBySequenceNumAsc(sessionId))
                     .thenReturn(Arrays.asList(
-                            VoiceInterviewMessageEntity.builder().sequenceNum(1).build(),
-                            VoiceInterviewMessageEntity.builder().sequenceNum(2).build()
+                            OralPracticeMessageEntity.builder().sequenceNum(1).build(),
+                            OralPracticeMessageEntity.builder().sequenceNum(2).build()
                     ));
 
             // When
             voiceInterviewService.saveMessage(sessionId.toString(), userText, aiText);
 
             // Then
-            ArgumentCaptor<VoiceInterviewMessageEntity> captor =
-                    ArgumentCaptor.forClass(VoiceInterviewMessageEntity.class);
+            ArgumentCaptor<OralPracticeMessageEntity> captor =
+                    ArgumentCaptor.forClass(OralPracticeMessageEntity.class);
             verify(messageRepository, times(1)).save(captor.capture());
 
-            VoiceInterviewMessageEntity savedMessage = captor.getValue();
+            OralPracticeMessageEntity savedMessage = captor.getValue();
             assertEquals(sessionId, savedMessage.getSessionId());
             assertEquals("DIALOGUE", savedMessage.getMessageType());
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.INTRO, savedMessage.getPhase());
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.INTRO, savedMessage.getPhase());
             assertEquals(userText, savedMessage.getUserRecognizedText());
             assertEquals(aiText, savedMessage.getAiGeneratedText());
             assertEquals(3, savedMessage.getSequenceNum()); // Next sequence after 2 existing messages
@@ -516,34 +516,34 @@ class VoiceInterviewServiceTest {
             // Given
             Long sessionId = 1L;
 
-            VoiceInterviewMessageEntity msg1 = VoiceInterviewMessageEntity.builder()
+            OralPracticeMessageEntity msg1 = OralPracticeMessageEntity.builder()
                     .id(1L)
                     .sessionId(sessionId)
                     .sequenceNum(1)
                     .userRecognizedText("第一句话")
                     .build();
 
-            VoiceInterviewMessageEntity msg2 = VoiceInterviewMessageEntity.builder()
+            OralPracticeMessageEntity msg2 = OralPracticeMessageEntity.builder()
                     .id(2L)
                     .sessionId(sessionId)
                     .sequenceNum(2)
                     .aiGeneratedText("第一句回复")
                     .build();
 
-            VoiceInterviewMessageEntity msg3 = VoiceInterviewMessageEntity.builder()
+            OralPracticeMessageEntity msg3 = OralPracticeMessageEntity.builder()
                     .id(3L)
                     .sessionId(sessionId)
                     .sequenceNum(3)
                     .userRecognizedText("第二句话")
                     .build();
 
-            List<VoiceInterviewMessageEntity> messages = Arrays.asList(msg1, msg2, msg3); // 正确顺序
+            List<OralPracticeMessageEntity> messages = Arrays.asList(msg1, msg2, msg3); // 正确顺序
 
             when(messageRepository.findBySessionIdOrderBySequenceNumAsc(sessionId))
                     .thenReturn(messages);
 
             // When
-            List<VoiceInterviewMessageEntity> result =
+            List<OralPracticeMessageEntity> result =
                     voiceInterviewService.getConversationHistory(sessionId.toString());
 
             // Then
@@ -580,16 +580,16 @@ class VoiceInterviewServiceTest {
         void testGetSession_CacheHit() {
             // Given
             Long sessionId = 1L;
-            VoiceInterviewSessionEntity cachedSession = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity cachedSession = OralPracticeSessionEntity.builder()
                     .id(sessionId)
                     .roleType("ali-p8")
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.TECH)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.TECH)
                     .build();
 
             when(bucket.get()).thenReturn(cachedSession);
 
             // When
-            VoiceInterviewSessionEntity result = voiceInterviewService.getSession(sessionId);
+            OralPracticeSessionEntity result = voiceInterviewService.getSession(sessionId);
 
             // Then
             assertNotNull(result);
@@ -605,17 +605,17 @@ class VoiceInterviewServiceTest {
         void testGetSession_CacheMiss() {
             // Given
             Long sessionId = 1L;
-            VoiceInterviewSessionEntity dbSession = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity dbSession = OralPracticeSessionEntity.builder()
                     .id(sessionId)
                     .roleType("byteance-algo")
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.PROJECT)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.PROJECT)
                     .build();
 
             when(bucket.get()).thenReturn(null);
             when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(dbSession));
 
             // When
-            VoiceInterviewSessionEntity result = voiceInterviewService.getSession(sessionId);
+            OralPracticeSessionEntity result = voiceInterviewService.getSession(sessionId);
 
             // Then
             assertNotNull(result);
@@ -629,7 +629,7 @@ class VoiceInterviewServiceTest {
         @DisplayName("获取会话 - null ID")
         void testGetSession_NullId() {
             // When
-            VoiceInterviewSessionEntity result = voiceInterviewService.getSession((Long) null);
+            OralPracticeSessionEntity result = voiceInterviewService.getSession((Long) null);
 
             // Then
             assertNull(result);
@@ -642,10 +642,10 @@ class VoiceInterviewServiceTest {
         void testGetSessionDTO() {
             // Given
             Long sessionId = 1L;
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
                     .id(sessionId)
                     .roleType("tencent-backend")
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.HR)
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.HR)
                     .status(VoiceInterviewSessionStatus.IN_PROGRESS)
                     .startTime(LocalDateTime.now())
                     .plannedDuration(20)
@@ -676,8 +676,8 @@ class VoiceInterviewServiceTest {
         @DisplayName("判断转换 - 达到最大时长强制转换")
         void testShouldTransitionToNextPhase_MaxDuration() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.TECH)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.TECH)
                     .build();
 
             LocalDateTime phaseStartTime = LocalDateTime.now().minusMinutes(16); // 超过 max 15 分钟
@@ -696,8 +696,8 @@ class VoiceInterviewServiceTest {
         @DisplayName("判断转换 - 达到最大问题数")
         void testShouldTransitionToNextPhase_MaxQuestions() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.TECH)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.TECH)
                     .build();
 
             LocalDateTime phaseStartTime = LocalDateTime.now().minusMinutes(5); // 未达 max duration
@@ -716,8 +716,8 @@ class VoiceInterviewServiceTest {
         @DisplayName("判断转换 - 达到建议时长和最小问题数")
         void testShouldTransitionToNextPhase_SuggestedDurationWithMinQuestions() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.PROJECT)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.PROJECT)
                     .build();
 
             LocalDateTime phaseStartTime = LocalDateTime.now().minusMinutes(10); // 达到 suggested 10 分钟
@@ -736,8 +736,8 @@ class VoiceInterviewServiceTest {
         @DisplayName("判断转换 - 未满足条件不转换")
         void testShouldTransitionToNextPhase_NotMet() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.HR)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.HR)
                     .build();
 
             LocalDateTime phaseStartTime = LocalDateTime.now().minusMinutes(2); // 未达 suggested 5 分钟
@@ -756,8 +756,8 @@ class VoiceInterviewServiceTest {
         @DisplayName("判断转换 - COMPLETED阶段不应转换")
         void testShouldTransitionToNextPhase_CompletedPhase() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.COMPLETED)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.COMPLETED)
                     .build();
 
             LocalDateTime phaseStartTime = LocalDateTime.now().minusHours(1);
@@ -776,7 +776,7 @@ class VoiceInterviewServiceTest {
         @DisplayName("判断转换 - null 阶段不转换")
         void testShouldTransitionToNextPhase_NullPhase() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
                     .currentPhase(null)
                     .build();
 
@@ -807,7 +807,7 @@ class VoiceInterviewServiceTest {
             when(sessionRepository.findById(anyLong())).thenReturn(Optional.empty());
 
             // When
-            VoiceInterviewSessionEntity.InterviewPhase phase =
+            OralPracticeSessionEntity.InterviewPhase phase =
                     voiceInterviewService.getCurrentPhase("999");
 
             // Then
@@ -821,7 +821,7 @@ class VoiceInterviewServiceTest {
             String invalidId = "abc123";
 
             // When
-            VoiceInterviewSessionEntity result = voiceInterviewService.getSession(invalidId);
+            OralPracticeSessionEntity result = voiceInterviewService.getSession(invalidId);
 
             // Then
             assertNull(result);
@@ -831,24 +831,24 @@ class VoiceInterviewServiceTest {
         @DisplayName("获取下一阶段 - null 当前阶段")
         void testGetNextPhase_NullCurrentPhase() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
                     .currentPhase(null)
                     .introEnabled(true)
                     .build();
 
             // When
-            VoiceInterviewSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
+            OralPracticeSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
 
             // Then
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.INTRO, next);
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.INTRO, next);
         }
 
         @Test
         @DisplayName("获取下一阶段 - 所有阶段禁用")
         void testGetNextPhase_AllPhasesDisabled() {
             // Given
-            VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                    .currentPhase(VoiceInterviewSessionEntity.InterviewPhase.INTRO)
+            OralPracticeSessionEntity session = OralPracticeSessionEntity.builder()
+                    .currentPhase(OralPracticeSessionEntity.InterviewPhase.INTRO)
                     .introEnabled(false)
                     .techEnabled(false)
                     .projectEnabled(false)
@@ -856,10 +856,10 @@ class VoiceInterviewServiceTest {
                     .build();
 
             // When
-            VoiceInterviewSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
+            OralPracticeSessionEntity.InterviewPhase next = voiceInterviewService.getNextPhase(session);
 
             // Then
-            assertEquals(VoiceInterviewSessionEntity.InterviewPhase.COMPLETED, next);
+            assertEquals(OralPracticeSessionEntity.InterviewPhase.COMPLETED, next);
         }
     }
 }

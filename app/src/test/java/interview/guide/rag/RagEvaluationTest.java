@@ -46,7 +46,7 @@ import static org.assertj.core.api.Assertions.fail;
  * <pre>RUN_RAG_EVAL=true REDIS_DATABASE=1 ./gradlew :app:ragEvaluation --no-daemon</pre>
  *
  * <p>双保险：rag-eval 标签（普通 :app:test 排除）+ RUN_RAG_EVAL 环境变量。
- * 环境使用独立可销毁的 PostgreSQL 逻辑库 interview_guide_rag_eval，不触碰开发库。
+ * 环境使用独立可销毁的 PostgreSQL 逻辑库 smart-quiz-rag-eval，不触碰开发库。
  */
 @Tag("rag-eval")
 @EnabledIfEnvironmentVariable(named = "RUN_RAG_EVAL", matches = "true")
@@ -54,7 +54,9 @@ import static org.assertj.core.api.Assertions.fail;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class RagEvaluationTest {
 
-  private static final String EVAL_DB = "interview_guide_rag_eval";
+  private static final String EVAL_DB = "smart-quiz-rag-eval";
+  /** 库名含连字符，作为 SQL 标识符时必须加双引号。 */
+  private static final String EVAL_DB_IDENTIFIER = "\"" + EVAL_DB + "\"";
   private static final String DATASET = "rag-eval/dataset-v1.jsonl";
   private static final String REPORT_DIR =
       System.getProperty("ragEval.reportDir", "build/reports/rag-eval");
@@ -95,12 +97,12 @@ class RagEvaluationTest {
     String user = env("POSTGRES_USER", "postgres");
     String password = env("POSTGRES_PASSWORD", "123456");
     evalDbUrl = "jdbc:postgresql://" + host + ":" + port + "/" + EVAL_DB;
-    sourceDbUrl = "jdbc:postgresql://" + host + ":" + port + "/" + env("POSTGRES_DB", "interview_guide");
+    sourceDbUrl = "jdbc:postgresql://" + host + ":" + port + "/" + env("POSTGRES_DB", "smart-quiz");
     try (Connection conn = DriverManager.getConnection(
         "jdbc:postgresql://" + host + ":" + port + "/postgres", user, password);
         Statement stmt = conn.createStatement()) {
-      stmt.execute("DROP DATABASE IF EXISTS " + EVAL_DB);
-      stmt.execute("CREATE DATABASE " + EVAL_DB);
+      stmt.execute("DROP DATABASE IF EXISTS " + EVAL_DB_IDENTIFIER);
+      stmt.execute("CREATE DATABASE " + EVAL_DB_IDENTIFIER);
       dbCreated = true;
     } catch (Exception e) {
       fail("RAG 测评前置失败：无法重建独立测评数据库 " + EVAL_DB + "：" + e.getMessage());
@@ -116,7 +118,7 @@ class RagEvaluationTest {
         "jdbc:postgresql://" + env("POSTGRES_HOST", "localhost") + ":" + env("POSTGRES_PORT", "5432") + "/postgres",
         env("POSTGRES_USER", "postgres"), env("POSTGRES_PASSWORD", "123456"));
         Statement stmt = conn.createStatement()) {
-      stmt.execute("DROP DATABASE IF EXISTS " + EVAL_DB + " WITH (FORCE)");
+      stmt.execute("DROP DATABASE IF EXISTS " + EVAL_DB_IDENTIFIER + " WITH (FORCE)");
     } catch (Exception ignored) {
       // 清理失败不影响已生成的报告；下次运行会先 DROP 再 CREATE
     }

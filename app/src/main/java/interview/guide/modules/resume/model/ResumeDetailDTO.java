@@ -18,26 +18,23 @@ public record ResumeDetailDTO(
     LocalDateTime uploadedAt,
     Integer accessCount,
     String resumeText,
-    AsyncTaskStatus analyzeStatus,
-    String analyzeError,
+    AsyncTaskStatus analysisStatus,
+    String analysisError,
     List<AnalysisHistoryDTO> analyses,
     List<InterviewHistoryItemDTO> interviews
 ) {
     /**
-     * 分析历史DTO
+     * 试卷解析摘要 DTO（切题结果概览）
      */
     public record AnalysisHistoryDTO(
         Long id,
-        Integer overallScore,
-        Integer contentScore,
-        Integer structureScore,
-        Integer skillMatchScore,
-        Integer expressionScore,
-        Integer projectScore,
+        Integer questionCount,
+        Integer totalScore,
         String summary,
         LocalDateTime analyzedAt,
-        List<String> strengths,
-        List<Object> suggestions
+        String practiceSessionId,
+        List<String> topics,
+        List<String> warnings
     ) {}
 }
 

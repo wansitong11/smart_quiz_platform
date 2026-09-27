@@ -2,6 +2,8 @@ package interview.guide.modules.interview;
 
 import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.result.Result;
+import interview.guide.modules.interview.model.BatchSubmitAnswerRequest;
+import interview.guide.modules.interview.model.BatchSubmitAnswerResponse;
 import interview.guide.modules.interview.model.CreateInterviewRequest;
 import interview.guide.modules.interview.model.InterviewDetailDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
@@ -12,7 +14,9 @@ import interview.guide.modules.interview.model.SubmitAnswerResponse;
 import interview.guide.modules.interview.service.InterviewHistoryService;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
 import interview.guide.modules.interview.service.InterviewSessionService;
+import interview.guide.modules.resume.service.PaperAttemptService;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -44,6 +48,7 @@ public class InterviewController {
     private final InterviewSessionService sessionService;
     private final InterviewHistoryService historyService;
     private final InterviewPersistenceService persistenceService;
+    private final PaperAttemptService paperAttemptService;
     
     /**
      * 列出所有面试会话（用于面试记录页）
@@ -102,6 +107,24 @@ public class InterviewController {
     }
     
     /**
+     * 整卷交卷（试卷 / 练习材料场景）
+     * <p>
+     * 一次提交整卷答案，后端批量落库并触发批改，适用于可跳题、可回改的做卷子流程。
+     * 限流按 IP 维度收紧（整卷提交代价高），全局维度留出多用户并发的余量。
+     * </p>
+     */
+    @PostMapping("/api/interview/sessions/{sessionId}/answers/batch")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
+    public Result<BatchSubmitAnswerResponse> submitWholePaper(
+            @PathVariable String sessionId,
+            @Valid @RequestBody BatchSubmitAnswerRequest request) {
+        log.info("整卷交卷: 会话{}, 提交{}题", sessionId, request.answers().size());
+        BatchSubmitAnswerResponse response = sessionService.submitWholePaper(sessionId, request.answers());
+        return Result.success(response);
+    }
+
+    /**
      * 生成面试报告
      */
     @GetMapping("/api/interview/sessions/{sessionId}/report")
@@ -109,6 +132,19 @@ public class InterviewController {
         log.info("生成面试报告: {}", sessionId);
         InterviewReportDTO report = sessionService.generateReport(sessionId);
         return Result.success(report);
+    }
+
+    /**
+     * 从这次试卷练习再开一次作答（报告页「再练一遍」）。
+     * <p>
+     * 上一次没交卷就返回那一次；已经交卷则基于同一份切题结果新开一次，
+     * 作答完成后会新增一条练习记录。
+     * </p>
+     */
+    @PostMapping("/api/interview/sessions/{sessionId}/attempts")
+    public Result<InterviewSessionDTO> startAttempt(@PathVariable String sessionId) {
+        log.info("再练一遍: 会话{}", sessionId);
+        return Result.success(paperAttemptService.startAttemptFromSession(sessionId));
     }
     
     /**

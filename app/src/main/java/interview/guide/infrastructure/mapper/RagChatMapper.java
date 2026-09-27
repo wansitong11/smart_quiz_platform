@@ -1,6 +1,5 @@
 package interview.guide.infrastructure.mapper;
 
-import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseListItemDTO;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.MessageDTO;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionDTO;
@@ -8,101 +7,100 @@ import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionDetailDTO;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionListItemDTO;
 import interview.guide.modules.knowledgebase.model.RagChatMessageEntity;
 import interview.guide.modules.knowledgebase.model.RagChatSessionEntity;
-import org.mapstruct.*;
+import interview.guide.modules.knowledgebase.model.RagScopeKind;
+import org.springframework.stereotype.Component;
 
-import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /**
- * RAG聊天相关实体到DTO的映射器
- * 使用MapStruct自动生成转换代码
+ * RAG 聊天实体 → DTO 映射。
+ * <p>
+ * 会话上多了「检索范围」这层语义（含分类展示名），映射时把范围描述一并算好，
+ * 前端不必再自己拼「全部资料 / 分类：数学 / 3 份指定资料」。
+ * </p>
  */
-@Mapper(
-    componentModel = MappingConstants.ComponentModel.SPRING,
-    unmappedTargetPolicy = ReportingPolicy.IGNORE,
-    uses = KnowledgeBaseMapper.class
-)
-public interface RagChatMapper {
-    
-    /**
-     * 将会话实体转换为会话DTO
-     */
-    @Mapping(target = "knowledgeBaseIds", source = "session", qualifiedByName = "extractKnowledgeBaseIds")
-    SessionDTO toSessionDTO(RagChatSessionEntity session);
-    
-    /**
-     * 将消息实体转换为消息DTO
-     */
-    @Mapping(target = "type", source = "message", qualifiedByName = "getTypeString")
-    MessageDTO toMessageDTO(RagChatMessageEntity message);
-    
-    /**
-     * 将消息实体列表转换为消息DTO列表
-     */
-    List<MessageDTO> toMessageDTOList(List<RagChatMessageEntity> messages);
-    
-    /**
-     * 将知识库实体集合转换为知识库名称列表
-     * 支持 Set 和 List 类型
-     */
-    @Named("extractKnowledgeBaseNames")
-    default List<String> extractKnowledgeBaseNames(Collection<KnowledgeBaseEntity> knowledgeBases) {
-        return knowledgeBases.stream()
-            .map(KnowledgeBaseEntity::getName)
-            .toList();
+@Component
+public class RagChatMapper {
+
+    public SessionDTO toSessionDTO(RagChatSessionEntity session, Map<String, String> categoryNames) {
+        return new SessionDTO(
+            session.getId(),
+            session.getTitle(),
+            session.scopeKind().name(),
+            session.getKbCategory(),
+            scopeDescription(session, categoryNames),
+            session.getKnowledgeBaseIds(),
+            session.getCreatedAt()
+        );
     }
-    
-    /**
-     * 从会话实体中提取知识库ID列表
-     */
-    @Named("extractKnowledgeBaseIds")
-    default List<Long> extractKnowledgeBaseIds(RagChatSessionEntity session) {
-        return session.getKnowledgeBaseIds();
+
+    public SessionListItemDTO toSessionListItemDTO(RagChatSessionEntity session,
+                                                   Map<String, String> categoryNames) {
+        return new SessionListItemDTO(
+            session.getId(),
+            session.getTitle(),
+            session.getMessageCount() != null ? session.getMessageCount() : 0,
+            session.scopeKind().name(),
+            session.getKbCategory(),
+            scopeDescription(session, categoryNames),
+            session.getKnowledgeBases().stream().map(kb -> kb.getName()).toList(),
+            session.getUpdatedAt(),
+            session.getIsPinned() != null ? session.getIsPinned() : false
+        );
     }
-    
-    /**
-     * 获取消息类型字符串
-     */
-    @Named("getTypeString")
-    default String getTypeString(RagChatMessageEntity message) {
-        return message.getTypeString();
-    }
-    
-    /**
-     * 将会话实体转换为会话列表项DTO
-     * 需要特殊处理：提取知识库名称列表和处理isPinned的null值
-     */
-    @Mapping(target = "knowledgeBaseNames", source = "session.knowledgeBases", qualifiedByName = "extractKnowledgeBaseNames")
-    @Mapping(target = "isPinned", source = "session", qualifiedByName = "getIsPinnedWithDefault")
-    SessionListItemDTO toSessionListItemDTO(RagChatSessionEntity session);
-    
-    /**
-     * 处理isPinned的null值，默认为false
-     */
-    @Named("getIsPinnedWithDefault")
-    default Boolean getIsPinnedWithDefault(RagChatSessionEntity session) {
-        return session.getIsPinned() != null ? session.getIsPinned() : false;
-    }
-    
-    /**
-     * 将会话实体和消息列表转换为会话详情DTO
-     * 注意：这个方法需要手动实现，因为需要组合多个数据源
-     * 知识库列表的转换在Service层使用KnowledgeBaseMapper完成
-     */
-    default SessionDetailDTO toSessionDetailDTO(
-            RagChatSessionEntity session, 
-            List<RagChatMessageEntity> messages,
-            List<KnowledgeBaseListItemDTO> knowledgeBases) {
-        List<MessageDTO> messageDTOs = toMessageDTOList(messages);
-        
+
+    public SessionDetailDTO toSessionDetailDTO(RagChatSessionEntity session,
+                                               List<RagChatMessageEntity> messages,
+                                               List<KnowledgeBaseListItemDTO> knowledgeBases,
+                                               Map<String, String> categoryNames) {
         return new SessionDetailDTO(
             session.getId(),
             session.getTitle(),
+            session.scopeKind().name(),
+            session.getKbCategory(),
+            scopeDescription(session, categoryNames),
             knowledgeBases,
-            messageDTOs,
+            toMessageDTOList(messages),
             session.getCreatedAt(),
             session.getUpdatedAt()
         );
     }
-}
 
+    public MessageDTO toMessageDTO(RagChatMessageEntity message) {
+        return new MessageDTO(
+            message.getId(),
+            message.getTypeString(),
+            message.getContent(),
+            message.getCreatedAt()
+        );
+    }
+
+    public List<MessageDTO> toMessageDTOList(List<RagChatMessageEntity> messages) {
+        return messages.stream().map(this::toMessageDTO).toList();
+    }
+
+    /**
+     * 范围描述：不需要额外查库（分类名来自调用方批量查出的映射）。
+     */
+    private String scopeDescription(RagChatSessionEntity session, Map<String, String> categoryNames) {
+        RagScopeKind kind = session.scopeKind();
+        return switch (kind) {
+            case ALL -> "全部资料";
+            case CATEGORY -> {
+                String code = session.getKbCategory();
+                String name = code != null && categoryNames != null ? categoryNames.get(code) : null;
+                yield "分类：" + (name != null ? name : code);
+            }
+            case SELECTED -> {
+                int size = session.getKnowledgeBases().size();
+                if (size == 0) {
+                    yield "未选择资料";
+                }
+                yield size == 1
+                    ? "资料：" + session.getKnowledgeBases().iterator().next().getName()
+                    : size + " 份指定资料";
+            }
+        };
+    }
+}

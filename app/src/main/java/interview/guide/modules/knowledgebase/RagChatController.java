@@ -6,7 +6,7 @@ import interview.guide.modules.knowledgebase.model.RagChatDTO.SendMessageRequest
 import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionDTO;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionDetailDTO;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionListItemDTO;
-import interview.guide.modules.knowledgebase.model.RagChatDTO.UpdateKnowledgeBasesRequest;
+import interview.guide.modules.knowledgebase.model.RagChatDTO.UpdateScopeRequest;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.UpdateTitleRequest;
 import interview.guide.modules.knowledgebase.service.RagChatSessionService;
 import jakarta.validation.Valid;
@@ -84,13 +84,14 @@ public class RagChatController {
     }
 
     /**
-     * 更新会话知识库
+     * 更新会话检索范围（全部资料 / 按分类 / 指定资料）
      */
-    @PutMapping("/api/rag-chat/sessions/{sessionId}/knowledge-bases")
-    public Result<Void> updateSessionKnowledgeBases(
+    @PutMapping("/api/rag-chat/sessions/{sessionId}/scope")
+    public Result<Void> updateSessionScope(
             @PathVariable Long sessionId,
-            @Valid @RequestBody UpdateKnowledgeBasesRequest request) {
-        sessionService.updateSessionKnowledgeBases(sessionId, request.knowledgeBaseIds());
+            @RequestBody UpdateScopeRequest request) {
+        sessionService.updateSessionScope(sessionId, request.scope(), request.categoryCode(),
+            request.knowledgeBaseIds());
         return Result.success(null);
     }
 

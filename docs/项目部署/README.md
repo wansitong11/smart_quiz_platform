@@ -55,7 +55,8 @@ Internet
 
 对应文件：
 
-- `deploy/server/Dockerfile.app`、`deploy/server/Dockerfile.frontend`
+- `deploy/server/Dockerfile.app`（后端；构建上下文＝仓库根，因为要 COPY 里面的 `app/build/libs/app.jar`）
+  与 `frontend/Dockerfile`（前端；构建上下文＝`frontend/`，只含 dist + nginx.conf，约 2MB）
 - `deploy/docker-compose.server.yml`（低内存覆盖：内存上限、JVM 压缩参数、回环端口）
 
 具体发版命令见 [运维速查.md](./运维速查.md) 的「发版流程」。

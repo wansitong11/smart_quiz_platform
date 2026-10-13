@@ -27,8 +27,10 @@ services:
   frontend:
     image: smart-quiz-frontend:local
     build:
-      context: .
-      dockerfile: deploy/server/Dockerfile.frontend
+      # 前端只依赖 dist + nginx.conf，上下文收窄到 frontend/（约 2MB），
+      # 与 CI（context: frontend / file: frontend/Dockerfile）保持一致
+      context: ./frontend
+      dockerfile: Dockerfile
     mem_limit: 64m
   postgres:
     mem_limit: 256m

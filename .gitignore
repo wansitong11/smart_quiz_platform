@@ -11,7 +11,13 @@ build
 /app/bin
 # Environment variables
 .env
+.env.prod
+deploy/env.prod
+deploy/certbot/
+backup/
 test-output.txt
+backend.log
+verify-*.log
 # IDEA code analysis
 qodana.yaml
 

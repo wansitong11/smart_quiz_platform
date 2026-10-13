@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase;
 
+import interview.guide.common.exception.ErrorCode;
+
 import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.result.Result;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseListItemDTO;
@@ -85,7 +87,7 @@ public class KnowledgeBaseController {
     public Result<KnowledgeBaseListItemDTO> getKnowledgeBase(@PathVariable Long id) {
         return listService.getKnowledgeBase(id)
                 .map(Result::success)
-                .orElse(Result.error("知识库不存在"));
+                .orElse(Result.error(ErrorCode.NOT_FOUND, "知识库不存在或无权访问"));
     }
 
     /**

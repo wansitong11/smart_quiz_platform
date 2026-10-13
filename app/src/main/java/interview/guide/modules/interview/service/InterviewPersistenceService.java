@@ -1,5 +1,7 @@
 package interview.guide.modules.interview.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.constant.CommonConstants.InterviewDefaults;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
@@ -35,6 +37,8 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class InterviewPersistenceService {
+
+    private final OwnerScope ownerScope;
     
     private final InterviewSessionRepository sessionRepository;
     private final InterviewAnswerRepository answerRepository;
@@ -94,6 +98,17 @@ public class InterviewPersistenceService {
         try {
             PracticeSessionEntity session = new PracticeSessionEntity();
             session.setSessionId(sessionId);
+
+            // 归属人：优先当前登录用户。异步切题线程没有登录上下文（上传 / 重切题都是后台切完再建这份会话），
+            // 这时沿用试卷自身的归属人——否则会取不到用户，把已经切好的题判成切题失败。
+            Optional<PracticePaperEntity> paperOpt = resumeId != null
+                ? resumeRepository.findById(resumeId)
+                : Optional.empty();
+            Long ownerId = ownerScope.optionalOwnerId();
+            if (ownerId == null) {
+                ownerId = paperOpt.map(PracticePaperEntity::getOwnerId).orElse(null);
+            }
+            session.setOwnerId(ownerId);
             session.setRequestId(requestId);
             session.setTotalQuestions(totalQuestions);
             session.setCurrentQuestionIndex(0);
@@ -107,10 +122,7 @@ public class InterviewPersistenceService {
             session.setSubjectCategory(subjectCategory);
 
             // 简历可选：有 resumeId 则关联简历
-            if (resumeId != null) {
-                Optional<PracticePaperEntity> resumeOpt = resumeRepository.findById(resumeId);
-                resumeOpt.ifPresent(session::setResume);
-            }
+            paperOpt.ifPresent(session::setResume);
 
             PracticeSessionEntity saved = sessionRepository.save(session);
             log.info("面试会话已保存: sessionId={}, skillId={}, resumeId={}, sourceType={}",
@@ -176,13 +188,25 @@ public class InterviewPersistenceService {
     /**
      * 保存面试答案
      */
+    /**
+     * 保存模拟测验的组卷参数快照（用于「再测一次」）。
+     * 与生成分离：组卷先落库拿到 sessionId，再把参数写回，避免组卷失败时留下脏配置。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateQuizConfig(String sessionId, String quizConfigJson) {
+        sessionRepository.findBySessionId(sessionId).ifPresent(session -> {
+            session.setQuizConfigJson(quizConfigJson);
+            sessionRepository.save(session);
+        });
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public PracticeAnswerEntity saveAnswer(String sessionId, int questionIndex,
                                             String question, String category,
                                             String userAnswer, int score, String feedback) {
         Optional<PracticeSessionEntity> sessionOpt = sessionRepository.findBySessionId(sessionId);
         if (sessionOpt.isEmpty()) {
-            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOT_FOUND, "答题记录不存在或无权访问");
         }
 
         PracticeAnswerEntity answer = answerRepository
@@ -231,7 +255,7 @@ public class InterviewPersistenceService {
                                       List<InterviewQuestionDTO> questions,
                                       List<AnswerSubmission> submissions) {
         PracticeSessionEntity session = sessionRepository.findBySessionId(sessionId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND));
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "答题记录不存在或无权访问"));
 
         java.util.Map<Integer, PracticeAnswerEntity> existing = answerRepository
             .findBySession_SessionIdOrderByQuestionIndex(sessionId).stream()
@@ -358,7 +382,8 @@ public class InterviewPersistenceService {
      * 根据会话ID获取会话
      */
     public Optional<PracticeSessionEntity> findBySessionId(String sessionId) {
-        return sessionRepository.findBySessionId(sessionId);
+        // 异步消费者/调度器没有请求上下文，effectiveOwnerId() 返回 null → 不过滤，行为与改造前一致
+        return sessionRepository.findBySessionIdScoped(sessionId, ownerScope.effectiveOwnerId());
     }
 
     /**
@@ -384,7 +409,7 @@ public class InterviewPersistenceService {
      * 获取所有面试记录（按创建时间倒序）
      */
     public List<PracticeSessionEntity> findAll() {
-        return sessionRepository.findAllByOrderByCreatedAtDesc();
+        return sessionRepository.findAllScoped(ownerScope.effectiveOwnerId());
     }
     
     /**
@@ -408,13 +433,11 @@ public class InterviewPersistenceService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteSessionBySessionId(String sessionId) {
-        Optional<PracticeSessionEntity> sessionOpt = sessionRepository.findBySessionId(sessionId);
-        if (sessionOpt.isPresent()) {
-            sessionRepository.delete(sessionOpt.get());
-            log.info("已删除面试会话: sessionId={}", sessionId);
-        } else {
-            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
-        }
+        // 归属校验：别人的会话一律按"不存在"处理（决策 5：越权返回 404，不暴露存在性）
+        PracticeSessionEntity session = findBySessionId(sessionId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "答题记录不存在或无权访问"));
+        sessionRepository.delete(session);
+        log.info("已删除面试会话: sessionId={}", sessionId);
     }
     
     /**

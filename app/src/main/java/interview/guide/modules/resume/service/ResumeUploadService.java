@@ -1,5 +1,7 @@
 package interview.guide.modules.resume.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.config.AppConfigProperties;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
@@ -27,6 +29,8 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class ResumeUploadService {
+
+    private final OwnerScope ownerScope;
 
     private final ResumeParseService parseService;
     private final FileStorageService storageService;
@@ -190,14 +194,16 @@ public class ResumeUploadService {
      * @param resumeId 简历ID
      */
     public void reanalyze(Long resumeId) {
-        resumeRepository.findById(resumeId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
+        // 归属校验：别人的试卷既不能重切、也不能触发重新投递
+        resumeRepository.findByIdScoped(resumeId, ownerScope.effectiveOwnerId())
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "试卷不存在或无权访问"));
 
         log.info("开始重新分析简历: resumeId={}", resumeId);
 
         transactionalExecutor.run(() -> {
-            PracticePaperEntity resume = resumeRepository.findById(resumeId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
+            PracticePaperEntity resume = resumeRepository
+                .findByIdScoped(resumeId, ownerScope.effectiveOwnerId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "试卷不存在或无权访问"));
             resume.setAnalysisStatus(AsyncTaskStatus.PENDING);
             resume.setAnalysisError(null);
             resume.setAnalysisAttemptId(null);

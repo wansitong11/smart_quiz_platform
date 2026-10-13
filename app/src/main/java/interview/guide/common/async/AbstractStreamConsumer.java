@@ -1,6 +1,8 @@
 package interview.guide.common.async;
 
 import interview.guide.common.constant.AsyncTaskStreamConstants;
+import interview.guide.common.ai.AiErrorMessages;
+import interview.guide.common.exception.BusinessException;
 import interview.guide.common.log.ErrorLogSanitizer;
 import interview.guide.infrastructure.redis.RedisService;
 import jakarta.annotation.PostConstruct;
@@ -132,15 +134,40 @@ public abstract class AbstractStreamConsumer<T> {
         } catch (Exception e) {
             log.error("{} task failed: {}, error={}", taskDisplayName(), payloadIdentifier(payload),
                 ErrorLogSanitizer.summarize(e), ErrorLogSanitizer.forLogging(e));
+
+            // 业务异常是确定性失败（文件没有文字层、素材缺失、参数不合法……），重试不会变好，
+            // 直接落库真实原因，避免用户只看到一句"failed after retry 3"无从下手
+            if (e instanceof BusinessException) {
+                markFailed(payload, truncateError(describeFailure(e)));
+                ackMessage(messageId);
+                return;
+            }
+
             if (retryCount < AsyncTaskStreamConstants.MAX_RETRY_COUNT) {
                 retryMessage(payload, retryCount + 1);
             } else {
                 markFailed(payload, truncateError(
-                    taskDisplayName() + " failed after retry " + retryCount
+                    taskDisplayName() + " failed after retry " + retryCount + "：" + describeFailure(e)
                 ));
             }
             ackMessage(messageId);
         }
+    }
+
+    /**
+     * 生成写入失败原因字段的简短描述，供界面直接展示。
+     * <ul>
+     *   <li>{@link BusinessException} 的 message 是本服务自己编写的，安全且诊断价值最高；</li>
+     *   <li>AI 调用类异常用 {@link AiErrorMessages} 翻译成人话（额度不足 / 密钥失效 / 网络不通）；</li>
+     *   <li>其余异常只保留类型名，避免把外部响应正文或用户输入回显到界面。</li>
+     * </ul>
+     */
+    protected String describeFailure(Throwable error) {
+        if (error instanceof BusinessException business
+            && business.getMessage() != null && !business.getMessage().isBlank()) {
+            return business.getMessage();
+        }
+        return AiErrorMessages.describe(error).orElseGet(() -> ErrorLogSanitizer.summarize(error));
     }
 
     protected int parseRetryCount(Map<String, String> data) {

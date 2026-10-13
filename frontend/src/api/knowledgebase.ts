@@ -1,5 +1,6 @@
 import { request } from './request';
 import { streamSse } from './stream';
+import { applyScope, type DataScopeParam } from './scope';
 import type { InterviewSession } from '../types/interview';
 
 // 向量化状态
@@ -23,6 +24,11 @@ export interface KnowledgeBaseItem {
   chunkCount: number;
   questionGenStatus: QuestionGenStatus;
   questionGenError: string | null;
+  /** 可见性：PRIVATE（仅自己）/ SHARED（全局共享，管理员创建） */
+  visibility?: 'PRIVATE' | 'SHARED' | null;
+  /** 归属人（上传者）id 与账号名；管理员「查看全部」时用来区分同一份文件是谁传的 */
+  ownerId?: number | null;
+  ownerUsername?: string | null;
 }
 
 // 统计信息
@@ -88,6 +94,11 @@ export interface KnowledgeBaseQuestion {
   keyPoints: string[];
   scoringRubric: string | null;
   followUps: KnowledgeBaseQuestionFollowUp[];
+  // ===== 考卷题字段（与模拟测验同构，2026-10 起生成）=====
+  questionType: string | null;
+  options: { key: string; text: string }[];
+  fullScore: number | null;
+  analysis: string | null;
   sourceContext: string | null;
   status: KnowledgeBaseQuestionStatus;
   createdAt: string;
@@ -187,7 +198,8 @@ export const knowledgeBaseApi = {
   /**
    * 上传知识库文件
    */
-  async uploadKnowledgeBase(file: File, name?: string, category?: string): Promise<UploadKnowledgeBaseResponse> {
+  async uploadKnowledgeBase(file: File, name?: string, category?: string,
+                            visibility?: 'PRIVATE' | 'SHARED'): Promise<UploadKnowledgeBaseResponse> {
     const formData = new FormData();
     formData.append('file', file);
     if (name) {
@@ -196,7 +208,9 @@ export const knowledgeBaseApi = {
     if (category) {
       formData.append('categoryCode', category);
     }
-    return request.upload<UploadKnowledgeBaseResponse>('/api/knowledgebase/upload', formData);
+    // 只有管理员传 SHARED 才会生效（后端按角色二次校验）
+    const query = visibility === 'SHARED' ? '?visibility=SHARED' : '';
+    return request.upload<UploadKnowledgeBaseResponse>(`/api/knowledgebase/upload${query}`, formData);
   },
 
   /**
@@ -208,8 +222,9 @@ export const knowledgeBaseApi = {
 
   /**
    * 获取所有知识库列表
+   * @param scope 管理员传 'all' 时查看全部用户的数据
    */
-  async getAllKnowledgeBases(sortBy?: SortOption, vectorStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'): Promise<KnowledgeBaseItem[]> {
+  async getAllKnowledgeBases(sortBy?: SortOption, vectorStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED', scope?: DataScopeParam): Promise<KnowledgeBaseItem[]> {
     const params = new URLSearchParams();
     if (sortBy) {
       params.append('sortBy', sortBy);
@@ -217,6 +232,7 @@ export const knowledgeBaseApi = {
     if (vectorStatus) {
       params.append('vectorStatus', vectorStatus);
     }
+    applyScope(params, scope);
     const queryString = params.toString();
     return request.get<KnowledgeBaseItem[]>(`/api/knowledgebase/list${queryString ? `?${queryString}` : ''}`);
   },
@@ -240,17 +256,19 @@ export const knowledgeBaseApi = {
   /**
    * 按分类获取知识库（categoryCode 为空表示未分类）
    */
-  async getByCategory(categoryCode: string): Promise<KnowledgeBaseItem[]> {
-    return request.get<KnowledgeBaseItem[]>(
-      `/api/knowledgebase/list?categoryCode=${encodeURIComponent(categoryCode)}`
-    );
+  async getByCategory(categoryCode: string, scope?: DataScopeParam): Promise<KnowledgeBaseItem[]> {
+    const params = new URLSearchParams({ categoryCode });
+    applyScope(params, scope);
+    return request.get<KnowledgeBaseItem[]>(`/api/knowledgebase/list?${params.toString()}`);
   },
 
   /**
    * 获取未分类的知识库
    */
-  async getUncategorized(): Promise<KnowledgeBaseItem[]> {
-    return request.get<KnowledgeBaseItem[]>('/api/knowledgebase/list?uncategorized=true');
+  async getUncategorized(scope?: DataScopeParam): Promise<KnowledgeBaseItem[]> {
+    const params = new URLSearchParams({ uncategorized: 'true' });
+    applyScope(params, scope);
+    return request.get<KnowledgeBaseItem[]>(`/api/knowledgebase/list?${params.toString()}`);
   },
 
   /**
@@ -265,8 +283,10 @@ export const knowledgeBaseApi = {
   /**
    * 搜索知识库
    */
-  async search(keyword: string): Promise<KnowledgeBaseItem[]> {
-    return request.get<KnowledgeBaseItem[]>(`/api/knowledgebase/search?keyword=${encodeURIComponent(keyword)}`);
+  async search(keyword: string, scope?: DataScopeParam): Promise<KnowledgeBaseItem[]> {
+    const params = new URLSearchParams({ keyword });
+    applyScope(params, scope);
+    return request.get<KnowledgeBaseItem[]>(`/api/knowledgebase/search?${params.toString()}`);
   },
 
   // ========== 统计 ==========
@@ -274,8 +294,11 @@ export const knowledgeBaseApi = {
   /**
    * 获取知识库统计信息
    */
-  async getStatistics(): Promise<KnowledgeBaseStats> {
-    return request.get<KnowledgeBaseStats>('/api/knowledgebase/stats');
+  async getStatistics(scope?: DataScopeParam): Promise<KnowledgeBaseStats> {
+    const params = new URLSearchParams();
+    applyScope(params, scope);
+    const queryString = params.toString();
+    return request.get<KnowledgeBaseStats>(`/api/knowledgebase/stats${queryString ? `?${queryString}` : ''}`);
   },
 
   // ========== 向量化管理 ==========

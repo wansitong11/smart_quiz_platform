@@ -32,6 +32,25 @@ public interface RagChatSessionRepository extends JpaRepository<RagChatSessionEn
     @Query("SELECT s FROM RagChatSessionEntity s ORDER BY s.isPinned DESC, s.updatedAt DESC")
     List<RagChatSessionEntity> findAllOrderByPinnedAndUpdatedAtDesc();
 
+    // ========== 归属隔离查询（ownerId 为 null 表示管理员查看全部） ==========
+
+    @Query("SELECT s FROM RagChatSessionEntity s WHERE s.id = :id AND (:ownerId IS NULL OR s.ownerId = :ownerId)")
+    Optional<RagChatSessionEntity> findByIdScoped(@Param("id") Long id, @Param("ownerId") Long ownerId);
+
+    @Query("SELECT DISTINCT s FROM RagChatSessionEntity s LEFT JOIN FETCH s.knowledgeBases "
+        + "WHERE s.id = :id AND (:ownerId IS NULL OR s.ownerId = :ownerId)")
+    Optional<RagChatSessionEntity> findByIdWithKnowledgeBasesScoped(@Param("id") Long id,
+                                                                   @Param("ownerId") Long ownerId);
+
+    @Query("SELECT s FROM RagChatSessionEntity s WHERE (:ownerId IS NULL OR s.ownerId = :ownerId) "
+        + "ORDER BY s.isPinned DESC, s.updatedAt DESC")
+    List<RagChatSessionEntity> findAllScoped(@Param("ownerId") Long ownerId);
+
+    @Query("SELECT s FROM RagChatSessionEntity s WHERE (:ownerId IS NULL OR s.ownerId = :ownerId) "
+        + "AND s.status = :status ORDER BY s.updatedAt DESC")
+    List<RagChatSessionEntity> findScopedByStatus(@Param("ownerId") Long ownerId,
+                                                  @Param("status") SessionStatus status);
+
     /**
      * 根据知识库ID查找相关会话
      */

@@ -5,6 +5,7 @@ import interview.guide.modules.knowledgebase.model.RagScopeKind;
 import interview.guide.modules.knowledgebase.model.VectorStatus;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
 import interview.guide.modules.knowledgebase.service.KbCategoryService;
+import interview.guide.modules.auth.security.OwnerScope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -19,6 +20,7 @@ public class CategoryScopeResolver implements RagScopeResolver {
 
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final KbCategoryService categoryService;
+    private final OwnerScope ownerScope;
 
     @Override
     public RagScopeKind kind() {
@@ -33,8 +35,12 @@ public class CategoryScopeResolver implements RagScopeResolver {
         }
 
         List<Long> ids = knowledgeBaseRepository
-            .findIdsByCategoryCodeAndVectorStatus(code, VectorStatus.COMPLETED);
-        long total = knowledgeBaseRepository.countByCategoryCode(code);
+            .findAccessibleIdsByCategoryAndVectorStatus(code, VectorStatus.COMPLETED,
+                ownerScope.effectiveOwnerId());
+        long total = knowledgeBaseRepository
+            .findByCategoryCode(code).stream()
+            .filter(kb -> ownerScope.canReadKnowledgeBase(kb.getOwnerId(), kb.getVisibility()))
+            .count();
         String name = categoryService.nameOf(code);
         return new ResolvedScope(RagScopeKind.CATEGORY, ids,
             "分类：" + (name != null ? name : code), Math.max(0, total - ids.size()));

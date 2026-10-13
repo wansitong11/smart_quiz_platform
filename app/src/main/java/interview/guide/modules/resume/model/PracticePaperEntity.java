@@ -2,6 +2,8 @@ package interview.guide.modules.resume.model;
 
 import interview.guide.common.model.AsyncTaskStatus;
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
 
@@ -11,9 +13,15 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "practice_papers", indexes = {
-    @Index(name = "idx_practice_paper_hash", columnList = "fileHash", unique = true)
+    @Index(name = "idx_practice_paper_owner_hash", columnList = "ownerId,fileHash", unique = true)
 })
+@Getter
+@Setter
 public class PracticePaperEntity {
+
+    /** 归属用户：只有本人（管理员 scope=all 例外）能看到与操作 */
+    @Column(name = "owner_id")
+    private Long ownerId;
     
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -223,3 +231,4 @@ public class PracticePaperEntity {
         this.analysisError = analysisError;
     }
 }
+

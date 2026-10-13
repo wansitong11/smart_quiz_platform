@@ -13,11 +13,13 @@ import { getUploadOutcome, normalizeProcessingStatus } from '../utils/batchUploa
  */
 export function createKnowledgeBaseUploadAdapter(
   getCategoryCode: () => string | undefined = () => undefined,
+  getVisibility: () => 'PRIVATE' | 'SHARED' | undefined = () => undefined,
 ): BatchUploadAdapter {
   return {
     processLabel: '向量化',
     async upload(file, customName) {
-      const result = await knowledgeBaseApi.uploadKnowledgeBase(file, customName, getCategoryCode());
+      const result = await knowledgeBaseApi.uploadKnowledgeBase(
+        file, customName, getCategoryCode(), getVisibility());
       if (!result.knowledgeBase?.id) throw new Error('上传结果缺少知识库 ID，请重试');
       return {
         entityId: result.knowledgeBase.id,

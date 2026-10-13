@@ -15,6 +15,10 @@ import java.time.LocalDateTime;
 @Table(name = "study_plans")
 @Data
 public class StudyPlanEntity {
+
+    /** 归属用户：学习计划按归属人隔离 */
+    @Column(name = "owner_id")
+    private Long ownerId;
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

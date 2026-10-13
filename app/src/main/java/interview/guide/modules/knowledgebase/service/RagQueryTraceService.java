@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.RagQueryTraceDTO;
 import interview.guide.modules.knowledgebase.model.RagQueryTraceEntity;
@@ -31,6 +33,8 @@ import java.util.concurrent.Executors;
 @Service
 public class RagQueryTraceService {
 
+    private final OwnerScope ownerScope;
+
     private static final int MAX_QUESTION_LENGTH = 500;
     private static final int MAX_REWRITTEN_LENGTH = 500;
 
@@ -38,15 +42,17 @@ public class RagQueryTraceService {
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final KnowledgeBaseQueryProperties properties;
     private final ObjectMapper objectMapper;
-    private final ExecutorService traceExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    private final ExecutorService traceExecutor = new org.springframework.security.concurrent.DelegatingSecurityContextExecutorService(Executors.newVirtualThreadPerTaskExecutor());
 
     public RagQueryTraceService(RagQueryTraceRepository traceRepository,
                                 KnowledgeBaseRepository knowledgeBaseRepository,
                                 KnowledgeBaseQueryProperties properties,
+                                OwnerScope ownerScope,
                                 @Autowired(required = false) ObjectMapper objectMapper) {
         this.traceRepository = traceRepository;
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.properties = properties;
+        this.ownerScope = ownerScope;
         this.objectMapper = objectMapper;
     }
 
@@ -81,6 +87,8 @@ public class RagQueryTraceService {
         entity.setLatencyMs(collector.latencyMs());
         entity.setLlmProvider(truncate(collector.llmProvider(), 50));
         entity.setCreatedAt(LocalDateTime.now());
+        // 轨迹落库可能发生在异步线程：容错取值，避免把轨迹写入搞崩
+        entity.setOwnerId(ownerScope.optionalOwnerId());
         traceRepository.save(entity);
     }
 
@@ -89,14 +97,15 @@ public class RagQueryTraceService {
      */
     public RagQueryTraceDTO.TraceSummary summarize(int days) {
         LocalDateTime since = since(days);
-        long total = traceRepository.countByCreatedAtAfter(since);
-        long noHit = traceRepository.countByOutcomeAndCreatedAtAfter(
-            RagQueryTraceEntity.OUTCOME_NO_HIT, since);
-        long toolError = traceRepository.countByOutcomeAndCreatedAtAfter(
-            RagQueryTraceEntity.OUTCOME_TOOL_ERROR, since);
+        Long ownerId = ownerScope.effectiveOwnerId();
+        long total = traceRepository.countScoped(since, ownerId);
+        long noHit = traceRepository.countOutcomeScoped(
+            RagQueryTraceEntity.OUTCOME_NO_HIT, since, ownerId);
+        long toolError = traceRepository.countOutcomeScoped(
+            RagQueryTraceEntity.OUTCOME_TOOL_ERROR, since, ownerId);
 
         List<RagQueryTraceDTO.IntentStat> intents = new ArrayList<>();
-        for (Object[] row : traceRepository.intentSummary(since)) {
+        for (Object[] row : traceRepository.intentSummary(since, ownerId)) {
             intents.add(new RagQueryTraceDTO.IntentStat(
                 (String) row[0],
                 ((Number) row[1]).longValue(),
@@ -114,7 +123,8 @@ public class RagQueryTraceService {
     public List<RagQueryTraceDTO.NoHitQuestion> topNoHitQuestions(int days, int limit) {
         List<RagQueryTraceDTO.NoHitQuestion> result = new ArrayList<>();
         for (Object[] row : traceRepository.topNoHitQuestions(
-            RagQueryTraceEntity.OUTCOME_NO_HIT, since(days), PageRequest.of(0, limit))) {
+            RagQueryTraceEntity.OUTCOME_NO_HIT, since(days), ownerScope.effectiveOwnerId(),
+            PageRequest.of(0, limit))) {
             result.add(new RagQueryTraceDTO.NoHitQuestion(
                 (String) row[0],
                 ((Number) row[1]).longValue(),
@@ -129,7 +139,8 @@ public class RagQueryTraceService {
      */
     public List<RagQueryTraceDTO.UnusedKnowledgeBase> unusedKnowledgeBases(int days) {
         Set<Long> hitIds = new LinkedHashSet<>();
-        for (String raw : traceRepository.findRetrievedKbIdsSince(since(days))) {
+        for (String raw : traceRepository.findRetrievedKbIdsSince(since(days),
+            ownerScope.effectiveOwnerId())) {
             for (String part : raw.split(",")) {
                 if (part.isBlank()) {
                     continue;
@@ -143,7 +154,8 @@ public class RagQueryTraceService {
         }
 
         List<RagQueryTraceDTO.UnusedKnowledgeBase> result = new ArrayList<>();
-        for (KnowledgeBaseEntity kb : knowledgeBaseRepository.findAllByOrderByUploadedAtDesc()) {
+        for (KnowledgeBaseEntity kb : knowledgeBaseRepository
+            .findAllAccessible(ownerScope.effectiveOwnerId())) {
             if (hitIds.contains(kb.getId())) {
                 continue;
             }

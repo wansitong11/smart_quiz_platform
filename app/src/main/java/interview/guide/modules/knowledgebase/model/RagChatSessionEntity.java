@@ -24,6 +24,10 @@ import java.util.Set;
 @NoArgsConstructor
 public class RagChatSessionEntity {
 
+  /** 归属用户：问答会话与消息都按归属人隔离 */
+  @Column(name = "owner_id")
+  private Long ownerId;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.mapper.KnowledgeBaseMapper;
@@ -13,6 +15,7 @@ import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionListItemDTO
 import interview.guide.modules.knowledgebase.model.RagChatMessageEntity;
 import interview.guide.modules.knowledgebase.model.RagChatSessionEntity;
 import interview.guide.modules.knowledgebase.model.RagScopeKind;
+import interview.guide.modules.knowledgebase.model.RagStreamEvent;
 import interview.guide.modules.knowledgebase.service.scope.RagScopeService;
 import interview.guide.modules.knowledgebase.service.scope.ResolvedScope;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
@@ -41,6 +44,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class RagChatSessionService {
 
+    private final OwnerScope ownerScope;
+
     private final RagChatSessionRepository sessionRepository;
     private final RagChatMessageRepository messageRepository;
     private final KnowledgeBaseRepository knowledgeBaseRepository;
@@ -66,6 +71,7 @@ public class RagChatSessionService {
         session.setKbScope(selection.kind().name());
         session.setKbCategory(selection.categoryCode());
         session.setKnowledgeBases(new HashSet<>(selection.knowledgeBases()));
+        session.setOwnerId(ownerScope.currentUserId());
 
         session = sessionRepository.save(session);
 
@@ -81,7 +87,7 @@ public class RagChatSessionService {
      */
     public List<SessionListItemDTO> listSessions() {
         Map<String, String> categoryNames = categoryService.nameByCode();
-        return sessionRepository.findAllOrderByPinnedAndUpdatedAtDesc()
+        return sessionRepository.findAllScoped(ownerScope.effectiveOwnerId())
             .stream()
             .map(session -> ragChatMapper.toSessionListItemDTO(session, categoryNames))
             .toList();
@@ -94,7 +100,7 @@ public class RagChatSessionService {
     public SessionDetailDTO getSessionDetail(Long sessionId) {
         // 先加载会话和知识库
         RagChatSessionEntity session = sessionRepository
-            .findByIdWithKnowledgeBases(sessionId)
+            .findByIdWithKnowledgeBasesScoped(sessionId, ownerScope.effectiveOwnerId())
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
 
         // 再单独加载消息（避免笛卡尔积）
@@ -116,7 +122,7 @@ public class RagChatSessionService {
      */
     @Transactional
     public Long prepareStreamMessage(Long sessionId, String question) {
-        RagChatSessionEntity session = sessionRepository.findByIdWithKnowledgeBases(sessionId)
+        RagChatSessionEntity session = sessionRepository.findByIdWithKnowledgeBasesScoped(sessionId, ownerScope.effectiveOwnerId())
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
 
         // 获取当前消息数量作为起始顺序
@@ -168,7 +174,16 @@ public class RagChatSessionService {
      * 获取流式回答（带多轮上下文）
      */
     public Flux<String> getStreamAnswer(Long sessionId, String question) {
-        RagChatSessionEntity session = sessionRepository.findByIdWithKnowledgeBases(sessionId)
+        return getStreamEvents(sessionId, question)
+            .map(RagStreamEvent::persistenceText)
+            .filter(text -> !text.isEmpty());
+    }
+
+    /**
+     * 获取带过程状态和结构化出处的流式事件。
+     */
+    public Flux<RagStreamEvent> getStreamEvents(Long sessionId, String question) {
+        RagChatSessionEntity session = sessionRepository.findByIdWithKnowledgeBasesScoped(sessionId, ownerScope.effectiveOwnerId())
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
 
         // 每轮提问解析一次范围：会话内切换范围对下一条提问立即生效
@@ -179,7 +194,8 @@ public class RagChatSessionService {
         log.info("加载历史上下文: sessionId={}, historySize={}, scope={}, kbCount={}, toolsEnabled={}",
             sessionId, history.size(), scope.kind(), scope.knowledgeBaseIds().size(),
             queryProperties.getTools().isEnabled());
-        return queryService.answerQuestionStreamWithTools(scope, sessionId, question, history, null);
+        return queryService.answerQuestionEventStreamWithTools(
+            scope, sessionId, question, history, null);
     }
 
     /**
@@ -187,7 +203,7 @@ public class RagChatSessionService {
      */
     @Transactional
     public void updateSessionTitle(Long sessionId, String title) {
-        RagChatSessionEntity session = sessionRepository.findById(sessionId)
+        RagChatSessionEntity session = sessionRepository.findByIdScoped(sessionId, ownerScope.effectiveOwnerId())
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
 
         session.setTitle(title);
@@ -201,7 +217,7 @@ public class RagChatSessionService {
      */
     @Transactional
     public void togglePin(Long sessionId) {
-        RagChatSessionEntity session = sessionRepository.findById(sessionId)
+        RagChatSessionEntity session = sessionRepository.findByIdScoped(sessionId, ownerScope.effectiveOwnerId())
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
 
         // 处理 null 值（兼容旧数据）
@@ -218,7 +234,7 @@ public class RagChatSessionService {
     @Transactional
     public void updateSessionScope(Long sessionId, String scope, String categoryCode,
                                    List<Long> knowledgeBaseIds) {
-        RagChatSessionEntity session = sessionRepository.findById(sessionId)
+        RagChatSessionEntity session = sessionRepository.findByIdScoped(sessionId, ownerScope.effectiveOwnerId())
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
 
         ScopeSelection selection = resolveSelection(scope, categoryCode, knowledgeBaseIds);
@@ -237,10 +253,10 @@ public class RagChatSessionService {
      */
     @Transactional
     public void deleteSession(Long sessionId) {
-        if (!sessionRepository.existsById(sessionId)) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "会话不存在");
-        }
-        sessionRepository.deleteById(sessionId);
+        RagChatSessionEntity session = sessionRepository
+            .findByIdScoped(sessionId, ownerScope.effectiveOwnerId())
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
+        sessionRepository.delete(session);
 
         log.info("删除会话: sessionId={}", sessionId);
     }
@@ -293,10 +309,14 @@ public class RagChatSessionService {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "至少选择一个资料");
             }
             List<KnowledgeBaseEntity> knowledgeBases = knowledgeBaseRepository.findAllById(ids);
-            if (knowledgeBases.size() != ids.size()) {
+            // 越权或已删除的资料一律按"不存在"处理（决策 5：返回 404，不暴露存在性）
+            List<KnowledgeBaseEntity> accessible = knowledgeBases.stream()
+                .filter(kb -> ownerScope.canReadKnowledgeBase(kb.getOwnerId(), kb.getVisibility()))
+                .toList();
+            if (accessible.size() != ids.size()) {
                 throw new BusinessException(ErrorCode.NOT_FOUND, "部分资料不存在");
             }
-            return new ScopeSelection(RagScopeKind.SELECTED, null, knowledgeBases);
+            return new ScopeSelection(RagScopeKind.SELECTED, null, accessible);
         }
         return new ScopeSelection(RagScopeKind.ALL, null, List.of());
     }

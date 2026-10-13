@@ -1,4 +1,5 @@
 import { request } from './request';
+import { applyScope, type DataScopeParam } from './scope';
 import type {
   BatchSubmitAnswerItem,
   BatchSubmitAnswerResponse,
@@ -29,10 +30,19 @@ export interface TextSessionMeta {
 
 export const interviewApi = {
   /**
-   * 列出所有文字面试会话
+   * 列出文字面试会话
+   *
+   * @param sourceTypes 可选：按来源过滤（如 "QUIZ,QUIZ_WRONG"），不传返回全部
+   * @param scope 管理员传 'all' 时查看全部用户的会话
    */
-  async listSessions(): Promise<TextSessionMeta[]> {
-    return request.get<TextSessionMeta[]>('/api/interview/sessions');
+  async listSessions(sourceTypes?: string, scope?: DataScopeParam): Promise<TextSessionMeta[]> {
+    const params = new URLSearchParams();
+    if (sourceTypes) {
+      params.append('sourceTypes', sourceTypes);
+    }
+    applyScope(params, scope);
+    const query = params.toString();
+    return request.get<TextSessionMeta[]>(`/api/interview/sessions${query ? `?${query}` : ''}`);
   },
 
   /**

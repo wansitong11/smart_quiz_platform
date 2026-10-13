@@ -34,7 +34,7 @@ public class ResumeDeleteService {
         // 获取简历信息（用于删除存储文件）
         PracticePaperEntity resume = persistenceService.findById(id)
             .orElseThrow(() -> new BusinessException(
-                ErrorCode.RESUME_NOT_FOUND));
+                ErrorCode.NOT_FOUND));
         
         // 1. 删除存储的文件（FileStorageService 已内置存在性检查）
         try {

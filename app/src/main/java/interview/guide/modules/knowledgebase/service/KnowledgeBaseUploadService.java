@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.file.FileHashService;
@@ -27,6 +29,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class KnowledgeBaseUploadService {
 
+  private final OwnerScope ownerScope;
+
     private final KnowledgeBaseParseService parseService;
     private final KnowledgeBasePersistenceService persistenceService;
     private final FileStorageService storageService;
@@ -35,6 +39,7 @@ public class KnowledgeBaseUploadService {
     private final FileHashService fileHashService;
     private final VectorizeStreamProducer vectorizeStreamProducer;
     private final KbCategoryService categoryService;
+    private final KnowledgeBaseAccessService accessService;
 
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
     
@@ -61,7 +66,9 @@ public class KnowledgeBaseUploadService {
 
         // 3. 检查知识库是否已存在（去重）
         String fileHash = fileHashService.calculateHash(file);
-        Optional<KnowledgeBaseEntity> existingKb = knowledgeBaseRepository.findByFileHash(fileHash);
+        // 去重按"当前用户"维度：别人上传过的同一份文件不影响我上传
+        Optional<KnowledgeBaseEntity> existingKb =
+            knowledgeBaseRepository.findByFileHashOwned(fileHash, ownerScope.effectiveOwnerId());
         if (existingKb.isPresent()) {
             log.info("检测到重复知识库: hash={}", fileHash);
             return persistenceService.handleDuplicateKnowledgeBase(existingKb.get(), fileHash);
@@ -142,8 +149,8 @@ public class KnowledgeBaseUploadService {
      * @param kbId 知识库ID
      */
     public void revectorize(Long kbId) {
-        KnowledgeBaseEntity kb = knowledgeBaseRepository.findById(kbId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在"));
+        // 重新向量化是写操作：自己的资料，或（共享资料 + 管理员）
+        KnowledgeBaseEntity kb = accessService.requireManageable(kbId);
 
         if (kb.getStorageKey() == null || kb.getStorageKey().trim().isEmpty()
             || kb.getOriginalFilename() == null || kb.getOriginalFilename().trim().isEmpty()) {

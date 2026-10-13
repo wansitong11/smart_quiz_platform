@@ -1,4 +1,5 @@
 import { request } from './request';
+import { scopeQuery, type DataScopeParam } from './scope';
 import type { InterviewSession, PaperTree } from '../types/interview';
 
 export type AnalyzeStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
@@ -107,9 +108,11 @@ export interface SectionScore {
 export const historyApi = {
   /**
    * 获取所有简历列表
+   * @param scope 管理员传 'all' 时查看全部用户的试卷
    */
-  async getResumes(): Promise<ResumeListItem[]> {
-    return request.get<ResumeListItem[]>('/api/resumes');
+  async getResumes(scope?: DataScopeParam): Promise<ResumeListItem[]> {
+    const query = scopeQuery(scope);
+    return request.get<ResumeListItem[]>(`/api/resumes${query ? `?${query}` : ''}`);
   },
 
   /**

@@ -80,7 +80,7 @@ public class ResumeHistoryService {
     public ResumeDetailDTO getResumeDetail(Long id) {
         Optional<PracticePaperEntity> resumeOpt = resumePersistenceService.findById(id);
         if (resumeOpt.isEmpty()) {
-            throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOT_FOUND);
         }
 
         PracticePaperEntity resume = resumeOpt.get();
@@ -118,7 +118,8 @@ public class ResumeHistoryService {
     public ExportResult exportAnalysisPdf(Long resumeId) {
         Optional<PracticePaperEntity> resumeOpt = resumePersistenceService.findById(resumeId);
         if (resumeOpt.isEmpty()) {
-            throw new BusinessException(ErrorCode.PAPER_NOT_FOUND);
+            // 越权 / 不存在统一 404（决策 5）
+            throw new BusinessException(ErrorCode.NOT_FOUND, "试卷不存在或无权访问");
         }
 
         PracticePaperEntity resume = resumeOpt.get();

@@ -29,6 +29,18 @@ public interface ResumeRepository extends JpaRepository<PracticePaperEntity, Lon
      * 根据文件哈希查找简历（用于去重）
      */
     Optional<PracticePaperEntity> findByFileHash(String fileHash);
+
+    // ========== 归属隔离查询（ownerId 为 null 表示管理员查看全部，见 OwnerScope） ==========
+
+    @Query("SELECT r FROM PracticePaperEntity r WHERE r.id = :id AND (:ownerId IS NULL OR r.ownerId = :ownerId)")
+    Optional<PracticePaperEntity> findByIdScoped(@Param("id") Long id, @Param("ownerId") Long ownerId);
+
+    @Query("SELECT r FROM PracticePaperEntity r WHERE (:ownerId IS NULL OR r.ownerId = :ownerId) ORDER BY r.uploadedAt DESC")
+    List<PracticePaperEntity> findAllScoped(@Param("ownerId") Long ownerId);
+
+    @Query("SELECT r FROM PracticePaperEntity r WHERE r.fileHash = :fileHash AND (:ownerId IS NULL OR r.ownerId = :ownerId)")
+    Optional<PracticePaperEntity> findByFileHashScoped(@Param("fileHash") String fileHash,
+                                                       @Param("ownerId") Long ownerId);
     
     /**
      * 检查文件哈希是否存在

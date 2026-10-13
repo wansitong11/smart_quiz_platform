@@ -25,7 +25,13 @@ public record KnowledgeBaseListItemDTO(
     String vectorError,
     Integer chunkCount,
     QuestionGenStatus questionGenStatus,
-    String questionGenError
+    String questionGenError,
+    /** 可见性：PRIVATE（仅归属人）/ SHARED（全局共享，只有管理员能建） */
+    String visibility,
+    /** 归属人（上传者）id；老数据可能为空 */
+    Long ownerId,
+    /** 归属人（上传者）账号名，由 Service 批量查好填进来，用于管理员「查看全部」时区分是谁上传的 */
+    String ownerUsername
 ) {
 }
 

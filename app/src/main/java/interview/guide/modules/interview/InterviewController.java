@@ -1,6 +1,7 @@
 package interview.guide.modules.interview;
 
 import interview.guide.common.annotation.RateLimit;
+import interview.guide.common.exception.BusinessException;
 import interview.guide.common.result.Result;
 import interview.guide.modules.interview.model.BatchSubmitAnswerRequest;
 import interview.guide.modules.interview.model.BatchSubmitAnswerResponse;
@@ -28,12 +29,14 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 面试控制器
@@ -52,13 +55,31 @@ public class InterviewController {
     
     /**
      * 列出所有面试会话（用于面试记录页）
+     *
+     * @param sourceTypes 可选：按来源过滤，逗号分隔（如 {@code QUIZ,QUIZ_WRONG}）。
+     *                    不传时返回全部，保持对「知识库面试历史」等旧调用方的兼容。
      */
     @GetMapping("/api/interview/sessions")
-    public Result<List<SessionListItemDTO>> listSessions() {
+    public Result<List<SessionListItemDTO>> listSessions(
+            @RequestParam(required = false) String sourceTypes) {
+        Set<String> filter = parseSourceTypes(sourceTypes);
         List<SessionListItemDTO> items = persistenceService.findAll().stream()
+            .filter(entity -> filter == null || filter.contains(entity.getSourceType()))
             .map(SessionListItemDTO::from)
             .toList();
         return Result.success(items);
+    }
+
+    /** 逗号分隔的来源过滤；空串或 null 表示不过滤 */
+    private Set<String> parseSourceTypes(String sourceTypes) {
+        if (sourceTypes == null || sourceTypes.isBlank()) {
+            return null;
+        }
+        Set<String> values = java.util.Arrays.stream(sourceTypes.split(","))
+            .map(String::trim)
+            .filter(value -> !value.isEmpty())
+            .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        return values.isEmpty() ? null : values;
     }
 
     /**
@@ -206,6 +227,10 @@ public class InterviewController {
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdfBytes);
         } catch (Exception e) {
+            // 越权 / 资源不存在由全局异常处理统一返回 404，不能吞成 500
+            if (e instanceof BusinessException businessException) {
+                throw businessException;
+            }
             log.error("导出PDF失败", e);
             return ResponseEntity.internalServerError().build();
         }

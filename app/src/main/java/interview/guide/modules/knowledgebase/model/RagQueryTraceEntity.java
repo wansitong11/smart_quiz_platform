@@ -1,5 +1,8 @@
 package interview.guide.modules.knowledgebase.model;
 
+import lombok.Getter;
+import lombok.Setter;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -23,7 +26,13 @@ import java.time.LocalDateTime;
     @Index(name = "idx_rag_trace_created", columnList = "createdAt"),
     @Index(name = "idx_rag_trace_outcome", columnList = "outcome")
 })
+@Getter
+@Setter
 public class RagQueryTraceEntity {
+
+    /** 归属用户：轨迹只对本人生效（管理员 scope=all 例外） */
+    @Column(name = "owner_id")
+    private Long ownerId;
 
     /** 结果：正常回答 / 无命中 / 工具异常 */
     public static final String OUTCOME_ANSWERED = "ANSWERED";

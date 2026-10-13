@@ -181,7 +181,9 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<VectorizeStr
         // 下载 + 解析完成心跳
         heartbeat(payload);
         if (content == null || content.trim().isEmpty()) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "无法从文件中提取文本内容");
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                "无法从文件中提取文本内容：该文件很可能是扫描件或纯图片（没有文字层）。"
+                    + "请上传带文字层的版本，或先用 OCR 转成可复制文字后再上传");
         }
         vectorService.vectorizeAndStore(kbId, content, payload.attemptId(), () -> {
             // 分块完成与每个 Embedding 批次后的节流心跳

@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
@@ -27,6 +29,8 @@ public class KnowledgeBasePersistenceService {
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final VectorRepository vectorRepository;
     private final KbCategoryService categoryService;
+    private final OwnerScope ownerScope;
+    private final KnowledgeBaseAccessService accessService;
 
     /**
      * 处理重复知识库（更新访问计数）
@@ -83,7 +87,7 @@ public class KnowledgeBasePersistenceService {
                                                     String jobId, int chunkCount,
                                                     String vectorConfig) {
         KnowledgeBaseEntity kb = knowledgeBaseRepository.findByIdForUpdate(knowledgeBaseId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
         if (kb.getVectorStatus() != VectorStatus.PROCESSING
             || !Objects.equals(kb.getVectorAttemptId(), attemptId)) {
             throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_VECTORIZATION_FAILED,
@@ -107,6 +111,8 @@ public class KnowledgeBasePersistenceService {
         try {
             KnowledgeBaseEntity kb = new KnowledgeBaseEntity();
             kb.setFileHash(fileHash);
+            kb.setOwnerId(ownerScope.currentUserId());
+            kb.setVisibility(ownerScope.resolveKnowledgeBaseVisibility());
             kb.setName(name != null && !name.trim().isEmpty() ? name : extractNameFromFilename(file.getOriginalFilename()));
             kb.setCategoryCode(categoryCode != null && !categoryCode.trim().isEmpty() ? categoryCode.trim() : null);
             kb.setOriginalFilename(file.getOriginalFilename());
@@ -132,8 +138,8 @@ public class KnowledgeBasePersistenceService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void updateVectorStatusToPending(Long kbId) {
-        KnowledgeBaseEntity kb = knowledgeBaseRepository.findById(kbId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在"));
+        // 只由 revectorize（请求线程）调用，沿用同一套"可维护"判定
+        KnowledgeBaseEntity kb = accessService.requireManageable(kbId);
         
         kb.setVectorStatus(VectorStatus.PENDING);
         kb.setVectorError(null);

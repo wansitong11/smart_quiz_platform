@@ -1,6 +1,8 @@
 package interview.guide.modules.knowledgebase.model;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
 
@@ -9,10 +11,20 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "knowledge_bases", indexes = {
-    @Index(name = "idx_kb_hash", columnList = "fileHash", unique = true),
+    @Index(name = "idx_kb_owner_hash", columnList = "ownerId,fileHash", unique = true),
     @Index(name = "idx_kb_category_code", columnList = "categoryCode")
 })
+@Getter
+@Setter
 public class KnowledgeBaseEntity {
+
+  /** 归属用户：只有本人（管理员 scope=all 例外）或共享资料可读 */
+  @Column(name = "owner_id")
+  private Long ownerId;
+
+  /** 可见性：PRIVATE（默认，仅归属人）/ SHARED（全局共享，只有管理员可创建） */
+  @Column(nullable = false, length = 16)
+  private String visibility = "PRIVATE";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

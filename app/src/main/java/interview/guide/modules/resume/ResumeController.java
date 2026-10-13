@@ -1,6 +1,7 @@
 package interview.guide.modules.resume;
 
 import interview.guide.common.annotation.RateLimit;
+import interview.guide.common.exception.BusinessException;
 import interview.guide.common.result.Result;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.resume.model.ResumeDetailDTO;
@@ -93,6 +94,10 @@ public class ResumeController {
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(result.pdfBytes());
         } catch (Exception e) {
+            // 越权 / 资源不存在由全局异常处理统一返回 404，不能吞成 500
+            if (e instanceof BusinessException businessException) {
+                throw businessException;
+            }
             log.error("导出PDF失败: resumeId={}", id, e);
             return ResponseEntity.internalServerError().build();
         }

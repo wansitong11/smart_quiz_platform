@@ -56,7 +56,7 @@ public class PaperAttemptService {
     private InterviewSessionDTO startAttemptLocked(Long paperId) {
         Optional<PracticePaperEntity> paperOpt = resumePersistenceService.findById(paperId);
         if (paperOpt.isEmpty()) {
-            throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOT_FOUND);
         }
 
         List<PracticeSessionEntity> sessions = interviewPersistenceService.findByResumeId(paperId).stream()
@@ -101,7 +101,7 @@ public class PaperAttemptService {
      */
     public InterviewSessionDTO startAttemptFromSession(String sessionId) {
         PracticeSessionEntity session = interviewPersistenceService.findBySessionId(sessionId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND));
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "答题记录不存在或无权访问"));
         Long paperId = session.getResumeId();
         if (paperId == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "这次练习不是来自上传的试卷，无法再练一遍");

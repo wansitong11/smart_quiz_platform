@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import interview.guide.common.result.Result;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.CreateSessionRequest;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.SendMessageRequest;
@@ -8,6 +10,7 @@ import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionDetailDTO;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.SessionListItemDTO;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.UpdateScopeRequest;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.UpdateTitleRequest;
+import interview.guide.modules.knowledgebase.model.RagStreamEvent;
 import interview.guide.modules.knowledgebase.service.RagChatSessionService;
 import jakarta.validation.Valid;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -36,6 +39,7 @@ import java.util.List;
 public class RagChatController {
 
     private final RagChatSessionService sessionService;
+    private final ObjectMapper objectMapper;
 
     /**
      * 创建新会话
@@ -127,11 +131,11 @@ public class RagChatController {
         // 2. 获取流式响应
         StringBuilder fullContent = new StringBuilder();
 
-        return sessionService.getStreamAnswer(sessionId, request.question())
-            .doOnNext(fullContent::append)
-            // 使用 ServerSentEvent 包装，转义换行符避免破坏 SSE 格式
-            .map(chunk -> ServerSentEvent.<String>builder()
-                .data(chunk.replace("\n", "\\n").replace("\r", "\\r"))
+        return sessionService.getStreamEvents(sessionId, request.question())
+            .doOnNext(event -> fullContent.append(event.persistenceText()))
+            .map(event -> ServerSentEvent.<String>builder()
+                .event(event.name())
+                .data(serializeEventData(event))
                 .build())
             .doOnComplete(() -> {
                 // 3. 流式完成后更新消息内容
@@ -146,5 +150,16 @@ public class RagChatController {
                 sessionService.completeStreamMessage(messageId, content);
                 log.error("RAG 聊天流式错误: sessionId={}", sessionId, e);
             });
+    }
+
+    private String serializeEventData(RagStreamEvent event) {
+        if (RagStreamEvent.ANSWER.equals(event.name())) {
+            return event.answerText().replace("\n", "\\n").replace("\r", "\\r");
+        }
+        try {
+            return objectMapper.writeValueAsString(event.data());
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("序列化 RAG 流事件失败", e);
+        }
     }
 }

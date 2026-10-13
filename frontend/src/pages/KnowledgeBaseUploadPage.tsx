@@ -5,6 +5,7 @@ import BatchUploadPage from '../components/batch-upload/BatchUploadPage';
 import { createKnowledgeBaseUploadAdapter } from '../api/batchUpload';
 import { kbCategoryApi, type KbCategory } from '../api/kbCategory';
 import { KNOWLEDGE_BASE_FILE_POLICY } from '../utils/batchUpload';
+import { useAuth } from '../context/AuthContext';
 
 /**
  * 资料批量上传页。
@@ -16,14 +17,23 @@ import { KNOWLEDGE_BASE_FILE_POLICY } from '../utils/batchUpload';
  */
 export default function KnowledgeBaseUploadPage({ onBack }: { onBack: () => void }) {
   const [searchParams] = useSearchParams();
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole('ROLE_ADMIN');
   const [categories, setCategories] = useState<KbCategory[]>([]);
   const [categoryCode, setCategoryCode] = useState<string>(searchParams.get('categoryCode') ?? '');
+  // 只有管理员可以上传「全局共享」资料；普通用户一律私有
+  const [visibility, setVisibility] = useState<'PRIVATE' | 'SHARED'>('PRIVATE');
 
   // 适配器只在上传那一刻读取分类，所以用 ref 支撑 getter，保证适配器引用稳定
   const categoryCodeRef = useRef(categoryCode);
   categoryCodeRef.current = categoryCode;
+  const visibilityRef = useRef(visibility);
+  visibilityRef.current = visibility;
   const adapter = useMemo(
-    () => createKnowledgeBaseUploadAdapter(() => categoryCodeRef.current || undefined),
+    () => createKnowledgeBaseUploadAdapter(
+      () => categoryCodeRef.current || undefined,
+      () => visibilityRef.current,
+    ),
     [],
   );
 
@@ -61,7 +71,19 @@ export default function KnowledgeBaseUploadPage({ onBack }: { onBack: () => void
               </option>
             ))}
           </select>
+          {isAdmin && (
+            <select
+              value={visibility}
+              onChange={(e) => setVisibility(e.target.value as 'PRIVATE' | 'SHARED')}
+              title="共享资料对所有用户可见（仅管理员可创建）"
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+            >
+              <option value="PRIVATE">仅自己可见</option>
+              <option value="SHARED">全局共享</option>
+            </select>
+          )}
           <span className="text-xs text-slate-500 dark:text-slate-400">
+            {isAdmin && visibility === 'SHARED' ? '共享资料：所有用户都能检索到；' : ''}
             {selectedCategory
               ? `本批文件都会归到「${selectedCategory.name}」，上传后仍可单独调整`
               : '不选则先归入「未分类」，上传后在知识库管理页可以再分类'}

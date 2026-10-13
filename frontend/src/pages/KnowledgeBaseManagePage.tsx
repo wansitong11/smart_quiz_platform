@@ -14,13 +14,18 @@ import {
   MessageSquare,
   RefreshCw,
   Search,
+  Share2,
   Trash2,
   Upload,
   X,
 } from 'lucide-react';
 import {knowledgeBaseApi, KnowledgeBaseItem, KnowledgeBaseStats, SortOption, VectorStatus,} from '../api/knowledgebase';
+import type { DataScopeParam } from '../api/scope';
 import {kbCategoryApi, type KbCategory} from '../api/kbCategory';
+import AdminScopeToggle from '../components/AdminScopeToggle';
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
+import { useAuth } from '../context/AuthContext';
+import { canManageKnowledgeBase } from '../utils/knowledgeBasePermission';
 
 interface KnowledgeBaseManagePageProps {
   onUpload: () => void;
@@ -116,6 +121,8 @@ function StatCard({
 export default function KnowledgeBaseManagePage({
   onUpload, onChat, onUploadToCategory,
 }: KnowledgeBaseManagePageProps) {
+  const { hasRole, user } = useAuth();
+  const isAdmin = hasRole('ROLE_ADMIN');
   const [stats, setStats] = useState<KnowledgeBaseStats | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,6 +131,8 @@ export default function KnowledgeBaseManagePage({
   // 分类筛选：null = 全部，'' = 未分类，其余为分类 code
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedVectorStatus, setSelectedVectorStatus] = useState<VectorStatus | ''>('');
+  // 数据范围：默认只看自己的；管理员可切换成「查看全部」（后端按角色二次校验）
+  const [scope, setScope] = useState<DataScopeParam>(undefined);
   const [categories, setCategories] = useState<KbCategory[]>([]);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
@@ -140,14 +149,14 @@ export default function KnowledgeBaseManagePage({
   const loadDataSilent = useCallback(async () => {
     try {
       const [statsData, kbList, categoryList] = await Promise.all([
-        knowledgeBaseApi.getStatistics(),
+        knowledgeBaseApi.getStatistics(scope),
         searchKeyword
-          ? knowledgeBaseApi.search(searchKeyword)
+          ? knowledgeBaseApi.search(searchKeyword, scope)
           : selectedCategory === ''
-          ? knowledgeBaseApi.getUncategorized()
+          ? knowledgeBaseApi.getUncategorized(scope)
           : selectedCategory
-          ? knowledgeBaseApi.getByCategory(selectedCategory)
-          : knowledgeBaseApi.getAllKnowledgeBases(sortBy, selectedVectorStatus || undefined),
+          ? knowledgeBaseApi.getByCategory(selectedCategory, scope)
+          : knowledgeBaseApi.getAllKnowledgeBases(sortBy, selectedVectorStatus || undefined, scope),
         kbCategoryApi.list(),
       ]);
       setStats(statsData);
@@ -156,21 +165,21 @@ export default function KnowledgeBaseManagePage({
     } catch (error) {
       console.error('加载数据失败:', error);
     }
-  }, [searchKeyword, sortBy, selectedCategory, selectedVectorStatus]);
+  }, [searchKeyword, sortBy, selectedCategory, selectedVectorStatus, scope]);
 
   // 加载数据
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const [statsData, kbList, categoryList] = await Promise.all([
-        knowledgeBaseApi.getStatistics(),
+        knowledgeBaseApi.getStatistics(scope),
         searchKeyword
-          ? knowledgeBaseApi.search(searchKeyword)
+          ? knowledgeBaseApi.search(searchKeyword, scope)
           : selectedCategory === ''
-          ? knowledgeBaseApi.getUncategorized()
+          ? knowledgeBaseApi.getUncategorized(scope)
           : selectedCategory
-          ? knowledgeBaseApi.getByCategory(selectedCategory)
-          : knowledgeBaseApi.getAllKnowledgeBases(sortBy, selectedVectorStatus || undefined),
+          ? knowledgeBaseApi.getByCategory(selectedCategory, scope)
+          : knowledgeBaseApi.getAllKnowledgeBases(sortBy, selectedVectorStatus || undefined, scope),
         kbCategoryApi.list(),
       ]);
       setStats(statsData);
@@ -181,7 +190,7 @@ export default function KnowledgeBaseManagePage({
     } finally {
       setLoading(false);
     }
-  }, [searchKeyword, sortBy, selectedCategory, selectedVectorStatus]);
+  }, [searchKeyword, sortBy, selectedCategory, selectedVectorStatus, scope]);
 
   useEffect(() => {
     loadData();
@@ -327,7 +336,9 @@ export default function KnowledgeBaseManagePage({
           </h1>
             <p className="text-slate-500 dark:text-slate-400 mt-1">管理您的知识库文件，查看使用统计</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex items-center gap-3">
+          {/* 数据范围开关：只有管理员可见（默认也是只看自己的） */}
+          {isAdmin && <AdminScopeToggle scope={scope} onChange={setScope} />}
           <button
             onClick={onUpload}
             className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
@@ -542,6 +553,12 @@ export default function KnowledgeBaseManagePage({
                   <th className="text-left px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
                   名称
                 </th>
+                  {/* 管理员「查看全部」时，同一份文件可能有多人各存一份，这里标出上传人账号以便区分 */}
+                  {scope === 'all' && (
+                    <th className="text-left px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
+                      上传人
+                    </th>
+                  )}
                   <th className="text-left px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
                   分类
                 </th>
@@ -563,7 +580,10 @@ export default function KnowledgeBaseManagePage({
               </tr>
             </thead>
             <tbody>
-              {knowledgeBases.map((kb, index) => (
+              {knowledgeBases.map((kb, index) => {
+                // 能否维护这份资料：共享资料只有管理员可以，私有资料只有归属人（与后端同一套判定）
+                const canManage = canManageKnowledgeBase(kb, user);
+                return (
                 <motion.tr
                   key={kb.id}
                   initial={{ opacity: 0, y: 10 }}
@@ -575,33 +595,59 @@ export default function KnowledgeBaseManagePage({
                     <div className="flex items-center gap-3">
                       <FileText className="w-5 h-5 text-slate-400" />
                       <div>
-                          <p className="font-medium text-slate-800 dark:text-white">{kb.name}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-slate-800 dark:text-white">{kb.name}</p>
+                            {kb.visibility === 'SHARED' && (
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-600 dark:bg-amber-900/40 dark:text-amber-300"
+                                title="全局共享资料：所有用户都能检索到"
+                              >
+                                <Share2 className="w-3 h-3" />
+                                共享
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-slate-400 dark:text-slate-500">{kb.originalFilename}</p>
                       </div>
                     </div>
                   </td>
+                  {scope === 'all' && (
+                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                      {kb.ownerUsername || '-'}
+                    </td>
+                  )}
                   <td className="px-6 py-4">
-                    {/* 分类始终可见，选中即保存，不再需要「悬浮出现铅笔 → 保存」两步 */}
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={kb.categoryCode ?? ''}
-                        onChange={(e) => handleCategoryChange(kb, e.target.value)}
-                        disabled={savingCategoryId === kb.id}
-                        title="修改分类（选中即保存）"
-                        className={`w-32 px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-700 disabled:opacity-60 ${kb.categoryCode
-                          ? 'border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200'
-                          : 'border-dashed border-slate-300 dark:border-slate-500 text-slate-400 dark:text-slate-500'
-                        }`}
+                    {canManage ? (
+                      /* 分类始终可见，选中即保存，不再需要「悬浮出现铅笔 → 保存」两步 */
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={kb.categoryCode ?? ''}
+                          onChange={(e) => handleCategoryChange(kb, e.target.value)}
+                          disabled={savingCategoryId === kb.id}
+                          title="修改分类（选中即保存）"
+                          className={`w-32 px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-700 disabled:opacity-60 ${kb.categoryCode
+                            ? 'border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200'
+                            : 'border-dashed border-slate-300 dark:border-slate-500 text-slate-400 dark:text-slate-500'
+                          }`}
+                        >
+                          <option value="">未分类</option>
+                          {categories.filter(item => item.code).map((cat) => (
+                            <option key={cat.code} value={cat.code ?? ''}>{cat.name}</option>
+                          ))}
+                        </select>
+                        {savingCategoryId === kb.id && (
+                          <Loader2 className="w-4 h-4 animate-spin text-primary-500" />
+                        )}
+                      </div>
+                    ) : (
+                      /* 不能维护（别人的共享资料）时只读展示，不给注定 404 的入口 */
+                      <span
+                        className="text-sm text-slate-500 dark:text-slate-400"
+                        title="共享资料只有管理员能改分类"
                       >
-                        <option value="">未分类</option>
-                        {categories.filter(item => item.code).map((cat) => (
-                          <option key={cat.code} value={cat.code ?? ''}>{cat.name}</option>
-                        ))}
-                      </select>
-                      {savingCategoryId === kb.id && (
-                        <Loader2 className="w-4 h-4 animate-spin text-primary-500" />
-                      )}
-                    </div>
+                        {kb.category || '未分类'}
+                      </span>
+                    )}
                   </td>
                     <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
                     {formatFileSize(kb.fileSize)}
@@ -630,8 +676,8 @@ export default function KnowledgeBaseManagePage({
                       >
                         <Download className="w-4 h-4" />
                       </button>
-                      {/* 已完成或失败任务都允许手动重新向量化 */}
-                      {(kb.vectorStatus === 'FAILED' || kb.vectorStatus === 'COMPLETED') && (
+                      {/* 已完成或失败任务都允许手动重新向量化（只有可维护的人看得到） */}
+                      {canManage && (kb.vectorStatus === 'FAILED' || kb.vectorStatus === 'COMPLETED') && (
                         <button
                           onClick={() => handleRevectorize(kb.id)}
                           disabled={revectorizing === kb.id}
@@ -641,18 +687,27 @@ export default function KnowledgeBaseManagePage({
                           <RefreshCw className={`w-4 h-4 ${revectorizing === kb.id ? 'animate-spin' : ''}`} />
                         </button>
                       )}
-                      {/* 删除按钮 */}
-                      <button
-                        onClick={() => setDeleteItem(kb)}
-                        className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
-                        title="删除"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {/* 删除按钮：只有可维护的人看得到 */}
+                      {canManage && (
+                        <button
+                          onClick={() => setDeleteItem(kb)}
+                          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+                          title="删除"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                      {/* 共享资料但没维护权：说明为什么只有下载可用 */}
+                      {!canManage && (
+                        <span className="text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                          共享资料仅管理员可管理
+                        </span>
+                      )}
                     </div>
                   </td>
                 </motion.tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

@@ -43,7 +43,7 @@ public class InterviewHistoryService {
     public InterviewDetailDTO getInterviewDetail(String sessionId) {
         Optional<PracticeSessionEntity> sessionOpt = interviewPersistenceService.findBySessionId(sessionId);
         if (sessionOpt.isEmpty()) {
-            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOT_FOUND);
         }
 
         PracticeSessionEntity session = sessionOpt.get();
@@ -205,7 +205,7 @@ public class InterviewHistoryService {
     public byte[] exportInterviewPdf(String sessionId) {
         Optional<PracticeSessionEntity> sessionOpt = interviewPersistenceService.findBySessionId(sessionId);
         if (sessionOpt.isEmpty()) {
-            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOT_FOUND);
         }
 
         PracticeSessionEntity session = sessionOpt.get();

@@ -28,6 +28,63 @@ public interface KnowledgeBaseRepository extends JpaRepository<KnowledgeBaseEnti
      */
     Optional<KnowledgeBaseEntity> findByFileHash(String fileHash);
 
+    // ========== 归属隔离查询（ownerId 为 null 表示管理员查看全部） ==========
+    // 读：自己 + 全局共享（SHARED）；写/管理：只允许归属人
+
+    @Query("SELECT k FROM KnowledgeBaseEntity k WHERE k.id = :id "
+        + "AND (:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED')")
+    Optional<KnowledgeBaseEntity> findByIdAccessible(@Param("id") Long id, @Param("ownerId") Long ownerId);
+
+    @Query("SELECT k FROM KnowledgeBaseEntity k WHERE k.id = :id "
+        + "AND (:ownerId IS NULL OR k.ownerId = :ownerId)")
+    Optional<KnowledgeBaseEntity> findByIdOwned(@Param("id") Long id, @Param("ownerId") Long ownerId);
+
+    /**
+     * 可维护的资料：归属人本人，或（共享资料 且 调用方是管理员）。
+     * <p>写路径（改分类/重新向量化/删除/题库）统一用这个，语义见
+     * {@code OwnerScope#canManageKnowledgeBase}——刻意不受 {@code ?scope=all} 影响。
+     * 后台线程没有登录上下文（ownerId 为 null、admin 为 false）时查不到任何资料，所以不要用在异步链路里。
+     */
+    @Query("SELECT k FROM KnowledgeBaseEntity k WHERE k.id = :id "
+        + "AND (k.ownerId = :ownerId OR (:admin = true AND k.visibility = 'SHARED'))")
+    Optional<KnowledgeBaseEntity> findByIdManageable(@Param("id") Long id,
+                                                     @Param("ownerId") Long ownerId,
+                                                     @Param("admin") boolean admin);
+
+    @Query("SELECT k FROM KnowledgeBaseEntity k WHERE "
+        + "(:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED') "
+        + "ORDER BY k.uploadedAt DESC")
+    List<KnowledgeBaseEntity> findAllAccessible(@Param("ownerId") Long ownerId);
+
+    /** 可检索的资料 ID（自己 + 共享，且已完成向量化）——问答"全部资料"范围用 */
+    @Query("SELECT k.id FROM KnowledgeBaseEntity k WHERE "
+        + "(:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED') "
+        + "AND k.vectorStatus = :vectorStatus ORDER BY k.uploadedAt DESC")
+    List<Long> findAccessibleIdsByVectorStatus(@Param("ownerId") Long ownerId,
+                                               @Param("vectorStatus") VectorStatus vectorStatus);
+
+    /** 可检索的资料 ID（分类范围，自己 + 共享） */
+    @Query("SELECT k.id FROM KnowledgeBaseEntity k WHERE k.categoryCode = :categoryCode "
+        + "AND k.vectorStatus = :vectorStatus "
+        + "AND (:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED') "
+        + "ORDER BY k.uploadedAt DESC")
+    List<Long> findAccessibleIdsByCategoryAndVectorStatus(@Param("categoryCode") String categoryCode,
+                                                          @Param("vectorStatus") VectorStatus vectorStatus,
+                                                          @Param("ownerId") Long ownerId);
+
+    @Query("SELECT k FROM KnowledgeBaseEntity k WHERE k.fileHash = :fileHash "
+        + "AND (:ownerId IS NULL OR k.ownerId = :ownerId)")
+    Optional<KnowledgeBaseEntity> findByFileHashOwned(@Param("fileHash") String fileHash,
+                                                      @Param("ownerId") Long ownerId);
+
+    @Query("SELECT k FROM KnowledgeBaseEntity k WHERE "
+        + "(:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED') AND ("
+        + "LOWER(k.name) LIKE LOWER(CONCAT('%', :keyword, '%')) "
+        + "OR LOWER(k.originalFilename) LIKE LOWER(CONCAT('%', :keyword, '%'))) "
+        + "ORDER BY k.uploadedAt DESC")
+    List<KnowledgeBaseEntity> searchByKeywordScoped(@Param("keyword") String keyword,
+                                                    @Param("ownerId") Long ownerId);
+
     /**
      * 锁定知识库行，用于串行化同一知识库的题目生成状态迁移。
      */
@@ -143,6 +200,24 @@ public interface KnowledgeBaseRepository extends JpaRepository<KnowledgeBaseEnti
      * 按向量化状态统计数量
      */
     long countByVectorStatus(VectorStatus vectorStatus);
+
+    // ========== 归属隔离统计（ownerId 为 null 表示管理员查看全部） ==========
+
+    /** 可读资料数：自己的 + 全局共享 */
+    @Query("SELECT COUNT(k) FROM KnowledgeBaseEntity k WHERE "
+        + "(:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED')")
+    long countAccessible(@Param("ownerId") Long ownerId);
+
+    /** 可读资料的总访问次数 */
+    @Query("SELECT COALESCE(SUM(k.accessCount), 0) FROM KnowledgeBaseEntity k WHERE "
+        + "(:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED')")
+    long sumAccessCountScoped(@Param("ownerId") Long ownerId);
+
+    /** 按向量化状态统计可读资料数 */
+    @Query("SELECT COUNT(k) FROM KnowledgeBaseEntity k WHERE k.vectorStatus = :status AND "
+        + "(:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED')")
+    long countByVectorStatusAccessible(@Param("ownerId") Long ownerId,
+                                       @Param("status") VectorStatus status);
 
     /**
      * 按向量化状态查找知识库（按上传时间倒序）

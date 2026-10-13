@@ -20,13 +20,18 @@ public class KnowledgeBaseMapper {
     /**
      * 将知识库实体转换为列表项DTO
      *
-     * @param entity         资料实体
-     * @param categoryNames  分类 code → 展示名（可为空表示全部未知）
+     * @param entity        资料实体
+     * @param categoryNames 分类 code → 展示名（可为空表示全部未知）
+     * @param ownerNames    用户 id → 账号名（可为空表示不展示上传人）
      */
     public KnowledgeBaseListItemDTO toListItemDTO(KnowledgeBaseEntity entity,
-                                                  Map<String, String> categoryNames) {
+                                                  Map<String, String> categoryNames,
+                                                  Map<Long, String> ownerNames) {
         String code = entity.getCategoryCode();
         String name = code != null && categoryNames != null ? categoryNames.get(code) : null;
+        String ownerName = entity.getOwnerId() != null && ownerNames != null
+            ? ownerNames.get(entity.getOwnerId())
+            : null;
         return new KnowledgeBaseListItemDTO(
             entity.getId(),
             entity.getName(),
@@ -43,8 +48,16 @@ public class KnowledgeBaseMapper {
             entity.getVectorError(),
             entity.getChunkCount(),
             entity.getQuestionGenStatus(),
-            entity.getQuestionGenError()
+            entity.getQuestionGenError(),
+            entity.getVisibility(),
+            entity.getOwnerId(),
+            ownerName
         );
+    }
+
+    public KnowledgeBaseListItemDTO toListItemDTO(KnowledgeBaseEntity entity,
+                                                  Map<String, String> categoryNames) {
+        return toListItemDTO(entity, categoryNames, Map.of());
     }
 
     public KnowledgeBaseListItemDTO toListItemDTO(KnowledgeBaseEntity entity) {
@@ -56,8 +69,17 @@ public class KnowledgeBaseMapper {
      */
     public List<KnowledgeBaseListItemDTO> toListItemDTOList(List<KnowledgeBaseEntity> entities,
                                                             Map<String, String> categoryNames) {
+        return toListItemDTOList(entities, categoryNames, Map.of());
+    }
+
+    /**
+     * 将知识库实体列表转换为列表项DTO列表（带上「用户 id → 账号名」批量映射）
+     */
+    public List<KnowledgeBaseListItemDTO> toListItemDTOList(List<KnowledgeBaseEntity> entities,
+                                                            Map<String, String> categoryNames,
+                                                            Map<Long, String> ownerNames) {
         return entities.stream()
-            .map(entity -> toListItemDTO(entity, categoryNames))
+            .map(entity -> toListItemDTO(entity, categoryNames, ownerNames))
             .toList();
     }
 

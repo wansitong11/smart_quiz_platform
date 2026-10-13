@@ -1,5 +1,8 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+import interview.guide.modules.auth.service.UserDirectoryService;
+
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.file.FileStorageService;
@@ -17,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -29,10 +33,13 @@ import java.util.Optional;
 public class KnowledgeBaseListService {
 
     private final KnowledgeBaseRepository knowledgeBaseRepository;
+    private final OwnerScope ownerScope;
     private final RagChatMessageRepository ragChatMessageRepository;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final FileStorageService fileStorageService;
     private final KbCategoryService categoryService;
+    private final UserDirectoryService userDirectoryService;
+    private final KnowledgeBaseAccessService accessService;
 
     /**
      * 获取知识库列表（支持状态过滤和排序）
@@ -78,15 +85,9 @@ public class KnowledgeBaseListService {
      * 根据ID获取知识库详情
      */
     public Optional<KnowledgeBaseListItemDTO> getKnowledgeBase(Long id) {
-        return knowledgeBaseRepository.findById(id)
-            .map(entity -> knowledgeBaseMapper.toListItemDTO(entity, categoryService.nameByCode()));
-    }
-
-    /**
-     * 根据ID获取知识库实体（用于删除等操作）
-     */
-    public Optional<KnowledgeBaseEntity> getKnowledgeBaseEntity(Long id) {
-        return knowledgeBaseRepository.findById(id);
+        return knowledgeBaseRepository.findByIdAccessible(id, ownerScope.effectiveOwnerId())
+            .map(entity -> knowledgeBaseMapper.toListItemDTO(entity, categoryService.nameByCode(),
+                userDirectoryService.usernamesByIds(java.util.List.of(entity.getOwnerId()))));
     }
 
     /**
@@ -94,7 +95,7 @@ public class KnowledgeBaseListService {
      */
     public List<String> getKnowledgeBaseNames(List<Long> ids) {
         return ids.stream()
-            .map(id -> knowledgeBaseRepository.findById(id)
+            .map(id -> knowledgeBaseRepository.findByIdAccessible(id, ownerScope.effectiveOwnerId())
                 .map(KnowledgeBaseEntity::getName)
                 .orElse("未知知识库"))
             .toList();
@@ -120,8 +121,8 @@ public class KnowledgeBaseListService {
      */
     @Transactional
     public void updateCategory(Long id, String categoryCode) {
-        KnowledgeBaseEntity entity = knowledgeBaseRepository.findById(id)
-            .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND, "知识库不存在"));
+        // 改分类是写操作：自己的资料，或（共享资料 + 管理员）
+        KnowledgeBaseEntity entity = accessService.requireManageable(id);
         entity.setCategoryCode(categoryService.normalizeCode(categoryCode));
         knowledgeBaseRepository.save(entity);
         log.info("更新知识库分类: id={}, categoryCode={}", id, categoryCode);
@@ -137,15 +138,23 @@ public class KnowledgeBaseListService {
             return listKnowledgeBases();
         }
         return knowledgeBaseMapper.toListItemDTOList(
-            knowledgeBaseRepository.searchByKeyword(keyword.trim()), categoryService.nameByCode()
+            knowledgeBaseRepository.searchByKeywordScoped(keyword.trim(), ownerScope.effectiveOwnerId()),
+            categoryService.nameByCode()
         );
     }
 
     /**
-     * 列表统一补分类展示名（一次查出 code→name 映射，避免逐条查库）。
+     * 列表统一补分类展示名与上传人账号（各查一次映射，避免逐条查库）。
      */
     private List<KnowledgeBaseListItemDTO> toDtoList(List<KnowledgeBaseEntity> entities) {
-        return knowledgeBaseMapper.toListItemDTOList(entities, categoryService.nameByCode());
+        // 资料列表统一在这里收口：自己的 + 全局共享（管理员 scope=all 时不过滤）
+        List<KnowledgeBaseEntity> visible = entities.stream()
+            .filter(entity -> ownerScope.canReadKnowledgeBase(entity.getOwnerId(), entity.getVisibility()))
+            .toList();
+        // 归属人账号：管理员「查看全部」时同一份文件可能有多个人上传，列表要能区分是谁传的
+        Map<Long, String> ownerNames = userDirectoryService.usernamesByIds(
+            visible.stream().map(KnowledgeBaseEntity::getOwnerId).toList());
+        return knowledgeBaseMapper.toListItemDTOList(visible, categoryService.nameByCode(), ownerNames);
     }
 
     // ========== 排序功能 ==========
@@ -180,14 +189,16 @@ public class KnowledgeBaseListService {
     /**
      * 获取知识库统计信息
      * 总提问次数从用户消息数统计，确保多知识库提问只算一次
+     * 统计口径与列表一致：自己的 + 全局共享；管理员 scope=all 时统计全部
      */
     public KnowledgeBaseStatsDTO getStatistics() {
+        Long ownerId = ownerScope.effectiveOwnerId();
         return new KnowledgeBaseStatsDTO(
-            knowledgeBaseRepository.count(),
-            ragChatMessageRepository.countByType(MessageType.USER),  // 真正的提问次数
-            knowledgeBaseRepository.sumAccessCount(),
-            knowledgeBaseRepository.countByVectorStatus(VectorStatus.COMPLETED),
-            knowledgeBaseRepository.countByVectorStatus(VectorStatus.PROCESSING)
+            knowledgeBaseRepository.countAccessible(ownerId),
+            ragChatMessageRepository.countByTypeScoped(MessageType.USER, ownerId),  // 真正的提问次数
+            knowledgeBaseRepository.sumAccessCountScoped(ownerId),
+            knowledgeBaseRepository.countByVectorStatusAccessible(ownerId, VectorStatus.COMPLETED),
+            knowledgeBaseRepository.countByVectorStatusAccessible(ownerId, VectorStatus.PROCESSING)
         );
     }
 
@@ -197,8 +208,9 @@ public class KnowledgeBaseListService {
      * 下载知识库文件
      */
     public byte[] downloadFile(Long id) {
-        KnowledgeBaseEntity entity = knowledgeBaseRepository.findById(id)
-            .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND, "知识库不存在"));
+        KnowledgeBaseEntity entity = knowledgeBaseRepository
+            .findByIdAccessible(id, ownerScope.effectiveOwnerId())
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在或无权访问"));
 
         String storageKey = entity.getStorageKey();
         if (storageKey == null || storageKey.isBlank()) {
@@ -213,7 +225,8 @@ public class KnowledgeBaseListService {
      * 获取知识库文件信息（用于下载）
      */
     public KnowledgeBaseEntity getEntityForDownload(Long id) {
-        return knowledgeBaseRepository.findById(id)
-            .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND, "知识库不存在"));
+        return knowledgeBaseRepository
+            .findByIdAccessible(id, ownerScope.effectiveOwnerId())
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在或无权访问"));
     }
 }

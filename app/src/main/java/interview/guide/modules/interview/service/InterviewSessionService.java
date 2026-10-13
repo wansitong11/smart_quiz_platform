@@ -295,7 +295,7 @@ public class InterviewSessionService {
         // 2. 缓存未命中，从数据库恢复
         CachedSession restoredSession = restoreSessionFromDatabase(sessionId);
         if (restoredSession == null) {
-            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOT_FOUND);
         }
 
         return toDTO(restoredSession);
@@ -339,7 +339,7 @@ public class InterviewSessionService {
      */
     public InterviewSessionDTO findUnfinishedSessionOrThrow(Long resumeId) {
         return findUnfinishedSession(resumeId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND, "未找到未完成的面试会话"));
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "未找到未完成的面试会话"));
     }
 
     /**
@@ -719,7 +719,7 @@ public class InterviewSessionService {
         // 2. 缓存未命中，从数据库恢复
         CachedSession restoredSession = restoreSessionFromDatabase(sessionId);
         if (restoredSession == null) {
-            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOT_FOUND);
         }
 
         return restoredSession;

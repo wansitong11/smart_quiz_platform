@@ -2,6 +2,7 @@ package interview.guide.modules.knowledgebase.service;
 
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSecurityConstants;
+import interview.guide.common.ai.AiErrorMessages;
 import interview.guide.common.log.ErrorLogSanitizer;
 import interview.guide.modules.knowledgebase.metrics.RagMetrics;
 import interview.guide.common.exception.BusinessException;
@@ -10,6 +11,7 @@ import interview.guide.modules.knowledgebase.model.QueryRequest;
 import interview.guide.modules.knowledgebase.model.QueryResponse;
 import interview.guide.modules.knowledgebase.model.RagQueryTraceEntity;
 import interview.guide.modules.knowledgebase.model.RagScopeKind;
+import interview.guide.modules.knowledgebase.model.RagStreamEvent;
 import interview.guide.modules.knowledgebase.service.scope.ResolvedScope;
 import interview.guide.modules.knowledgebase.service.tool.ConversationHistoryReader;
 import interview.guide.modules.knowledgebase.service.tool.RagConversationHistoryTool;
@@ -39,6 +41,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -248,8 +252,10 @@ public class KnowledgeBaseQueryService {
                 ragMetrics.recordStageDuration("retrieve", "error", retrievalNanos);
             }
             ragMetrics.recordStageDuration("total", "error", System.nanoTime() - totalStart);
+            // 把底层原因（额度不足 / 密钥失效 / 网络不通）透出到接口提示里
+            String reason = AiErrorMessages.describe(e).orElse("请稍后重试");
             throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_QUERY_FAILED,
-                "知识库查询失败，请稍后重试");
+                "知识库查询失败：" + reason);
         }
     }
 
@@ -353,6 +359,36 @@ public class KnowledgeBaseQueryService {
     public Flux<String> answerQuestionStreamWithTools(ResolvedScope scope, Long sessionId,
                                                      String question, List<Message> history,
                                                      String llmProvider) {
+        return answerQuestionStreamWithTools(scope, sessionId, question, history, llmProvider,
+            null, true);
+    }
+
+    /**
+     * 工具化问答的结构化流事件。检索动作先作为独立事件发出，回答完成后再下发出处。
+     */
+    public Flux<RagStreamEvent> answerQuestionEventStreamWithTools(
+            ResolvedScope scope, Long sessionId, String question,
+            List<Message> history, String llmProvider) {
+        return Flux.concat(
+            Flux.just(RagStreamEvent.tool("search_knowledge_base", "start")),
+            Flux.defer(() -> {
+                AtomicReference<List<RagStreamEvent.Source>> sources =
+                    new AtomicReference<>(List.of());
+                Flux<RagStreamEvent> answers = answerQuestionStreamWithTools(
+                    scope, sessionId, question, history, llmProvider, sources::set, false)
+                    .map(RagStreamEvent::answer);
+                return answers.concatWith(Flux.defer(() -> sources.get().isEmpty()
+                    ? Flux.empty()
+                    : Flux.just(RagStreamEvent.sources(sources.get()))));
+            })
+        );
+    }
+
+    private Flux<String> answerQuestionStreamWithTools(
+            ResolvedScope scope, Long sessionId, String question,
+            List<Message> history, String llmProvider,
+            Consumer<List<RagStreamEvent.Source>> sourcesConsumer,
+            boolean appendSourcesToAnswer) {
         long totalStart = System.nanoTime();
         String normalized = normalizeQuestion(question);
         RagQueryTraceCollector collector = new RagQueryTraceCollector(sessionId, normalized,
@@ -463,7 +499,9 @@ public class KnowledgeBaseQueryService {
                             settle(collector, true, RagQueryTraceEntity.OUTCOME_TOOL_ERROR);
                             ragMetrics.recordRequest("stream", "error");
                             ragMetrics.recordStageDuration("total", "error", System.nanoTime() - totalStart);
-                            return Flux.just("【错误】知识库查询失败：AI服务暂时不可用，请稍后重试。");
+                            // 尽量给出真实原因（额度不足 / 密钥无效 / 网络不通），
+                            // 而不是笼统的"服务不可用"，否则用户会误以为是网络问题
+                            return Flux.just(describeFailure(retryError));
                         });
                 });
 
@@ -480,18 +518,24 @@ public class KnowledgeBaseQueryService {
                 if (onlyHistoryTool) {
                     return Flux.empty();
                 }
-                String block = sourcesBlock(preRetrievedDocs);
-                if (block.isBlank()) {
-                    block = sourcesBlockFromKbIds(collector.retrievedKbIds());
+                List<RagStreamEvent.Source> sources = sourceCitations(preRetrievedDocs);
+                if (sources.isEmpty()) {
+                    sources = sourceCitationsFromKbIds(collector.retrievedKbIds());
                 }
-                return block.isBlank() ? Flux.empty() : Flux.just(block);
+                if (sourcesConsumer != null) {
+                    sourcesConsumer.accept(sources);
+                }
+                if (!appendSourcesToAnswer || sources.isEmpty()) {
+                    return Flux.empty();
+                }
+                return Flux.just(renderSourcesBlock(sources));
             }));
         } catch (Exception e) {
             log.error("工具化问答启动失败: sessionId={}, error={}", sessionId,
                 ErrorLogSanitizer.summarize(e), ErrorLogSanitizer.forLogging(e));
             settle(collector, true);
             ragMetrics.recordRequest("stream", "error");
-            return Flux.just("【错误】知识库查询失败：AI服务暂时不可用，请稍后重试。");
+            return Flux.just(describeFailure(e));
         }
     }
 
@@ -750,7 +794,7 @@ public class KnowledgeBaseQueryService {
                     emitTrace(trace, question, queryContext, attemptedQueries, List.of(),
                         rewriteAndRetrievalMs, (System.nanoTime() - generationStart) / 1_000_000,
                         "【错误】知识库查询失败", "ERROR");
-                    return Flux.just("【错误】知识库查询失败：AI服务暂时不可用，请稍后重试。");
+                    return Flux.just(describeFailure(e));
                 })
                 .doOnCancel(() -> {
                     if (resultRecorded.compareAndSet(false, true)) {
@@ -777,8 +821,18 @@ public class KnowledgeBaseQueryService {
             }
             emitTrace(trace, normalizeQuestion(question), null, List.of(),
                 List.of(), 0, 0, "【错误】知识库查询失败", "ERROR");
-            return Flux.just("【错误】知识库查询失败：AI服务暂时不可用，请稍后重试。");
+            return Flux.just(describeFailure(e));
         }
+    }
+
+    /**
+     * 统一生成流式问答的失败文案：能识别出额度不足 / 密钥失效 / 网络不通等具体原因就说明白，
+     * 识别不了才退回"服务暂时不可用"。
+     */
+    private String describeFailure(Throwable error) {
+        String reason = AiErrorMessages.describe(error)
+            .orElse("AI服务暂时不可用，请稍后重试");
+        return "【错误】知识库查询失败：" + reason + "。";
     }
 
     /**
@@ -1209,8 +1263,12 @@ public class KnowledgeBaseQueryService {
      * </p>
      */
     private String sourcesBlock(List<Document> docs) {
+        return renderSourcesBlock(sourceCitations(docs));
+    }
+
+    private List<RagStreamEvent.Source> sourceCitations(List<Document> docs) {
         if (!citeSources || docs == null || docs.isEmpty()) {
-            return "";
+            return List.of();
         }
         Map<Long, Integer> hitsByKnowledgeBase = new LinkedHashMap<>();
         for (Document doc : docs) {
@@ -1220,20 +1278,14 @@ public class KnowledgeBaseQueryService {
             }
         }
         if (hitsByKnowledgeBase.isEmpty()) {
-            return "";
+            return List.of();
         }
 
         Map<Long, String> nameById = knowledgeBaseNames(List.copyOf(hitsByKnowledgeBase.keySet()));
-
-        StringBuilder sb = new StringBuilder("\n\n**出处**\n");
-        hitsByKnowledgeBase.forEach((id, count) -> {
-            sb.append("- 《").append(nameById.getOrDefault(id, "未知资料")).append("》");
-            if (count > 1) {
-                sb.append("（").append(count).append(" 段）");
-            }
-            sb.append('\n');
-        });
-        return sb.toString();
+        return hitsByKnowledgeBase.entrySet().stream()
+            .map(entry -> new RagStreamEvent.Source(
+                entry.getKey(), nameById.getOrDefault(entry.getKey(), "未知资料"), entry.getValue()))
+            .toList();
     }
 
     /**
@@ -1256,13 +1308,32 @@ public class KnowledgeBaseQueryService {
      * 这种情况下拿不到每条资料的片段数，所以只列资料名。
      */
     private String sourcesBlockFromKbIds(List<Long> kbIds) {
+        return renderSourcesBlock(sourceCitationsFromKbIds(kbIds));
+    }
+
+    private List<RagStreamEvent.Source> sourceCitationsFromKbIds(List<Long> kbIds) {
         if (!citeSources || kbIds == null || kbIds.isEmpty()) {
-            return "";
+            return List.of();
         }
         Map<Long, String> names = knowledgeBaseNames(kbIds);
+        return kbIds.stream()
+            .distinct()
+            .map(kbId -> new RagStreamEvent.Source(
+                kbId, names.getOrDefault(kbId, "未知资料"), 1))
+            .toList();
+    }
+
+    private String renderSourcesBlock(List<RagStreamEvent.Source> sources) {
+        if (sources == null || sources.isEmpty()) {
+            return "";
+        }
         StringBuilder sb = new StringBuilder("\n\n**出处**\n");
-        for (Long kbId : kbIds) {
-            sb.append("- 《").append(names.getOrDefault(kbId, "未知资料")).append("》\n");
+        for (RagStreamEvent.Source source : sources) {
+            sb.append("- 《").append(source.name()).append("》");
+            if (source.segments() > 1) {
+                sb.append("（").append(source.segments()).append(" 段）");
+            }
+            sb.append('\n');
         }
         return sb.toString();
     }

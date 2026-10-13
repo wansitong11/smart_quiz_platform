@@ -1,5 +1,7 @@
 package interview.guide.modules.resume.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.file.FileHashService;
@@ -38,6 +40,7 @@ public class ResumePersistenceService {
     private final ObjectMapper objectMapper;
     private final ResumeMapper resumeMapper;
     private final FileHashService fileHashService;
+    private final OwnerScope ownerScope;
     
     /**
      * 检查简历是否已存在（基于文件内容hash）
@@ -48,7 +51,9 @@ public class ResumePersistenceService {
     public Optional<PracticePaperEntity> findExistingResume(MultipartFile file) {
         try {
             String fileHash = fileHashService.calculateHash(file);
-            Optional<PracticePaperEntity> existing = resumeRepository.findByFileHash(fileHash);
+            // 去重按"当前用户"维度：别人上传过的同一份文件不影响我上传
+            Optional<PracticePaperEntity> existing =
+                resumeRepository.findByFileHashScoped(fileHash, ownerScope.effectiveOwnerId());
             
             if (existing.isPresent()) {
                 log.info("检测到重复简历: hash={}", fileHash);
@@ -75,6 +80,7 @@ public class ResumePersistenceService {
             
             PracticePaperEntity resume = new PracticePaperEntity();
             resume.setFileHash(fileHash);
+            resume.setOwnerId(ownerScope.currentUserId());
             resume.setOriginalFilename(file.getOriginalFilename());
             resume.setFileSize(file.getSize());
             resume.setContentType(file.getContentType());
@@ -100,7 +106,7 @@ public class ResumePersistenceService {
     @Transactional(rollbackFor = Exception.class)
     public void updateResumeText(Long resumeId, String resumeText) {
         PracticePaperEntity resume = resumeRepository.findById(resumeId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "试卷不存在"));
         resume.setResumeText(resumeText);
         resumeRepository.save(resume);
     }
@@ -201,7 +207,8 @@ public class ResumePersistenceService {
      * 获取所有简历列表
      */
     public List<PracticePaperEntity> findAllResumes() {
-        return resumeRepository.findAll();
+        // 试卷列表按归属过滤（管理员 scope=all 时 effectiveOwnerId() 返回 null → 不过滤）
+        return resumeRepository.findAllScoped(ownerScope.effectiveOwnerId());
     }
     
     /**
@@ -237,7 +244,7 @@ public class ResumePersistenceService {
      * 根据ID获取简历
      */
     public Optional<PracticePaperEntity> findById(Long id) {
-        return resumeRepository.findById(id);
+        return resumeRepository.findByIdScoped(id, ownerScope.effectiveOwnerId());
     }
     
     /**
@@ -246,9 +253,10 @@ public class ResumePersistenceService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteResume(Long id) {
-        Optional<PracticePaperEntity> resumeOpt = resumeRepository.findById(id);
+        Optional<PracticePaperEntity> resumeOpt =
+            resumeRepository.findByIdScoped(id, ownerScope.effectiveOwnerId());
         if (resumeOpt.isEmpty()) {
-            throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
+            throw new BusinessException(ErrorCode.NOT_FOUND, "试卷不存在或无权访问");
         }
         
         PracticePaperEntity resume = resumeOpt.get();

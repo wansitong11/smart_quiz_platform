@@ -20,7 +20,8 @@ interface NavItem {
 
 interface NavGroup {
   id: string;
-  title: string;
+  /** 分组标题；留空则不渲染这一行（例如「面试准备」已经不需要展示了） */
+  title?: string;
   items: NavItem[];
 }
 
@@ -106,7 +107,6 @@ export default function Layout() {
   const navGroups: NavGroup[] = [
     {
       id: 'interview',
-      title: '面试准备',
       items: [
         { id: 'papers', path: '/papers', label: '试卷分析', icon: ClipboardList, description: '上传试卷，AI 切题并批改' },
         { id: 'resumes', path: '/history', label: '试卷管理', icon: FileStack, description: '管理上传的试卷与作答记录' },
@@ -167,8 +167,8 @@ export default function Layout() {
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-lg font-bold text-slate-800 dark:text-white tracking-tight block">AI Interview</span>
-              <span className="text-xs text-slate-400 dark:text-slate-500">智能面试助手</span>
+              <span className="text-lg font-bold text-slate-800 dark:text-white tracking-tight block">SMART QUIZ</span>
+              <span className="text-xs text-slate-400 dark:text-slate-500">智能刷题助手</span>
             </div>
           </Link>
         </div>
@@ -198,11 +198,14 @@ export default function Layout() {
           <div className="space-y-6">
             {navGroups.map((group) => (
               <div key={group.id}>
-                <div className="px-3 mb-2">
-                  <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                    {group.title}
-                  </span>
-                </div>
+                {/* 分组标题留空就不占位（「面试准备」已去掉） */}
+                {group.title && (
+                  <div className="px-3 mb-2">
+                    <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                      {group.title}
+                    </span>
+                  </div>
+                )}
                 <div className="space-y-1">
                   {group.items.map((item) => {
                     const active = isActive(item.path);

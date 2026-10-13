@@ -1,0 +1,274 @@
+# ==============================================================================
+# 生产部署编排（单台阿里云轻量应用服务器）
+#
+# 用法：
+#   cp deploy/env.prod.example deploy/env.prod     # 填写真实值，不要提交
+#   docker compose -f docker-compose.prod.yml --env-file deploy/env.prod up -d --build
+#
+# 与 docker-compose.dev.yml / docker-compose.yml 的关键差异：
+#   1. 对象存储统一用 RustFS（与 application.yml、.env 默认一致，不是 MinIO）
+#   2. PostgreSQL / Redis / RustFS 只在内部网络互通，不对公网 publish 端口
+#   3. app / frontend 也不对公网暴露，统一由 gateway(nginx) 终止 TLS 后代理
+#   4. 所有服务带 restart 策略，宿主机重启后自动恢复
+#   5. Redis 开启 AOF，Redis Stream 队列在重启后不丢
+#   6. 统一限制容器日志大小，避免 json-file 日志吃满系统盘
+#   7. app 挂载运行时 Provider 配置卷与上传临时目录卷
+# ==============================================================================
+
+name: smart-quiz-prod
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL + pgvector：业务数据 + 向量数据
+  # 不 publish 端口，仅 internal 网络可达
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: smart-quiz-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填}
+      POSTGRES_DB: ${POSTGRES_DB:-smart-quiz}
+      TZ: ${TZ:-Asia/Shanghai}
+      PGTZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # 仅首次初始化（数据目录为空）时执行，创建 vector 扩展
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # 备份落点：容器内 /backup 直接对应宿主机 ./backup/postgres
+      - ./backup/postgres:/backup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-smart-quiz}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *default-logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  # Redis：限流计数 + Redis Stream 异步队列
+  # 注意：本项目的 Redis 不只是缓存，Stream 里带着"待向量化/待切题"的任务，
+  # 因此开 AOF，且淘汰策略用 noeviction（宁可写入报错，也不要静默丢任务）。
+  # 如果宿主内存紧张，通过 REDIS_MAXMEMORY 调整。
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7
+    container_name: smart-quiz-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-768mb}
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    logging: *default-logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  # RustFS：S3 兼容对象存储，存放试卷原件与知识库资料
+  # 应用通过 http://rustfs:9000 在容器网络内访问；
+  # 浏览器永远不直连它，下载统一走后端接口（见部署方案第 5.5 节）。
+  # ---------------------------------------------------------------------------
+  rustfs:
+    image: rustfs/rustfs:1.0.0-rc.6
+    container_name: smart-quiz-rustfs
+    restart: unless-stopped
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${APP_STORAGE_ACCESS_KEY:?APP_STORAGE_ACCESS_KEY 必填}
+      RUSTFS_SECRET_KEY: ${APP_STORAGE_SECRET_KEY:?APP_STORAGE_SECRET_KEY 必填}
+      RUSTFS_RPC_SECRET: ${RUSTFS_RPC_SECRET:?RUSTFS_RPC_SECRET 必填}
+      # 生产默认关闭 9001 控制台；需要临时查看时改成 "true" 并临时映射端口
+      RUSTFS_CONSOLE_ENABLE: ${RUSTFS_CONSOLE_ENABLE:-false}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - rustfs_data:/data
+    healthcheck:
+      test: ["CMD", "/usr/bin/curl", "--fail", "--silent", "http://localhost:9000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *default-logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  # 后端 Spring Boot
+  # 镜像 ID 可用 APP_IMAGE 覆盖，便于"本地/CI 构建 + 服务器只 pull"的发布方式
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    image: ${APP_IMAGE:-smart-quiz-app:prod}
+    container_name: smart-quiz-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 通过 JAVA_TOOL_OPTIONS 注入，无需改 app/Dockerfile。
+      # 4G 内存机器建议 MaxRAMPercentage=55~65，给 PG/Redis/RustFS/系统留余量。
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8}
+
+      # === 数据库 ===
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-smart-quiz}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填}
+
+      # === Redis ===
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DATABASE: ${REDIS_DATABASE:-0}
+
+      # === 对象存储（容器内地址，不是浏览器地址）===
+      APP_STORAGE_ENDPOINT: http://rustfs:9000
+      APP_STORAGE_ACCESS_KEY: ${APP_STORAGE_ACCESS_KEY:?APP_STORAGE_ACCESS_KEY 必填}
+      APP_STORAGE_SECRET_KEY: ${APP_STORAGE_SECRET_KEY:?APP_STORAGE_SECRET_KEY 必填}
+      APP_STORAGE_BUCKET: ${APP_STORAGE_BUCKET:-smart-quiz}
+      APP_STORAGE_REGION: ${APP_STORAGE_REGION:-us-east-1}
+      # 应用启动时自动创建 bucket（生产建议保留，省掉手工初始化）
+      APP_STORAGE_AUTO_CREATE_BUCKET: "true"
+
+      # === AI ===
+      AI_BAILIAN_API_KEY: ${AI_BAILIAN_API_KEY:?AI_BAILIAN_API_KEY 必填}
+      AI_MODEL: ${AI_MODEL:-qwen3.5-flash}
+      APP_AI_CONFIG_ENCRYPTION_KEY: ${APP_AI_CONFIG_ENCRYPTION_KEY:?APP_AI_CONFIG_ENCRYPTION_KEY 必填}
+      PROVIDER_KIMI_API_KEY: ${PROVIDER_KIMI_API_KEY:-}
+      PROVIDER_DEEPSEEK_API_KEY: ${PROVIDER_DEEPSEEK_API_KEY:-}
+      PROVIDER_GLM_API_KEY: ${PROVIDER_GLM_API_KEY:-}
+
+      # === 登录鉴权 ===
+      APP_AUTH_JWT_SECRET: ${APP_AUTH_JWT_SECRET:?APP_AUTH_JWT_SECRET 必填}
+      APP_AUTH_JWT_ISSUER: ${APP_AUTH_JWT_ISSUER:-https://smart-quiz-platform}
+      # 只允许首次启动、用户表为空时创建初始管理员
+      APP_AUTH_BOOTSTRAP_ADMIN_USERNAME: ${APP_AUTH_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      APP_AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${APP_AUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
+      # 自助注册开关；只在给少数人用时建议置 false
+      APP_AUTH_REGISTRATION_ENABLED: ${APP_AUTH_REGISTRATION_ENABLED:-true}
+      # 线上是 https，刷新令牌 Cookie 必须带 Secure
+      APP_AUTH_COOKIE_SECURE: "true"
+      # 生产不公开 Swagger
+      APP_AUTH_SWAGGER_PUBLIC: "false"
+
+      # === 跨域 / WebSocket Origin 校验 ===
+      # 必须包含 https://你的域名，否则口语练习的 WebSocket 握手会被拒绝
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS 必填，例如 https://quiz.example.com}
+
+      # === 业务参数（与开发默认一致，可按机器规格调整）===
+      APP_INTERVIEW_FOLLOW_UP_COUNT: ${APP_INTERVIEW_FOLLOW_UP_COUNT:-1}
+      APP_INTERVIEW_EVALUATION_BATCH_SIZE: ${APP_INTERVIEW_EVALUATION_BATCH_SIZE:-8}
+    volumes:
+      # 运行时 Provider 配置（加密 API Key 落盘）。容器重建不丢。
+      - app_config:/root/.smart-quiz-platform
+      # 上传临时目录（application.yml: app.resume.upload-dir）
+      - app_tmp:/tmp/smart-quiz-platform
+    healthcheck:
+      # 基础镜像未带 curl，用 bash 探活端口；需要严格探活可给 Dockerfile 装 curl 后改探 /actuator/health
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+    logging: *default-logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  # 前端静态资源 + 内部反代（/api、/ws → app:8080）
+  # 只在容器网络内暴露 80，由 gateway 转发
+  # ---------------------------------------------------------------------------
+  frontend:
+    build: ./frontend
+    image: ${FRONTEND_IMAGE:-smart-quiz-frontend:prod}
+    container_name: smart-quiz-frontend
+    restart: unless-stopped
+    depends_on:
+      - app
+    logging: *default-logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  # 边缘网关：唯一对公网开放的服务
+  # 用 nginx 官方镜像的 envsubst 模板机制注入 ${DOMAIN}，配置文件见
+  # deploy/nginx/templates/smart-quiz.conf.template
+  # ---------------------------------------------------------------------------
+  gateway:
+    image: nginx:1.27-alpine
+    container_name: smart-quiz-gateway
+    restart: unless-stopped
+    depends_on:
+      - frontend
+    ports:
+      # 应用独占 80/443（新服务器上没有别的服务占用，不需要 SNI 分流）。
+      # 如果将来要在同一台机器上和其他服务（如 Xray）共用 443，
+      # 改成 "127.0.0.1:8080:80" / "127.0.0.1:8443:443" 并启用 deploy/sni-split/。
+      - "80:80"
+      - "443:443"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      DOMAIN: ${DOMAIN:?DOMAIN 必填，例如 quiz.example.com}
+      # 证书路径。默认走 certbot 目录；复用外部（如面板）的通配符证书时，
+      # 在 deploy/env.prod 里改成 /opt/certs/fullchain.pem 与 /opt/certs/privkey.pem
+      TLS_CERT_FILE: ${TLS_CERT_FILE:-/etc/letsencrypt/live/${DOMAIN}/fullchain.pem}
+      TLS_KEY_FILE: ${TLS_KEY_FILE:-/etc/letsencrypt/live/${DOMAIN}/privkey.pem}
+    volumes:
+      - ./deploy/nginx/templates:/etc/nginx/templates:ro
+      - ./deploy/certbot/conf:/etc/letsencrypt:ro
+      - ./deploy/certbot/www:/var/www/certbot:ro
+      # 复用外部证书时的挂载点（目录不存在时 Docker 会自动建成空目录）
+      - ./certs:/opt/certs:ro
+    logging: *default-logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  # 证书续期：每 12 小时尝试一次续期，写共享卷
+  # 续期成功后需要 reload gateway，见部署方案第 6.5 节的宿主机 cron
+  # ---------------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: smart-quiz-certbot
+    restart: unless-stopped
+    # 每 12 小时尝试续期；sleep 放后台 + 裸 wait，保证收到 SIGTERM 时能立即退出
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait; done"]
+    volumes:
+      - ./deploy/certbot/conf:/etc/letsencrypt
+      - ./deploy/certbot/www:/var/www/certbot
+    logging: *default-logging
+    networks: [internal]
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  rustfs_data:
+  app_config:
+  app_tmp:

@@ -1,0 +1,97 @@
+# ==============================================================================
+# 边缘网关配置（nginx 官方镜像会用 envsubst 把 ${DOMAIN} 替换后生成
+# /etc/nginx/conf.d/smart-quiz.conf）
+#
+# 只处理三件事：
+#   1. HTTP-01 证书校验 + 80 → 443 跳转
+#   2. TLS 终止
+#   3. 反代到 frontend 容器（后续 /api、/ws 由 frontend 内部再转发给 app）
+# ==============================================================================
+
+upstream smart_quiz_frontend {
+    server frontend:80;
+    keepalive 32;
+}
+
+# ---------- HTTP：仅证书校验与跳转 ----------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---------- HTTPS ----------
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     ${TLS_CERT_FILE};
+    ssl_certificate_key ${TLS_KEY_FILE};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # 与 application.yml 的 multipart 上限（50MB）对齐并留余量
+    client_max_body_size 60m;
+    client_body_timeout 300s;
+
+    # 后端管理端点不对公网开放（防探测；frontend 的 nginx 本来也没转发它们）
+    location /actuator/ {
+        return 404;
+    }
+
+    # WebSocket（口语练习）：需长连接、升级头、不缓冲
+    location /ws/ {
+        proxy_pass http://smart_quiz_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    # API：AI 调用与向量化耗时长，需要放大超时
+    location /api/ {
+        proxy_pass http://smart_quiz_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_request_buffering off;
+        proxy_buffering off;
+    }
+
+    location / {
+        proxy_pass http://smart_quiz_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}

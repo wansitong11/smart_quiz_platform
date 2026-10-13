@@ -1,0 +1,111 @@
+name: Deploy
+
+# 推送到 main 自动发布；也可以在 Actions 页面手工触发
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一时间只允许一个发布任务，避免两台 runner 同时改线上
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}          # 例：registry.cn-hangzhou.aliyuncs.com
+  ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}        # 例：smart-quiz
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 构建并推送镜像（服务器只拉镜像，不在生产机上编译）
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      tag: ${{ steps.tag.outputs.value }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Compute image tag
+        id: tag
+        run: echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Aliyun ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: app/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/smart-quiz-app:${{ steps.tag.outputs.value }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/smart-quiz-app:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/smart-quiz-frontend:${{ steps.tag.outputs.value }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/smart-quiz-frontend:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # ---------------------------------------------------------------------------
+  # 部署到新加坡服务器：SSH 执行 deploy/deploy-remote.sh
+  # 脚本内部做健康检查，失败会回滚到上一个镜像并以非 0 退出
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to server
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Trigger remote deploy
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          APP_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/smart-quiz-app:${IMAGE_TAG}"
+          FRONTEND_IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/smart-quiz-frontend:${IMAGE_TAG}"
+          TARGET_DIR="${APP_DIR:-/opt/smart-quiz}"
+
+          ssh -i ~/.ssh/deploy_key "${SERVER_USER}@${SERVER_HOST}" \
+            "cd '${TARGET_DIR}' && APP_IMAGE='${APP_IMAGE}' FRONTEND_IMAGE='${FRONTEND_IMAGE}' bash deploy/deploy-remote.sh"

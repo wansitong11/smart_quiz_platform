@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  X, Sparkles, FileText, Mic,
+  X, Sparkles, FileText,
   FileStack, ChevronDown, ChevronUp, Loader2
 } from 'lucide-react';
 import { useInterviewConfig, CUSTOM_SKILL_ID, DIFFICULTY_OPTIONS, type InterviewMode, type Difficulty } from '../hooks/useInterviewConfig';
@@ -152,13 +152,14 @@ export default function UnifiedInterviewModal({
                           desc: '推荐：更稳定，更适合系统化练习',
                           recommended: true,
                         },
-                        {
-                          value: 'voice' as InterviewMode,
-                          label: '语音面试',
-                          icon: Mic,
-                          desc: '实时语音对话，偏临场模拟',
-                          recommended: false,
-                        },
+                        // 语音面试暂时下线：前端入口注释，恢复时取消注释即可
+                        // {
+                        //   value: 'voice' as InterviewMode,
+                        //   label: '语音面试',
+                        //   icon: Mic,
+                        //   desc: '实时语音对话，偏临场模拟',
+                        //   recommended: false,
+                        // },
                       ]).map(opt => {
                         const Icon = opt.icon;
                         const selected = config.mode === opt.value;

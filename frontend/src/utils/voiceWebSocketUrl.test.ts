@@ -22,3 +22,10 @@ test('显式 API 地址和相对 API 地址与 REST 请求保持一致', () => {
   assert.equal(buildVoiceWebSocketUrl(42, 'https://api.example/backend', 'https://interview.example/'),
     'wss://api.example/backend/ws/voice-interview/42');
 });
+
+test('携带 Access Token 时追加 token 查询参数', () => {
+  assert.equal(buildVoiceWebSocketUrl(42, '', 'https://interview.example/voice-interview', 'abc123'),
+    'wss://interview.example/ws/voice-interview/42?token=abc123');
+  assert.equal(buildVoiceWebSocketUrl(42, '', 'https://interview.example/voice-interview', null),
+    'wss://interview.example/ws/voice-interview/42');
+});

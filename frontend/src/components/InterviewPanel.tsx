@@ -10,7 +10,6 @@ import {Calendar, ChevronRight, Download, MessageSquare, Mic, Trash2, TrendingUp
 
 interface InterviewPanelProps {
   interviews: InterviewItem[];
-  onStartInterview: () => void;
   /** sourceType 为 PAPER 时外层会跳到试卷分析页，而不是面试详情 */
   onViewInterview: (sessionId: string, sourceType?: string | null) => void;
   onExportInterview: (sessionId: string) => void;
@@ -24,7 +23,6 @@ interface InterviewPanelProps {
  */
 export default function InterviewPanel({
   interviews,
-  onStartInterview,
   onViewInterview,
   onExportInterview,
   onDeleteInterview,
@@ -74,23 +72,17 @@ export default function InterviewPanel({
               className="w-16 h-16 mx-auto mb-6 bg-slate-100 dark:bg-slate-700 rounded-full flex items-center justify-center">
           <Mic className="w-8 h-8 text-slate-400" />
         </div>
-          <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">暂无面试记录</h3>
-          <p className="text-slate-500 dark:text-slate-400 mb-6">开始模拟面试，获取专业评估</p>
-        <motion.button
-          onClick={onStartInterview}
-          className="px-6 py-3 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-xl font-medium shadow-lg shadow-primary-500/30"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-        >
-          开始模拟面试
-        </motion.button>
+          <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">暂无答题记录</h3>
+          <p className="text-slate-500 dark:text-slate-400 mb-6">
+            在上方点「开始作答」或在「试卷分析」里交卷后，记录会显示在这里
+          </p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* 面试表现趋势图 */}
+      {/* 成绩趋势图 */}
       {chartData.length > 0 && (
           <motion.div
               className="bg-white dark:bg-slate-800 rounded-2xl p-6"
@@ -100,7 +92,7 @@ export default function InterviewPanel({
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-primary-500" />
-              <span className="font-semibold text-slate-800 dark:text-white">面试表现趋势</span>
+              <span className="font-semibold text-slate-800 dark:text-white">成绩趋势</span>
             </div>
             <span className="text-sm text-slate-500 dark:text-slate-400">共 {chartData.length} 场练习</span>
           </div>
@@ -144,7 +136,7 @@ export default function InterviewPanel({
         </motion.div>
       )}
 
-      {/* 历史面试场次 */}
+      {/* 历史答题记录 */}
       <motion.div
           className="bg-white dark:bg-slate-800 rounded-2xl p-6"
         initial={{ opacity: 0, y: 20 }}
@@ -152,7 +144,7 @@ export default function InterviewPanel({
         transition={{ delay: 0.1 }}
       >
         <div className="flex items-center justify-between mb-6">
-          <span className="font-semibold text-slate-800 dark:text-white">历史面试场次</span>
+          <span className="font-semibold text-slate-800 dark:text-white">历史答题记录</span>
         </div>
 
         <div className="space-y-4">
@@ -174,7 +166,7 @@ export default function InterviewPanel({
         {/* 删除确认对话框 */}
         <ConfirmDialog
           open={deleteConfirm !== null}
-          title="删除面试记录"
+          title="删除答题记录"
           message="确定要删除这条面试记录吗？删除后无法恢复。"
           confirmText="确定删除"
           cancelText="取消"
@@ -192,7 +184,7 @@ export default function InterviewPanel({
                 animate={{ rotate: 360 }}
                 transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
               />
-                <span className="text-slate-600 dark:text-slate-300">加载面试详情...</span>
+                <span className="text-slate-600 dark:text-slate-300">加载答题详情...</span>
             </div>
           </div>
         )}
@@ -241,7 +233,7 @@ function InterviewItemCard({
       {/* 信息 */}
       <div className="flex-1 min-w-0">
         <p className="font-medium text-slate-800 dark:text-white truncate">
-          模拟面试 #{total - index}
+          第 {total - index} 次作答
         </p>
         <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400">
           <span className="flex items-center gap-1">
@@ -273,7 +265,7 @@ function InterviewItemCard({
           onClick={onDelete}
           disabled={deleting}
           className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="删除面试记录"
+          title="删除答题记录"
         >
           {deleting ? (
             <motion.div

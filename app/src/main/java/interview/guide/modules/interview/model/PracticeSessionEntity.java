@@ -3,6 +3,8 @@ package interview.guide.modules.interview.model;
 import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.modules.resume.model.PracticePaperEntity;
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -17,7 +19,13 @@ import java.util.List;
     @Index(name = "idx_practice_session_resume_status_created", columnList = "resume_id,status,created_at"),
     @Index(name = "idx_practice_session_skill_created", columnList = "skillId,createdAt")
 })
+@Getter
+@Setter
 public class PracticeSessionEntity {
+
+    /** 归属用户：只有本人（管理员 scope=all 例外）能看到与操作 */
+    @Column(name = "owner_id")
+    private Long ownerId;
     
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -116,6 +124,10 @@ public class PracticeSessionEntity {
     // 知识板块（来自题库 category，普通练习为 null）
     @Column(length = 64)
     private String subjectCategory;
+
+    // 模拟测验的组卷参数快照（学科/知识点/难度/题量），用于「再测一次」
+    @Column(name = "quiz_config_json", columnDefinition = "TEXT")
+    private String quizConfigJson;
     
     public enum SessionStatus {
         CREATED,      // 会话已创建
@@ -320,6 +332,14 @@ public class PracticeSessionEntity {
 
     public String getSubjectCategory() {
         return subjectCategory;
+    }
+
+    public String getQuizConfigJson() {
+        return quizConfigJson;
+    }
+
+    public void setQuizConfigJson(String quizConfigJson) {
+        this.quizConfigJson = quizConfigJson;
     }
 
     public void setSubjectCategory(String subjectCategory) {

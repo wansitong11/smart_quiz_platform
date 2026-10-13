@@ -1,9 +1,12 @@
 import {useCallback, useEffect, useState} from 'react';
 import {useNavigate} from 'react-router-dom';
 import {AnimatePresence, motion} from 'framer-motion';
-import {AlertCircle, CheckCircle, Clock, FileStack, RefreshCw, Sparkles, Upload} from 'lucide-react';
+import {AlertCircle, CheckCircle, Clock, FileStack, RefreshCw, Upload} from 'lucide-react';
 import {historyApi, ResumeListItem} from '../api/history';
+import type { DataScopeParam } from '../api/scope';
+import AdminScopeToggle from '../components/AdminScopeToggle';
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
+import { useAuth } from '../context/AuthContext';
 import {formatDateOnly} from '../utils/date';
 import { ROUTES } from '../constants/routes';
 
@@ -42,16 +45,20 @@ function resumesEqual(a: ResumeListItem[], b: ResumeListItem[]): boolean {
 
 export default function HistoryList({onSelectResume}: HistoryListProps) {
   const navigate = useNavigate();
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole('ROLE_ADMIN');
   const [resumes, setResumes] = useState<ResumeListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; filename: string } | null>(null);
+  // 数据范围：默认只看自己的；管理员可切换成「查看全部」
+  const [scope, setScope] = useState<DataScopeParam>(undefined);
 
   const loadResumes = useCallback(async (isPolling = false) => {
     if (!isPolling) setLoading(true);
     try {
-      const data = await historyApi.getResumes();
+      const data = await historyApi.getResumes(scope);
       setResumes(prev => {
         if (isPolling && resumesEqual(prev, data)) return prev;
         return data;
@@ -61,7 +68,7 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
     } finally {
       if (!isPolling) setLoading(false);
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     loadResumes();
@@ -112,25 +119,21 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
         <div>
           <h1 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-3">
             <FileStack className="w-7 h-7 text-primary-500" />
-            简历管理
+            试卷管理
           </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">管理您的简历，AI 智能分析与评分</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">管理您上传的试卷与作答记录</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex items-center gap-3">
+          {/* 数据范围开关：只有管理员可见（默认也是只看自己的） */}
+          {isAdmin && <AdminScopeToggle scope={scope} onChange={setScope} />}
           <button
             onClick={() => navigate(ROUTES.resumeUpload)}
             className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
           >
             <Upload className="w-4 h-4" />
-            上传简历
+            上传试卷
           </button>
-          <button
-            onClick={() => navigate('/interview-hub')}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-          >
-            <Sparkles className="w-4 h-4" />
-            模拟面试
-          </button>
+          {/* 模拟面试入口已下线（模拟测验走侧边栏「模拟测验」） */}
         </div>
       </div>
 
@@ -143,7 +146,7 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
           </svg>
           <input
             type="text"
-            placeholder="搜索简历..."
+            placeholder="搜索试卷..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="flex-1 outline-none text-slate-700 dark:text-slate-200 placeholder:text-slate-400 bg-transparent"
@@ -171,8 +174,8 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
           animate={{opacity: 1, scale: 1}}
         >
           <div className="text-6xl mb-6">📄</div>
-          <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">暂无简历记录</h3>
-          <p className="text-slate-500 dark:text-slate-400">上传简历开始您的第一次 AI 面试分析</p>
+          <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">暂无试卷记录</h3>
+          <p className="text-slate-500 dark:text-slate-400">上传试卷开始你的第一次试卷分析</p>
         </motion.div>
       )}
 
@@ -187,10 +190,10 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
           <table className="w-full">
             <thead>
             <tr className="bg-slate-50 dark:bg-slate-700/50 border-b border-slate-100 dark:border-slate-600">
-              <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">简历名称</th>
+              <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">试卷名称</th>
               <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">上传日期</th>
               <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">分析状态</th>
-              <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">面试状态</th>
+              <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">测验状态</th>
               <th className="w-20"></th>
             </tr>
             </thead>
@@ -242,7 +245,7 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
                       </span>
                     ) : (
                       <span
-                        className="inline-flex px-3 py-1 bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 rounded-full text-sm">待面试</span>
+                        className="inline-flex px-3 py-1 bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 rounded-full text-sm">未测验</span>
                     )}
                   </td>
                   <td className="px-4">
@@ -251,7 +254,7 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
                         onClick={(e) => handleDeleteClick(resume.id, resume.filename, e)}
                         disabled={deletingId === resume.id}
                         className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="删除简历"
+                        title="删除试卷"
                       >
                         {deletingId === resume.id ? (
                           <motion.div
@@ -296,11 +299,11 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
         customMessage={
           deleteConfirm ? (
             <>
-              <p className="mb-2">确定要删除简历 <strong>"{deleteConfirm.filename}"</strong> 吗？</p>
+              <p className="mb-2">确定要删除试卷 <strong>"{deleteConfirm.filename}"</strong> 吗？</p>
               <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">删除后将同时删除：</p>
               <ul className="text-sm text-slate-500 dark:text-red-400 list-disc list-inside mb-2">
-                <li>简历评价记录</li>
-                <li>所有模拟面试记录</li>
+                <li>试卷分析记录</li>
+                <li>所有答题记录</li>
               </ul>
               <p className="text-sm font-semibold text-red-600">此操作不可恢复！</p>
             </>

@@ -6,12 +6,11 @@ import AnalysisPanel from '../components/AnalysisPanel';
 import InterviewPanel from '../components/InterviewPanel';
 import InterviewDetailPanel from '../components/InterviewDetailPanel';
 import {formatDateOnly} from '../utils/date';
-import {CheckSquare, ChevronLeft, Clock, Download, MessageSquare, Mic} from 'lucide-react';
+import {CheckSquare, ChevronLeft, Clock, Download, MessageSquare} from 'lucide-react';
 
 interface ResumeDetailPageProps {
   resumeId: number;
   onBack: () => void;
-  onStartInterview: (resumeId: number) => void;
   onStartPractice?: (sessionId: string) => void;
 }
 
@@ -21,7 +20,6 @@ type DetailViewType = 'list' | 'interviewDetail';
 export default function ResumeDetailPage({
   resumeId,
   onBack,
-  onStartInterview,
   onStartPractice,
 }: ResumeDetailPageProps) {
   const location = useLocation();
@@ -106,7 +104,7 @@ export default function ResumeDetailPage({
           setSelectedInterview(detail);
           setDetailView('interviewDetail');
         } catch (err) {
-          console.error('加载面试详情失败', err);
+          console.error('加载答题详情失败', err);
         } finally {
           setLoadingInterview(false);
         }
@@ -141,7 +139,7 @@ export default function ResumeDetailPage({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `面试报告_${sessionId}.pdf`;
+      a.download = `答题报告_${sessionId}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -167,7 +165,7 @@ export default function ResumeDetailPage({
       setSelectedInterview(detail);
       setDetailView('interviewDetail');
     } catch (err) {
-      alert('加载面试详情失败');
+      alert('加载答题详情失败');
     } finally {
       setLoadingInterview(false);
     }
@@ -247,8 +245,8 @@ export default function ResumeDetailPage({
 
   const latestAnalysis = resume.analyses?.[0];
   const tabs = [
-    { id: 'analysis' as const, label: '简历分析', icon: CheckSquare },
-    { id: 'interview' as const, label: '面试记录', icon: MessageSquare, count: resume.interviews?.length || 0 },
+    { id: 'analysis' as const, label: '试卷分析', icon: CheckSquare },
+    { id: 'interview' as const, label: '答题记录', icon: MessageSquare, count: resume.interviews?.length || 0 },
   ];
 
   return (
@@ -270,7 +268,7 @@ export default function ResumeDetailPage({
           </motion.button>
           <div>
               <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-              {detailView === 'interviewDetail' ? `面试详情 #${selectedInterview?.sessionId?.slice(-6) || ''}` : resume.filename}
+              {detailView === 'interviewDetail' ? `答题详情 #${selectedInterview?.sessionId?.slice(-6) || ''}` : resume.filename}
             </h2>
               <p className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
               <Clock className="w-4 h-4" />
@@ -295,17 +293,7 @@ export default function ResumeDetailPage({
               {exporting === selectedInterview.sessionId ? '导出中...' : '导出 PDF'}
             </motion.button>
           )}
-          {detailView !== 'interviewDetail' && (
-            <motion.button
-              onClick={() => onStartInterview(resumeId)}
-              className="px-5 py-2.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-xl font-medium shadow-lg shadow-primary-500/30 hover:shadow-xl transition-all flex items-center gap-2"
-              whileHover={{ scale: 1.02, y: -1 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              <Mic className="w-4 h-4" />
-              开始模拟面试
-            </motion.button>
-          )}
+          {/* 模拟面试入口已下线：模拟测验请走侧边栏「模拟测验」 */}
         </div>
       </div>
 
@@ -370,7 +358,6 @@ export default function ResumeDetailPage({
               ) : (
                   <InterviewPanel
                       interviews={resume.interviews || []}
-                  onStartInterview={() => onStartInterview(resumeId)}
                   onViewInterview={handleViewInterview}
                   onExportInterview={handleExportInterviewPdf}
                   onDeleteInterview={handleDeleteInterview}

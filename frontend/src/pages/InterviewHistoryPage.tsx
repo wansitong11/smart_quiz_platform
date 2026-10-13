@@ -4,6 +4,7 @@ import {AnimatePresence, motion} from 'framer-motion';
 import {CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis} from 'recharts';
 import {historyApi} from '../api/history';
 import {interviewApi, type TextSessionMeta} from '../api/interview';
+import type {DataScopeParam} from '../api/scope';
 import {voiceInterviewApi, SessionMeta} from '../api/voiceInterview';
 import {formatDate, formatDateOnly} from '../utils/date';
 import {getScoreProgressColor} from '../utils/score';
@@ -19,7 +20,9 @@ import {
 } from './voiceEvaluationStatus.ts';
 import {skillApi, type SkillDTO} from '../api/skill';
 import {getTemplateName} from '../utils/voiceInterview';
+import AdminScopeToggle from '../components/AdminScopeToggle';
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
+import {useAuth} from '../context/AuthContext';
 import {ROUTES} from '../constants/routes';
 import {
   AlertCircle,
@@ -201,6 +204,8 @@ interface InterviewHistoryPageProps {
   onRestartInterview?: (resumeId: number) => void;
   onContinueInterview?: (sessionId: string) => void;
   knowledgeBaseId?: number;
+  /** 可选：按来源过滤（如 "QUIZ,QUIZ_WRONG"），用于「答题记录」视图与知识库面试视图隔离 */
+  sourceTypes?: string;
 }
 
 /** Shallow comparison for polling change-detection */
@@ -222,10 +227,17 @@ export default function InterviewHistoryPage({
   onRestartInterview,
   onContinueInterview,
   knowledgeBaseId,
+  sourceTypes,
 }: InterviewHistoryPageProps) {
   const navigate = useNavigate();
   const knowledgeBaseFilterId = knowledgeBaseId ?? null;
   const isKnowledgeBaseView = knowledgeBaseFilterId !== null && !Number.isNaN(knowledgeBaseFilterId);
+  // 答题记录视图：只展示模拟测验 / 错题重练产生的会话，不掺试卷与面试
+  const isQuizView = Boolean(sourceTypes);
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole('ROLE_ADMIN');
+  // 数据范围：默认只看自己的；管理员可切换成「查看全部」
+  const [scope, setScope] = useState<DataScopeParam>(undefined);
   const [items, setItems] = useState<UnifiedInterviewItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -263,7 +275,7 @@ export default function InterviewHistoryPage({
       const scopedTextInterviews = isKnowledgeBaseView
         ? textInterviews.filter(item => item.knowledgeBaseId === knowledgeBaseFilterId)
         : textInterviews.filter(item => item.sourceType !== 'KNOWLEDGE_BASE');
-      const voiceSessions = isKnowledgeBaseView ? [] : await loadVoiceInterviews();
+      const voiceSessions = (isKnowledgeBaseView || isQuizView) ? [] : await loadVoiceInterviews();
 
       const voiceWithNames = voiceSessions.map(item => {
         const skillName = getTemplateName(item.title, loadedSkills);
@@ -284,12 +296,12 @@ export default function InterviewHistoryPage({
     } finally {
       if (!isPolling) setLoading(false);
     }
-  }, [isKnowledgeBaseView, knowledgeBaseFilterId]);
+  }, [isKnowledgeBaseView, knowledgeBaseFilterId, scope]);
 
   // Load text interviews from dedicated API
   async function loadTextInterviews(skills: SkillDTO[]): Promise<UnifiedInterviewItem[]> {
     try {
-      const sessions = await interviewApi.listSessions();
+      const sessions = await interviewApi.listSessions(sourceTypes, scope);
       return sessions.map((session: TextSessionMeta) => ({
         id: session.sessionId,
         type: 'text' as const,
@@ -403,7 +415,7 @@ export default function InterviewHistoryPage({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `面试报告_${sessionId.slice(-8)}.pdf`;
+      a.download = `答题报告_${sessionId.slice(-8)}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -503,7 +515,7 @@ export default function InterviewHistoryPage({
             animate={{ opacity: 1, x: 0 }}
           >
             <Users className="w-7 h-7 text-primary-500" />
-            {isKnowledgeBaseView ? '知识库面试记录' : '面试记录'}
+            {isKnowledgeBaseView ? '知识库面试记录' : (isQuizView ? '答题记录' : '面试记录')}
           </motion.h1>
           <motion.p
             className="text-slate-500 dark:text-slate-400 mt-1"
@@ -511,30 +523,38 @@ export default function InterviewHistoryPage({
             animate={{ opacity: 1 }}
             transition={{ delay: 0.1 }}
           >
-            {isKnowledgeBaseView ? '查看当前知识库的面试记录和表现趋势' : '查看和管理所有模拟面试记录'}
+            {isKnowledgeBaseView
+              ? '查看当前知识库的面试记录和表现趋势'
+              : (isQuizView ? '查看和管理所有模拟测验与错题重练记录' : '查看和管理所有模拟面试记录')}
           </motion.p>
         </div>
 
-        <motion.div
-          className="flex items-center gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl px-4 py-2.5 min-w-[280px] focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100 dark:focus-within:ring-primary-900/30 transition-all"
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-        >
-          <Search className="w-5 h-5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="搜索名称..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="flex-1 outline-none text-slate-700 dark:text-slate-200 placeholder:text-slate-400 bg-transparent"
-          />
-        </motion.div>
+        <div className="flex flex-col items-end gap-3">
+          {/* 数据范围开关：只有管理员可见（默认也是只看自己的）；知识库视图下无意义，不展示 */}
+          {isAdmin && !isKnowledgeBaseView && (
+            <AdminScopeToggle scope={scope} onChange={setScope} />
+          )}
+          <motion.div
+            className="flex items-center gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl px-4 py-2.5 min-w-[280px] focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100 dark:focus-within:ring-primary-900/30 transition-all"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+          >
+            <Search className="w-5 h-5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="搜索名称..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="flex-1 outline-none text-slate-700 dark:text-slate-200 placeholder:text-slate-400 bg-transparent"
+            />
+          </motion.div>
+        </div>
       </div>
 
       {/* Stats */}
       {!loading && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <StatCard icon={Users} label="面试总数" value={stats.totalCount} color="bg-primary-500" />
+          <StatCard icon={Users} label="答题总数" value={stats.totalCount} color="bg-primary-500" />
           <StatCard icon={CheckCircle} label="已完成" value={stats.completedCount} color="bg-emerald-500" />
           <StatCard icon={TrendingUp} label="平均分数" value={stats.averageScore} suffix="分" color="bg-indigo-500" />
         </div>
@@ -549,7 +569,7 @@ export default function InterviewHistoryPage({
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-primary-500" />
-              <span className="font-semibold text-slate-800 dark:text-white">面试表现趋势</span>
+              <span className="font-semibold text-slate-800 dark:text-white">成绩趋势</span>
             </div>
             <span className="text-sm text-slate-500 dark:text-slate-400">共 {trendData.length} 场练习</span>
           </div>
@@ -585,7 +605,7 @@ export default function InterviewHistoryPage({
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            aria-label="按面试方向筛选"
+            aria-label="按知识板块筛选"
             className="bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-700 dark:text-slate-200 outline-none focus:border-primary-500 transition-colors cursor-pointer"
           >
             <option value="all">全部记录</option>
@@ -629,7 +649,7 @@ export default function InterviewHistoryPage({
       )}
 
       {/* Type filter tabs */}
-      {!isKnowledgeBaseView && <div className="flex items-center gap-2 mb-6">
+      {!isKnowledgeBaseView && !isQuizView && <div className="flex items-center gap-2 mb-6">
         {([
           { key: 'all', label: '全部' },
           { key: 'text', label: '文字面试' },
@@ -664,8 +684,8 @@ export default function InterviewHistoryPage({
           animate={{ opacity: 1, scale: 1 }}
         >
           <Search className="w-16 h-16 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">没有符合当前筛选条件的面试记录</h3>
-          <p className="text-slate-500 dark:text-slate-400 mb-6">可以尝试调整面试方向、时间范围或完成状态</p>
+          <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">没有符合当前筛选条件的记录</h3>
+          <p className="text-slate-500 dark:text-slate-400 mb-6">可以尝试调整知识板块、时间范围或完成状态</p>
           <button
             onClick={resetKbFilters}
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium rounded-lg transition-colors"
@@ -684,9 +704,13 @@ export default function InterviewHistoryPage({
           animate={{ opacity: 1, scale: 1 }}
         >
           <Users className="w-16 h-16 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">暂无面试记录</h3>
+          <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">
+            {isQuizView ? '暂无答题记录' : '暂无面试记录'}
+          </h3>
           <p className="text-slate-500 dark:text-slate-400">
-            {isKnowledgeBaseView ? '开始一次知识库面试后，记录将显示在这里' : '开始一次模拟面试后，记录将显示在这里'}
+            {isKnowledgeBaseView
+              ? '开始一次知识库面试后，记录将显示在这里'
+              : (isQuizView ? '去「模拟测验」组一份卷子，完成后记录会显示在这里' : '开始一次模拟面试后，记录将显示在这里')}
           </p>
         </motion.div>
       )}
@@ -738,7 +762,7 @@ export default function InterviewHistoryPage({
                             {isKnowledgeBaseView && item.type === 'text' && (
                               <span
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded text-xs font-medium"
-                                title="面试方向"
+                        title="知识板块"
                               >
                                 <Tag className="w-3 h-3" />
                                 {getKnowledgeBaseInterviewCategoryLabel(item.subjectCategory)}
@@ -812,7 +836,7 @@ export default function InterviewHistoryPage({
                               }
                             }}
                             className="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors"
-                            title="继续面试"
+                            title="继续作答"
                           >
                             <PlayCircle className="w-4 h-4" />
                           </button>
@@ -821,7 +845,7 @@ export default function InterviewHistoryPage({
                           <button
                             onClick={(e) => { e.stopPropagation(); navigate('/voice-interview', { state: { voiceSessionId: item.voiceSessionId } }); }}
                             className="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors"
-                            title="继续面试"
+                            title="继续作答"
                           >
                             <PlayCircle className="w-4 h-4" />
                           </button>
@@ -844,7 +868,7 @@ export default function InterviewHistoryPage({
                           <button
                             onClick={(e) => { e.stopPropagation(); onRestartInterview(item.resumeId!); }}
                             className="p-2 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-colors"
-                            title="重新面试"
+                            title="再做一遍"
                           >
                             <RotateCcw className="w-4 h-4" />
                           </button>
@@ -885,7 +909,7 @@ export default function InterviewHistoryPage({
       <DeleteConfirmDialog
         open={deleteItem !== null}
         item={deleteItem ? { id: 0, sessionId: deleteItem.sessionId } : null}
-        itemType="面试记录"
+        itemType={isQuizView ? '答题记录' : '面试记录'}
         loading={deletingSessionId !== null}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteItem(null)}

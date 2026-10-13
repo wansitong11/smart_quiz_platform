@@ -22,6 +22,19 @@ public interface InterviewSessionRepository extends JpaRepository<PracticeSessio
      */
     Optional<PracticeSessionEntity> findBySessionId(String sessionId);
 
+    // ========== 归属隔离查询（ownerId 为 null 表示管理员查看全部） ==========
+
+    @Query("SELECT s FROM PracticeSessionEntity s WHERE s.sessionId = :sessionId AND (:ownerId IS NULL OR s.ownerId = :ownerId)")
+    Optional<PracticeSessionEntity> findBySessionIdScoped(@Param("sessionId") String sessionId,
+                                                          @Param("ownerId") Long ownerId);
+
+    @Query("SELECT s FROM PracticeSessionEntity s WHERE (:ownerId IS NULL OR s.ownerId = :ownerId) ORDER BY s.createdAt DESC")
+    List<PracticeSessionEntity> findAllScoped(@Param("ownerId") Long ownerId);
+
+    @Query("SELECT s FROM PracticeSessionEntity s WHERE s.resumeId = :resumeId AND (:ownerId IS NULL OR s.ownerId = :ownerId) ORDER BY s.createdAt DESC")
+    List<PracticeSessionEntity> findByResumeIdScoped(@Param("resumeId") Long resumeId,
+                                                     @Param("ownerId") Long ownerId);
+
     Optional<PracticeSessionEntity> findByRequestId(String requestId);
 
     /**

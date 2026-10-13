@@ -2,6 +2,8 @@ import {useMemo, useState} from 'react';
 import {AnimatePresence, motion} from 'framer-motion';
 import {getScoreColor} from '../utils/score';
 import type {InterviewDetail} from '../api/history';
+import type {InterviewQuestion} from '../types/interview';
+import ChoiceOptionsView from './ChoiceOptionsView';
 
 interface InterviewDetailPanelProps {
   interview: InterviewDetail;
@@ -19,6 +21,21 @@ export default function InterviewDetailPanel({ interview }: InterviewDetailPanel
     }
     return allIndices;
   });
+
+  // 题号 → 选项：选项存在 questions/paperTree 里，报告里的 answer 只有一串 key，
+  // 必须把选项捞出来才能展示「正确答案 / 你的选择」。
+  const optionsMap = useMemo(() => {
+    const map = new Map<number, NonNullable<InterviewQuestion['options']>>();
+    ((interview.questions ?? []) as Array<{
+      questionIndex?: number;
+      options?: InterviewQuestion['options'];
+    }>).forEach(question => {
+      if (question?.questionIndex != null && question.options && question.options.length >= 2) {
+        map.set(question.questionIndex, question.options);
+      }
+    });
+    return map;
+  }, [interview.questions]);
 
   const toggleQuestion = (index: number) => {
     setExpandedQuestions(prev => {
@@ -65,9 +82,10 @@ export default function InterviewDetailPanel({ interview }: InterviewDetailPanel
         <ImprovementsSection improvements={interview.improvements} />
       )}
 
-      {/* 问答记录详情 */}
+      {/* 题目详情 */}
         <QuestionsSection
         answers={interview.answers || []}
+        optionsMap={optionsMap}
         expandedQuestions={expandedQuestions}
         toggleQuestion={toggleQuestion}
       />
@@ -130,9 +148,9 @@ function ScoreCard({
           </div>
         </div>
 
-        <h3 className="text-2xl font-bold mb-3">面试评估</h3>
+        <h3 className="text-2xl font-bold mb-3">测验报告</h3>
         <p className="text-white/90 max-w-2xl leading-relaxed">
-          {feedback || '表现良好，展示了扎实的技术基础。'}
+          {feedback || '本次测验已完成，可展开下方每一题查看作答与解析。'}
         </p>
       </div>
     </div>
@@ -199,10 +217,12 @@ function ImprovementsSection({ improvements }: { improvements: string[] }) {
 // 问答部分组件
 function QuestionsSection({
   answers,
+  optionsMap,
   expandedQuestions,
   toggleQuestion
 }: {
   answers: any[];
+  optionsMap: Map<number, NonNullable<InterviewQuestion['options']>>;
   expandedQuestions: Set<number>;
   toggleQuestion: (index: number) => void;
 }) {
@@ -220,6 +240,7 @@ function QuestionsSection({
           <QuestionCard
             key={idx}
             answer={answer}
+            options={optionsMap.get(answer.questionIndex) ?? []}
             index={idx}
             isExpanded={expandedQuestions.has(idx)}
             onToggle={() => toggleQuestion(idx)}
@@ -233,11 +254,13 @@ function QuestionsSection({
 // 问题卡片组件
 function QuestionCard({
   answer,
+  options,
   index,
   isExpanded,
   onToggle
 }: {
   answer: any;
+  options: NonNullable<InterviewQuestion['options']>;
   index: number;
   isExpanded: boolean;
   onToggle: () => void;
@@ -282,6 +305,17 @@ function QuestionCard({
       <div className="px-5 pb-2">
         <p className="text-slate-800 dark:text-white font-medium leading-relaxed">{answer.question}</p>
       </div>
+
+      {/* 客观题：把全部选项摆出来并标注对错，光给一串 key 学生没法对照 */}
+      {options.length >= 2 && (
+        <div className="px-5 pb-2">
+          <ChoiceOptionsView
+            options={options}
+            referenceAnswer={answer.referenceAnswer}
+            chosenAnswer={answer.userAnswer}
+          />
+        </div>
+      )}
 
       {/* 展开内容 */}
       <AnimatePresence>

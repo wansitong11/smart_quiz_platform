@@ -300,10 +300,18 @@ public class LlmProviderRegistry {
 
         OpenAIClient openAiClient = ApiPathResolver.buildOpenAiClient(config.baseUrl(), config.apiKey());
 
-        OpenAiChatOptions options = OpenAiChatOptions.builder()
+        OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                 .model(config.model())
-                .temperature(config.temperature() != null ? config.temperature() : 0.2)
-                .build();
+                .temperature(config.temperature() != null ? config.temperature() : 0.2);
+
+        // 按 Provider 追加请求体参数：例如关闭 DashScope 的推理模式，
+        // 否则 qwen3.7-plus 会把大量时间花在思考链上，单次调用轻易超过 60 秒
+        Map<String, Object> extraBody = properties.extraBodyFor(providerId);
+        if (!extraBody.isEmpty()) {
+            optionsBuilder.extraBody(extraBody);
+            log.info("[LlmProviderRegistry] Provider {} 追加请求参数: {}", providerId, extraBody);
+        }
+        OpenAiChatOptions options = optionsBuilder.build();
 
         return OpenAiChatModel.builder()
             .openAiClient(openAiClient)

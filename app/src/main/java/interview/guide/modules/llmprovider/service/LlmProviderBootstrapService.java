@@ -28,8 +28,36 @@ public class LlmProviderBootstrapService {
   public void seedProvidersIfNecessary() {
     if (providerRepository.count() == 0) {
       seedProviders();
+    } else {
+      warnIfConfiguredModelDiffers();
     }
     ensureGlobalSetting();
+  }
+
+  /**
+   * Provider 一旦落库，数据库就是唯一权威来源：application.yml / AI_MODEL 的后续修改不再生效
+   * （这是刻意的——界面上改过的模型不能被重启覆盖）。但这条规则非常反直觉，
+   * 所以启动时把"配置里写的模型"与"实际生效的模型"不一致的地方显式打出来，
+   * 免得改了 AI_MODEL 却一直在用旧模型（例如旧模型免费额度已耗尽，表现为 403）。
+   */
+  private void warnIfConfiguredModelDiffers() {
+    Map<String, ProviderConfig> providers = properties.getProviders();
+    if (providers == null || providers.isEmpty()) {
+      return;
+    }
+    providers.forEach((id, config) -> {
+      if (config == null || isBlank(config.getModel())) {
+        return;
+      }
+      providerRepository.findById(id).ifPresent(entity -> {
+        if (!config.getModel().equals(entity.getModel())) {
+          log.warn("Provider '{}' 实际生效的模型是 '{}'（来自数据库 llm_provider_config），"
+                  + "与配置里的 '{}' 不一致。运行时以数据库为准："
+                  + "请在「设置 → 模型 Provider」里修改，或更新该表后调用 /api/llm-provider/reload。",
+              id, entity.getModel(), config.getModel());
+        }
+      });
+    });
   }
 
   private void seedProviders() {

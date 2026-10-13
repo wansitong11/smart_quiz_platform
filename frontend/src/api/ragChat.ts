@@ -36,6 +36,17 @@ export interface RagChatMessage {
   createdAt: string;
 }
 
+export interface RagToolEvent {
+  name: 'search_knowledge_base' | 'get_conversation_history' | string;
+  status: 'start' | 'end' | string;
+}
+
+export interface RagSource {
+  kbId: number;
+  name: string;
+  segments: number;
+}
+
 export interface KnowledgeBaseItem {
   id: number;
   name: string;
@@ -136,7 +147,9 @@ export const ragChatApi = {
     question: string,
     onMessage: (chunk: string) => void,
     onComplete: () => void,
-    onError: (error: Error) => void
+    onError: (error: Error) => void,
+    onTool?: (event: RagToolEvent) => void,
+    onSources?: (sources: RagSource[]) => void
   ): Promise<void> {
     return streamSse({
       url: `/api/rag-chat/sessions/${sessionId}/messages/stream`,
@@ -148,6 +161,19 @@ export const ragChatApi = {
       onMessage,
       onComplete,
       onError,
+      onEvent: (eventName, data) => {
+        if (eventName === 'answer') {
+          onMessage(data);
+          return;
+        }
+        if (eventName === 'tool') {
+          onTool?.(JSON.parse(data) as RagToolEvent);
+          return;
+        }
+        if (eventName === 'sources') {
+          onSources?.(JSON.parse(data) as RagSource[]);
+        }
+      },
       parseMode: 'event',
       trimDataPrefixSpace: false,
       unescapeEscapedNewlines: true,

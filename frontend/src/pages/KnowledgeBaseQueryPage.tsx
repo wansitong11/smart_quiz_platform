@@ -5,11 +5,27 @@ import remarkGfm from 'remark-gfm';
 import {Virtuoso, type VirtuosoHandle} from 'react-virtuoso';
 import {knowledgeBaseApi, type KnowledgeBaseItem, type SortOption} from '../api/knowledgebase';
 import {kbCategoryApi, type KbCategory} from '../api/kbCategory';
-import {ragChatApi, type RagChatSessionListItem, type RagScope} from '../api/ragChat';
+import {
+  ragChatApi,
+  type RagChatSessionListItem,
+  type RagScope,
+  type RagSource,
+  type RagToolEvent,
+} from '../api/ragChat';
 import {formatDateOnly} from '../utils/date';
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
 import CodeBlock from '../components/CodeBlock';
-import {ChevronLeft, ChevronRight, Edit, MessageSquare, Pin, Plus, Trash2,} from 'lucide-react';
+import {
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  Edit,
+  LoaderCircle,
+  MessageSquare,
+  Pin,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 
 interface KnowledgeBaseQueryPageProps {
   onBack: () => void;
@@ -21,12 +37,36 @@ interface Message {
   type: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  activity?: string;
+  sources?: RagSource[];
 }
 
 interface CategoryGroup {
   name: string;
   items: KnowledgeBaseItem[];
   isExpanded: boolean;
+}
+
+const SOURCE_BLOCK_PATTERN = /\n\n\*\*出处\*\*\n((?:- 《.*》(?:（\d+ 段）)?\n?)+)\s*$/;
+
+function extractLegacySources(content: string): { content: string; sources: RagSource[] } {
+  const match = content.match(SOURCE_BLOCK_PATTERN);
+  if (!match) {
+    return { content, sources: [] };
+  }
+
+  const sources = match[1].split('\n').flatMap(line => {
+    const sourceMatch = line.match(/^- 《(.+)》(?:（(\d+) 段）)?$/);
+    if (!sourceMatch) {
+      return [];
+    }
+    return [{
+      kbId: 0,
+      name: sourceMatch[1],
+      segments: sourceMatch[2] ? Number(sourceMatch[2]) : 1,
+    }];
+  });
+  return { content: content.slice(0, match.index).trimEnd(), sources };
 }
 
 export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBaseQueryPageProps) {
@@ -238,12 +278,18 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
       setScopeKind(detail.scope ?? 'ALL');
       setScopeCategoryCode(detail.categoryCode ?? null);
       setSelectedKbIds(new Set(detail.knowledgeBases.map(kb => kb.id)));
-      setMessages(detail.messages.map(m => ({
-        id: m.id,
-        type: m.type,
-        content: m.content,
-        timestamp: new Date(m.createdAt),
-      })));
+      setMessages(detail.messages.map(m => {
+        const parsed = m.type === 'assistant'
+          ? extractLegacySources(m.content)
+          : { content: m.content, sources: [] };
+        return {
+          id: m.id,
+          type: m.type,
+          content: parsed.content,
+          sources: parsed.sources,
+          timestamp: new Date(m.createdAt),
+        };
+      }));
     } catch (err) {
       console.error('加载会话失败', err);
     }
@@ -348,14 +394,14 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     setMessages(prev => [...prev, assistantMessage]);
 
     let fullContent = '';
-    const updateAssistantMessage = (content: string) => {
+    const updateAssistantMessage = (patch: Partial<Message>) => {
       setMessages(prev => {
         const newMessages = [...prev];
         const lastIndex = newMessages.length - 1;
         if (lastIndex >= 0 && newMessages[lastIndex].type === 'assistant') {
           newMessages[lastIndex] = {
             ...newMessages[lastIndex],
-            content: content,
+            ...patch,
           };
         }
         return newMessages;
@@ -373,24 +419,53 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
           }
           rafRef.current = requestAnimationFrame(() => {
             startTransition(() => {
-              updateAssistantMessage(fullContent);
+              updateAssistantMessage({ content: fullContent, activity: undefined });
             });
           });
         },
         () => {
+          updateAssistantMessage({ activity: undefined });
           setLoading(false);
           loadSessions();
         },
         (error: Error) => {
           console.error('流式查询失败:', error);
-          updateAssistantMessage(fullContent || error.message || '回答失败，请重试');
+          updateAssistantMessage({
+            content: fullContent || error.message || '回答失败，请重试',
+            activity: undefined,
+          });
           setLoading(false);
+        },
+        (event: RagToolEvent) => {
+          const activity = event.name === 'get_conversation_history'
+            ? '正在读取本次对话记录…'
+            : '正在检索你的资料…';
+          updateAssistantMessage({ activity });
+        },
+        (sources: RagSource[]) => {
+          updateAssistantMessage({ sources, activity: undefined });
         }
       );
     } catch (err) {
       console.error('发起流式查询失败:', err);
-      updateAssistantMessage(err instanceof Error ? err.message : '回答失败，请重试');
+      updateAssistantMessage({
+        content: err instanceof Error ? err.message : '回答失败，请重试',
+        activity: undefined,
+      });
       setLoading(false);
+    }
+  };
+
+  const locateSource = async (source: RagSource) => {
+    setRightPanelOpen(true);
+    setSearchKeyword(source.name);
+    setLoadingList(true);
+    try {
+      setKnowledgeBases(await knowledgeBaseApi.search(source.name));
+    } catch (err) {
+      console.error('定位出处资料失败', err);
+    } finally {
+      setLoadingList(false);
     }
   };
 
@@ -606,7 +681,13 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                                 <p className="whitespace-pre-wrap leading-relaxed text-sm">{msg.content}</p>
                               ) : (
                                   <div className="prose prose-slate dark:prose-invert prose-sm max-w-none">
-                                  <ReactMarkdown
+                                  {msg.activity && !msg.content && (
+                                    <div className="not-prose flex items-center gap-2 text-sm text-primary-600 dark:text-primary-400">
+                                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                                      <span>{msg.activity}</span>
+                                    </div>
+                                  )}
+                                  {msg.content && <ReactMarkdown
                                     remarkPlugins={[remarkGfm]}
                                     components={{
                                       // 自定义代码块渲染
@@ -635,8 +716,27 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                                     }}
                                   >
                                     {formatMarkdown(msg.content)}
-                                  </ReactMarkdown>
-                                  {loading && index === messages.length - 1 && (
+                                  </ReactMarkdown>}
+                                  {msg.sources && msg.sources.length > 0 && (
+                                    <div className="not-prose mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-700">
+                                      <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                                        <BookOpen className="h-3.5 w-3.5" />
+                                        出处
+                                      </span>
+                                      {msg.sources.map(source => (
+                                        <button
+                                          key={`${source.kbId}-${source.name}`}
+                                          type="button"
+                                          onClick={() => locateSource(source)}
+                                          className="rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-xs text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-100 dark:border-primary-800 dark:bg-primary-950/40 dark:text-primary-300"
+                                          title={`在资料列表中定位《${source.name}》`}
+                                        >
+                                          《{source.name}》{source.segments > 1 ? ` · ${source.segments} 段` : ''}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {loading && index === messages.length - 1 && msg.content && (
                                     <span className="inline-block w-0.5 h-5 bg-primary-500 ml-1 animate-pulse" />
                                   )}
                                 </div>

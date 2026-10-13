@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { mockAuthenticated } from './support/auth';
 
 const file = (name: string) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(`简历测试 ${name}`) });
 const row = (page: Page, name: string) => page.locator('section .divide-y > div')
@@ -7,6 +8,10 @@ const success = (route: Route, data: unknown) => route.fulfill({ json: { code: 2
 const result = (id: number, analysisStatus: string, extra = {}) => ({
   resume: { id, filename: '简历.txt', analysisStatus },
   storage: { resumeId: id }, enqueueAccepted: true, duplicate: false, message: '', ...extra,
+});
+
+test.beforeEach(async ({ page }) => {
+  await mockAuthenticated(page);
 });
 
 test('批量简历保留各自分析状态，兼容历史重复响应，并按分析阶段重试', async ({ page }) => {

@@ -1,4 +1,12 @@
-import { API_BASE_URL, getErrorMessage, getResultError, parseResultPayload } from './request';
+import {
+  API_BASE_URL,
+  getErrorMessage,
+  getResultError,
+  isAuthExpiredCode,
+  parseResultPayload,
+  refreshAccessToken,
+} from './request';
+import { authToken, emitSessionExpired } from '../utils/authToken';
 
 type SseParseMode = 'line' | 'event';
 
@@ -8,6 +16,7 @@ interface StreamSseOptions {
   onMessage: (chunk: string) => void;
   onComplete: () => void;
   onError: (error: Error) => void;
+  onEvent?: (eventName: string, data: string) => void;
   parseMode?: SseParseMode;
   trimDataPrefixSpace?: boolean;
   unescapeEscapedNewlines?: boolean;
@@ -147,11 +156,15 @@ function readDataLine(line: string, trimDataPrefixSpace: boolean): string | null
   return content.length === 0 ? '\n' : content;
 }
 
-function emitContent(content: string, options: StreamSseOptions): void {
+function emitContent(content: string, options: StreamSseOptions, eventName?: string | null): void {
   assertNoBusinessError(content);
   const output = options.unescapeEscapedNewlines
     ? content.replace(/\\n/g, '\n').replace(/\\r/g, '\r')
     : content;
+  if (eventName && options.onEvent) {
+    options.onEvent(eventName, output);
+    return;
+  }
   options.onMessage(output);
 }
 
@@ -209,7 +222,7 @@ function processEventBlock(block: string, options: StreamSseOptions): void {
     throw businessError ?? new Error(content.trim() || '请求失败');
   }
 
-  emitContent(content, options);
+  emitContent(content, options, eventName);
 }
 
 function flushEventBuffer(buffer: string, done: boolean, options: StreamSseOptions): string {
@@ -270,11 +283,53 @@ async function readStream(response: Response, options: StreamSseOptions): Promis
 
 export async function streamSse(options: StreamSseOptions): Promise<void> {
   try {
-    const response = await fetch(toApiUrl(options.url), options.init);
+    const response = await fetchWithAuth(options);
     await assertStreamResponse(response);
     await readStream(response, options);
     options.onComplete();
   } catch (error) {
     options.onError(new Error(getErrorMessage(error)));
+  }
+}
+
+/**
+ * SSE 走的是原生 fetch，不经过 axios 拦截器，因此这里要自己完成两件事：
+ * 1. 附带 Authorization 请求头；
+ * 2. 令牌过期时静默续期并重放一次（否则用户会在对话里看到"登录状态无效"）。
+ */
+async function fetchWithAuth(options: StreamSseOptions, retried = false): Promise<Response> {
+  const headers = new Headers(options.init.headers);
+  const token = authToken.get();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(toApiUrl(options.url), { ...options.init, headers });
+  if (response.ok || retried || !(await isAuthFailure(response))) {
+    return response;
+  }
+
+  const refreshedToken = await refreshAccessToken();
+  if (!refreshedToken) {
+    authToken.clear();
+    emitSessionExpired();
+    return response;
+  }
+
+  return fetchWithAuth(options, true);
+}
+
+/** 401 或 Result.code 属于认证失效，都算需要续期 */
+async function isAuthFailure(response: Response): Promise<boolean> {
+  if (response.status === 401) {
+    return true;
+  }
+  try {
+    // 克隆后再读，避免消费掉原始响应体
+    const payload = await readResponsePayload(response.clone());
+    const result = await parseResultPayload(payload);
+    return isAuthExpiredCode(result?.code);
+  } catch {
+    return false;
   }
 }

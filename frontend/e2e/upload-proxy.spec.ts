@@ -2,12 +2,17 @@ import { createServer as createHttpServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test } from '@playwright/test';
 import { createServer, type ViteDevServer } from 'vite';
+import { mockAuthenticated } from './support/auth';
 
 let upstream: Server;
 let devServer: ViteDevServer;
 let baseURL: string;
 let forwardedHeaders: { host?: string; origin?: string };
 let rejectUploads = false;
+
+test.beforeEach(async ({ page }) => {
+  await mockAuthenticated(page);
+});
 
 // 使用真实 Vite 代理，避免 page.route() 绕过 Host / Origin 转发和连接错误。
 test.beforeAll(async () => {

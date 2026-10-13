@@ -3,12 +3,17 @@ import { createServer as createHttpServer, type Server } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import { expect, test } from '@playwright/test';
 import { createServer, type ViteDevServer } from 'vite';
+import { mockAuthenticated } from './support/auth';
 
 let upstream: Server;
 let devServer: ViteDevServer;
 let baseURL: string;
 const sockets = new Set<Socket>();
 let handshake: { path?: string; host?: string; origin?: string } | undefined;
+
+test.beforeEach(async ({ page }) => {
+  await mockAuthenticated(page);
+});
 
 test.beforeAll(async () => {
   upstream = createHttpServer((req, res) => {

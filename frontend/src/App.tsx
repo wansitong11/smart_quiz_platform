@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import Layout from './components/Layout';
 import { useEffect, useState, Suspense, lazy } from 'react';
 import { historyApi, type InterviewDetail } from './api/history';
@@ -6,6 +6,8 @@ import type { Difficulty } from './components/UnifiedInterviewModal';
 import type { CategoryDTO } from './api/skill';
 import { Loader2 } from 'lucide-react';
 import { ROUTE_PATTERNS, ROUTES } from './constants/routes';
+import { AuthProvider } from './context/AuthContext';
+import RequireAuth from './components/RequireAuth';
 
 // Lazy load components
 const UploadPage = lazy(() => import('./pages/UploadPage'));
@@ -20,11 +22,18 @@ const KnowledgeBaseManagePage = lazy(() => import('./pages/KnowledgeBaseManagePa
 const KnowledgeBaseInterviewPage = lazy(() => import('./pages/KnowledgeBaseInterviewLandingPage'));
 const KnowledgeBaseInterviewQuestionsPage = lazy(() => import('./pages/KnowledgeBaseInterviewQuestionsPage'));
 const KnowledgeBaseInterviewSessionPage = lazy(() => import('./pages/KnowledgeBaseInterviewSessionPage'));
-const VoiceInterviewPage = lazy(() => import('./pages/VoiceInterviewPage'));
-const VoiceInterviewEvaluationPage = lazy(() => import('./pages/VoiceInterviewEvaluationPage'));
-const InterviewSchedulePage = lazy(() => import('./pages/InterviewSchedulePage'));
+// 语音面试暂时下线（前端入口注释，页面文件保留；后端 WebSocket 由 app.voice-interview.enabled 控制）
+// const VoiceInterviewPage = lazy(() => import('./pages/VoiceInterviewPage'));
+// const VoiceInterviewEvaluationPage = lazy(() => import('./pages/VoiceInterviewEvaluationPage'));
+// 学习计划模块暂时下线（前端入口注释，页面与后端接口保留，恢复时取消注释即可）
+// const InterviewSchedulePage = lazy(() => import('./pages/InterviewSchedulePage'));
 const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const UserAdminPage = lazy(() => import('./pages/UserAdminPage'));
+const QuizHubPage = lazy(() => import('./pages/QuizHubPage'));
+const QuizPage = lazy(() => import('./pages/QuizPage'));
+const WrongQuestionsPage = lazy(() => import('./pages/WrongQuestionsPage'));
 const InterviewDetailPanel = lazy(() => import('./components/InterviewDetailPanel'));
 
 // Loading component
@@ -39,6 +48,25 @@ function UploadPageWrapper() {
   const navigate = useNavigate();
 
   return <UploadPage onBack={() => navigate(ROUTES.resumeHistory)} />;
+}
+
+// 模拟测验包装器：作答与报告共用同一个页面组件，用 mode 区分
+function QuizPageWrapper({ mode }: { mode: 'attempt' | 'report' }) {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
+
+  if (!sessionId) {
+    return <Navigate to={ROUTES.quizHub} replace />;
+  }
+
+  return (
+    <QuizPage
+      sessionId={sessionId}
+      mode={mode}
+      onBack={() => navigate(ROUTES.quizHub)}
+      onFinished={id => navigate(ROUTES.quizReport(id), { replace: true })}
+    />
+  );
 }
 
 // 历史记录列表包装器
@@ -56,7 +84,6 @@ function HistoryListWrapper() {
 function ResumeDetailWrapper() {
   const { resumeId } = useParams<{ resumeId: string }>();
   const navigate = useNavigate();
-  const { openInterviewModalWithResume } = useOutletContext<{ openInterviewModalWithResume: (resumeId: number) => void }>();
 
   if (!resumeId) {
     return <Navigate to="/history" replace />;
@@ -64,10 +91,6 @@ function ResumeDetailWrapper() {
 
   const handleBack = () => {
     navigate('/history');
-  };
-
-  const handleStartInterview = (id: number) => {
-    openInterviewModalWithResume(id);
   };
 
   const handleStartPractice = (sessionId: string) => {
@@ -78,7 +101,6 @@ function ResumeDetailWrapper() {
     <ResumeDetailPage
       resumeId={parseInt(resumeId, 10)}
       onBack={handleBack}
-      onStartInterview={handleStartInterview}
       onStartPractice={handleStartPractice}
     />
   );
@@ -188,10 +210,21 @@ function InterviewWrapper() {
 
 function App() {
   return (
-    <BrowserRouter>
-      <Suspense fallback={<Loading />}>
-        <Routes>
-          <Route path="/" element={<Layout />}>
+    <AuthProvider>
+      <BrowserRouter>
+        <Suspense fallback={<Loading />}>
+          <Routes>
+            {/* 登录页：唯一不需要登录的路由 */}
+            <Route path={ROUTES.login.slice(1)} element={<LoginPage />} />
+
+            <Route
+              path="/"
+              element={(
+                <RequireAuth>
+                  <Layout />
+                </RequireAuth>
+              )}
+            >
             {/* 默认重定向到简历管理页面 */}
             <Route index element={<Navigate to="/history" replace />} />
 
@@ -228,11 +261,9 @@ function App() {
             {/* 模拟面试 */}
             <Route path="interview/:resumeId" element={<InterviewWrapper />} />
 
-            {/* 语音面试 */}
-            <Route path="voice-interview" element={<VoiceInterviewPageWrapper />} />
-
-            {/* 语音面试评估报告 */}
-            <Route path="voice-interview/:sessionId/evaluation" element={<VoiceInterviewEvaluationPage />} />
+            {/* 语音面试暂时下线：路由注释掉，页面文件与后端保留，恢复时取消注释即可 */}
+            {/* <Route path="voice-interview" element={<VoiceInterviewPageWrapper />} /> */}
+            {/* <Route path="voice-interview/:sessionId/evaluation" element={<VoiceInterviewEvaluationPage />} /> */}
 
             {/* 知识库管理 */}
             <Route path="knowledgebase" element={<KnowledgeBaseManagePageWrapper />} />
@@ -247,49 +278,67 @@ function App() {
             {/* 知识库上传 */}
             <Route path="knowledgebase/upload" element={<KnowledgeBaseUploadPageWrapper />} />
 
-            {/* 面试日程管理 */}
-            <Route path="interview-schedule" element={<InterviewSchedulePage />} />
+            {/* 学习计划模块暂时下线：路由注释掉，页面与后端接口保留 */}
+            {/* <Route path="interview-schedule" element={<InterviewSchedulePage />} /> */}
 
             {/* 设置 */}
             <Route path="settings" element={<SettingsPage />} />
 
             {/* 问答助手（知识库聊天） */}
             <Route path="knowledgebase/chat" element={<KnowledgeBaseQueryPageWrapper />} />
-          </Route>
 
-        </Routes>
-      </Suspense>
-    </BrowserRouter>
+            {/* 模拟测验：组卷 → 整卷作答 → 报告 */}
+            <Route path="quiz-hub" element={<QuizHubPage />} />
+            <Route path="wrong-questions" element={<WrongQuestionsPage />} />
+            <Route
+              path="quiz/:sessionId"
+              element={(
+                <QuizPageWrapper mode="attempt" />
+              )}
+            />
+            <Route
+              path="quiz/:sessionId/report"
+              element={(
+                <QuizPageWrapper mode="report" />
+              )}
+            />
+
+            {/* 账号管理（需 user:manage 权限，页面内再兜一层判断） */}
+            <Route path="admin/users" element={<UserAdminPage />} />
+            </Route>
+
+          </Routes>
+        </Suspense>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }
 
-// 面试记录页面包装器
+// 答题记录页面包装器（只看模拟测验与错题重练，与试卷/面试隔离）
 function InterviewHistoryWrapper() {
   const navigate = useNavigate();
-  const { openInterviewModalWithResume } = useOutletContext<{ openInterviewModalWithResume: (resumeId: number) => void }>();
 
   const handleBack = () => {
-    navigate('/history');
+    navigate('/quiz-hub');
   };
 
-  const handleViewInterview = async (sessionId: string, _resumeId?: number, sourceType?: string | null) => {
-    // 试卷来源的场次直接复用试卷分析页：未交卷进作答、已交卷看分析结果
-    if (sourceType === 'PAPER') {
-      navigate(ROUTES.paperPractice(sessionId));
-      return;
-    }
-    navigate(`/interviews/${sessionId}`);
-  };
-
-  const handleRestartInterview = (resumeId: number) => {
-    openInterviewModalWithResume(resumeId);
+  const handleViewInterview = async (sessionId: string) => {
+    // 未交卷时报告页会提示「继续作答」，两种状态都能安全进入
+    navigate(`/quiz/${sessionId}/report`);
   };
 
   const handleContinueInterview = (sessionId: string) => {
-    navigate(ROUTES.interviewSession(sessionId));
+    navigate(`/quiz/${sessionId}`);
   };
 
-  return <InterviewHistoryPage onBack={handleBack} onViewInterview={handleViewInterview} onRestartInterview={handleRestartInterview} onContinueInterview={handleContinueInterview} />;
+  return (
+    <InterviewHistoryPage
+      onBack={handleBack}
+      onViewInterview={handleViewInterview}
+      onContinueInterview={handleContinueInterview}
+      sourceTypes="QUIZ,QUIZ_WRONG"
+    />
+  );
 }
 
 // 知识库面试记录页面包装器
@@ -347,7 +396,7 @@ function InterviewDetailPageWrapper() {
         setLoading(false);
       })
       .catch(() => {
-        setError('加载面试详情失败');
+        setError('加载答题详情失败');
         setLoading(false);
       });
   }, [sessionId, navigate, backTarget]);
@@ -364,12 +413,12 @@ function InterviewDetailPageWrapper() {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
         <div className="text-center">
-          <p className="text-red-500 mb-4">{error || '面试记录不存在'}</p>
+          <p className="text-red-500 mb-4">{error || '答题记录不存在'}</p>
           <button
             onClick={() => navigate(backTarget)}
             className="px-5 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600"
           >
-            返回面试记录
+            返回答题记录
           </button>
         </div>
       </div>
@@ -388,7 +437,7 @@ function InterviewDetailPageWrapper() {
           </svg>
         </button>
         <h1 className="text-xl font-bold text-slate-900 dark:text-white">
-          面试详情 #{sessionId!.slice(-8)}
+          答题详情 #{sessionId!.slice(-8)}
         </h1>
       </div>
       <InterviewDetailPanel interview={interview} />
@@ -449,9 +498,9 @@ function KnowledgeBaseUploadPageWrapper() {
   return <KnowledgeBaseUploadPage onBack={handleBack} />;
 }
 
-// 语音面试页面包装器
-function VoiceInterviewPageWrapper() {
-  return <VoiceInterviewPage />;
-}
+// 语音面试页面包装器（随语音面试一起暂时下线）
+// function VoiceInterviewPageWrapper() {
+//   return <VoiceInterviewPage />;
+// }
 
 export default App;

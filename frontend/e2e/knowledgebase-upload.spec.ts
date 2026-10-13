@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { mockAuthenticated } from './support/auth';
 
 const fixture = (name: string) => ({
   name,
@@ -17,6 +18,10 @@ const uploadResult = (id: number, vectorStatus: string, extra = {}) => ({
   enqueueAccepted: true,
   message: '',
   ...extra,
+});
+
+test.beforeEach(async ({ page }) => {
+  await mockAuthenticated(page);
 });
 
 test('重复文件直接显示已完成，不依赖额外状态查询', async ({ page }) => {

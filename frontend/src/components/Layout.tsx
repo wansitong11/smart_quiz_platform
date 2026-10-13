@@ -1,10 +1,14 @@
 import {Link, Outlet, useLocation, useNavigate} from 'react-router-dom';
 import {motion} from 'framer-motion';
-import {BookOpen, Calendar, ChevronRight, ClipboardList, Database, FileStack, MessageSquare, Moon, Settings, Sparkles, Sun, Users,} from 'lucide-react';
+// Calendar 随「学习计划」模块一起下线：恢复该模块时把 Calendar 加回 import
+import {BookOpen, ChevronRight, ClipboardList, Database, FileStack, KeyRound, LogOut, MessageSquare, Moon, Settings, Sparkles, Sun, Users,} from 'lucide-react';
 import {useTheme} from '../hooks/useTheme';
 import {useState} from 'react';
 import UnifiedInterviewModal, {UnifiedInterviewConfig} from './UnifiedInterviewModal';
 import {ROUTES} from '../constants/routes';
+import ChangePasswordModal from './ChangePasswordModal';
+import {useAuth} from '../context/AuthContext';
+import {authToken, emitSessionExpired} from '../utils/authToken';
 
 interface NavItem {
   id: string;
@@ -25,6 +29,24 @@ export default function Layout() {
   const currentPath = location.pathname;
   const {theme, toggleTheme} = useTheme();
   const navigate = useNavigate();
+  const {user, logout, hasPermission} = useAuth();
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const canManageUsers = hasPermission('user:manage');
+
+  const handleLogout = async () => {
+    if (!window.confirm('确认退出登录？')) {
+      return;
+    }
+    await logout();
+    navigate(ROUTES.login, {replace: true});
+  };
+
+  const handlePasswordChanged = () => {
+    setShowChangePassword(false);
+    authToken.clear();
+    emitSessionExpired();
+    navigate(ROUTES.login, {replace: true});
+  };
   const [interviewModalPreset, setInterviewModalPreset] = useState<{
     defaultMode: 'text' | 'voice';
     defaultResumeId?: number;
@@ -87,10 +109,12 @@ export default function Layout() {
       title: '面试准备',
       items: [
         { id: 'papers', path: '/papers', label: '试卷分析', icon: ClipboardList, description: '上传试卷，AI 切题并批改' },
-        { id: 'resumes', path: '/history', label: '简历管理', icon: FileStack, description: '管理简历，AI 分析' },
-        { id: 'interview-hub', path: '/interview-hub', label: '模拟面试', icon: Sparkles, description: '文字/语音面试练习' },
-        { id: 'interviews', path: '/interviews', label: '面试记录', icon: Users, description: '查看面试历史' },
-        { id: 'interview-schedule', path: '/interview-schedule', label: '面试日程', icon: Calendar, description: '管理面试安排' },
+        { id: 'resumes', path: '/history', label: '试卷管理', icon: FileStack, description: '管理上传的试卷与作答记录' },
+        { id: 'quiz-hub', path: '/quiz-hub', label: '模拟测验', icon: Sparkles, description: '按学科知识板块组卷测验' },
+        { id: 'wrong-questions', path: '/wrong-questions', label: '错题本', icon: BookOpen, description: '错题回顾与重练' },
+        { id: 'interviews', path: '/interviews', label: '答题记录', icon: Users, description: '只看模拟测验与错题重练' },
+        // 学习计划模块暂时下线：导航入口注释，页面与后端接口保留
+        // { id: 'interview-schedule', path: '/interview-schedule', label: '学习计划', icon: Calendar, description: '管理学习安排' },
       ],
     },
     {
@@ -98,7 +122,7 @@ export default function Layout() {
       title: '知识库',
       items: [
         { id: 'kb-manage', path: '/knowledgebase', label: '知识库管理', icon: Database, description: '管理知识文档' },
-        { id: 'kb-interview', path: '/knowledgebase-interview', label: '知识库面试', icon: BookOpen, description: '题库维护与面试' },
+        { id: 'kb-interview', path: '/knowledgebase-interview', label: '知识库考核', icon: BookOpen, description: '题库维护与考核' },
         { id: 'chat', path: '/knowledgebase/chat', label: '问答助手', icon: MessageSquare, description: '基于知识库问答' },
       ],
     },
@@ -222,10 +246,43 @@ export default function Layout() {
         </nav>
 
         {/* 底部信息 */}
-        <div className="p-4 border-t border-slate-100 dark:border-slate-700">
+        <div className="p-4 border-t border-slate-100 dark:border-slate-700 space-y-3">
           <div className="px-3 py-2 bg-gradient-to-r from-primary-50 to-indigo-50 dark:from-primary-900/30 dark:to-slate-800 rounded-xl">
-            <p className="text-xs text-primary-600 dark:text-primary-400 font-medium">AI 面试助手 v1.0</p>
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Powered by AI</p>
+            <p className="text-sm font-medium text-slate-800 dark:text-white truncate">
+              {user?.displayName || user?.username || '未登录'}
+            </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 truncate">
+              {user?.roles?.map((role) => role.replace('ROLE_', '')).join('、') || '—'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {canManageUsers && (
+              <button
+                type="button"
+                onClick={() => navigate(ROUTES.userAdmin)}
+                title="账号管理"
+                className="flex-1 flex items-center justify-center py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                <Users className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowChangePassword(true)}
+              title="修改密码"
+              className="flex-1 flex items-center justify-center py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+            >
+              <KeyRound className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleLogout()}
+              title="退出登录"
+              className="flex-1 flex items-center justify-center py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 hover:text-rose-500 transition"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </aside>
@@ -255,6 +312,13 @@ export default function Layout() {
         subtitle={interviewModalPreset?.subtitle || '选择面试模式和主题，快速开始'}
         startButtonText={interviewModalPreset?.startButtonText || '开始面试'}
       />
+
+      {showChangePassword && (
+        <ChangePasswordModal
+          onClose={() => setShowChangePassword(false)}
+          onChanged={handlePasswordChanged}
+        />
+      )}
     </div>
   );
 }

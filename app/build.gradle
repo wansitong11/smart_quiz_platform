@@ -29,6 +29,11 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
     implementation 'org.springframework.boot:spring-boot-starter-flyway'
 
+    // Spring Security：无状态 JWT 认证 + RBAC 方法级鉴权
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    // JWT 编解码（Nimbus JOSE），版本由 Spring Security BOM 统一管理
+    implementation 'org.springframework.security:spring-security-oauth2-jose'
+
     // PostgreSQL
     runtimeOnly 'org.postgresql:postgresql'
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'

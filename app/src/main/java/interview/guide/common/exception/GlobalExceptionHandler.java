@@ -2,10 +2,12 @@ package interview.guide.common.exception;
 
 import interview.guide.common.log.ErrorLogSanitizer;
 
+import interview.guide.common.ai.AiErrorMessages;
 import interview.guide.common.result.Result;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -17,6 +19,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.net.SocketTimeoutException;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -48,6 +51,18 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.joining(", "));
         log.warn("参数校验失败: {}", message);
         return Result.error(ErrorCode.BAD_REQUEST, message);
+    }
+
+    /**
+     * 方法级鉴权失败（@PreAuthorize 拒绝访问）。
+     * <p>必须单独处理：否则会被下面的 Exception 兜底捕获，变成"HTTP 200 + 系统繁忙"，
+     * 前端无法区分"没权限"和"服务出错"。这里返回真实 403。
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public Result<Void> handleAccessDeniedException(AccessDeniedException e) {
+        log.warn("鉴权拒绝: {}", e.getMessage());
+        return Result.error(ErrorCode.AUTH_FORBIDDEN, "无操作权限");
     }
     
     /**
@@ -155,6 +170,13 @@ public class GlobalExceptionHandler {
     public Result<Void> handleException(Exception e) {
         log.error("系统异常: {}", ErrorLogSanitizer.summarize(e),
             ErrorLogSanitizer.forLogging(e));
+        // Spring AI 2.0 的 OpenAI 客户端抛的是 com.openai.errors.* 异常，
+        // 不属于 RestClientException，会落到这里。能识别出额度/密钥/网络问题时给出准确提示，
+        // 识别不了才是笼统的"系统繁忙"。
+        Optional<String> aiMessage = AiErrorMessages.describe(e);
+        if (aiMessage.isPresent()) {
+            return Result.error(ErrorCode.AI_SERVICE_ERROR, aiMessage.get());
+        }
         return Result.error(ErrorCode.INTERNAL_ERROR, "系统繁忙，请稍后重试");
     }
 }

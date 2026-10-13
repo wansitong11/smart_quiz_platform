@@ -1,4 +1,10 @@
 export const ROUTES = {
+  login: '/login',
+  userAdmin: '/admin/users',
+  quizHub: '/quiz-hub',
+  quiz: (sessionId: string) => `/quiz/${sessionId}`,
+  quizReport: (sessionId: string) => `/quiz/${sessionId}/report`,
+  wrongQuestions: '/wrong-questions',
   paperAnalysis: '/papers',
   paperPractice: (sessionId: string) => `/papers?session=${sessionId}`,
   interview: '/interview',

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { mockAuthenticated } from './support/auth';
 
 const SESSION_ID = 42;
 const USER_SUBTITLE = '我负责订单系统的幂等设计。';
@@ -7,6 +8,7 @@ const NEXT_USER_SUBTITLE = '当前这一轮我会使用唯一索引保证幂等�
 
 test.describe('语音面试', () => {
   test.beforeEach(async ({ page }) => {
+    await mockAuthenticated(page);
     await page.route('https://cdn.jsdelivr.net/**', route => route.abort());
 
     await page.addInitScript(() => {

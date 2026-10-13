@@ -95,6 +95,29 @@ spring:
 
 # Application custom configuration
 app:
+  # 登录鉴权与 RBAC（详见 docs/项目部署/登录鉴权与发布方案.md）
+  auth:
+    # JWT 签名密钥（HS256，至少 32 字节）。生产必须由环境变量注入，不要写进仓库
+    secret: ${APP_AUTH_JWT_SECRET:}
+    # 必须是 URL 形态（Spring Security 读取 iss 时会按 URL 解析）
+    issuer: ${APP_AUTH_JWT_ISSUER:https://smart-quiz-platform}
+    # Access Token 较短，Refresh Token 较长，前端到期自动静默续期
+    access-token-ttl: ${APP_AUTH_ACCESS_TOKEN_TTL:2h}
+    refresh-token-ttl: ${APP_AUTH_REFRESH_TOKEN_TTL:30d}
+    refresh-cookie-name: ${APP_AUTH_REFRESH_COOKIE_NAME:sq_refresh}
+    refresh-cookie-path: ${APP_AUTH_REFRESH_COOKIE_PATH:/api/auth}
+    # 线上必须为 true（HTTPS）；本地 http 调试时在 .env 里置 false
+    cookie-secure: ${APP_AUTH_COOKIE_SECURE:true}
+    cookie-same-site: ${APP_AUTH_COOKIE_SAME_SITE:Lax}
+    # Swagger 默认不公开，本地需要时置 true
+    swagger-public: ${APP_AUTH_SWAGGER_PUBLIC:false}
+    bootstrap-admin-username: ${APP_AUTH_BOOTSTRAP_ADMIN_USERNAME:admin}
+    # 留空则首次启动随机生成并打印到日志
+    bootstrap-admin-password: ${APP_AUTH_BOOTSTRAP_ADMIN_PASSWORD:}
+    login-rate-limit-per-minute: ${APP_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE:10}
+    # 是否开放自助注册；只给少数人用时建议置 false，改为管理员建号
+    registration-enabled: ${APP_AUTH_REGISTRATION_ENABLED:true}
+
   ai:
     default-provider: dashscope
     default-embedding-provider: dashscope
@@ -117,6 +140,14 @@ app:
         embedding-model: text-embedding-v3
         embedding-dimensions: 1024
         supports-embedding: true
+    # 按 Provider 追加请求体参数（不受数据库 Provider 配置影响，一定会生效）
+    provider-extra-body:
+      dashscope:
+        # qwen3.7-plus 默认是"推理模型"，输出里会混入大段思考 token
+        # （实测单批 completion 3694 tokens 中 2177 是 reasoning）。
+        # 切题、批改、问答这类任务不需要思考链，关掉后单批耗时 64s → 29s、token 省 58%，
+        # 也避免单次调用超过 60 秒触发底层 HTTP 客户端的流重置。
+        enable_thinking: false
       lmstudio:
         base-url: http://localhost:1234
         api-key: ${PROVIDER_LMSTUDIO_API_KEY:lm-studio}
@@ -198,6 +229,17 @@ app:
       fallback-split-enabled: ${APP_INTERVIEW_EVALUATION_FALLBACK_SPLIT_ENABLED:true}
       fallback-max-extra-calls: ${APP_INTERVIEW_EVALUATION_FALLBACK_MAX_EXTRA_CALLS:6}
       fallback-min-groups: ${APP_INTERVIEW_EVALUATION_FALLBACK_MIN_GROUPS:2}
+  # 模拟测验组卷约束（详见 docs/design/模拟测验模块改造方案.md）
+  # 这些上限不只是体验问题：单次模型调用越大越慢，越容易撞上
+  # 底层 HTTP 客户端「60 秒无响应即重置流」的问题
+  quiz:
+    max-questions: ${APP_QUIZ_MAX_QUESTIONS:12}
+    min-questions: ${APP_QUIZ_MIN_QUESTIONS:3}
+    max-questions-per-section: ${APP_QUIZ_MAX_QUESTIONS_PER_SECTION:6}
+    max-material-chars-per-material: ${APP_QUIZ_MAX_MATERIAL_CHARS:1200}
+    max-total-material-chars: ${APP_QUIZ_MAX_TOTAL_MATERIAL_CHARS:3600}
+    max-question-stem-chars: ${APP_QUIZ_MAX_STEM_CHARS:600}
+    max-option-chars: ${APP_QUIZ_MAX_OPTION_CHARS:200}
   resume:
     upload-dir: ${java.io.tmpdir}/smart-quiz-platform/resumes
     allowed-types:
@@ -258,6 +300,8 @@ app:
 
   # Voice interview configuration
   voice-interview:
+    # 语音面试功能暂时下线（前端入口已移除）。置 true 可恢复后端 WebSocket 端点
+    enabled: ${APP_VOICE_INTERVIEW_ENABLED:false}
     # 上下文压缩：enabled=false 是唯一关闭方式（仅本地排查用）；
     # enabled=true 时无论何种模式都执行字符硬预算（摘要 + 近期历史 <= max-history-chars）
     context-compression:

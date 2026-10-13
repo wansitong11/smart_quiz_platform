@@ -50,6 +50,14 @@ spring:
         remove-existing-vector-store-table: false
 
 app:
+  auth:
+    # 测试环境也必须给出签名密钥，否则 JwtTokenService 启动即失败
+    secret: test-jwt-secret-at-least-32-bytes-long!!
+    issuer: https://smart-quiz-platform
+    cookie-secure: false
+    swagger-public: true
+    bootstrap-admin-username: admin
+    bootstrap-admin-password: test-admin-password
   ai:
     default-provider: dashscope
     security:

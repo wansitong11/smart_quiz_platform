@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.constant.CommonConstants.InterviewDefaults;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
@@ -8,6 +10,7 @@ import interview.guide.modules.knowledgebase.model.CreateKnowledgeBaseQuestionRe
 import interview.guide.modules.knowledgebase.model.GenerateKnowledgeBaseQuestionsRequest;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionDTO;
+import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionFollowUpDTO;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionStatus;
@@ -33,6 +36,9 @@ import java.util.Locale;
 @RequiredArgsConstructor
 public class KnowledgeBaseQuestionService {
 
+  private final OwnerScope ownerScope;
+  private final KnowledgeBaseAccessService accessService;
+
   private static final int DEFAULT_FOLLOW_UP_COUNT = 2;
   private static final int DEFAULT_CATEGORY_LIMIT = 3;
   private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {
@@ -44,6 +50,9 @@ public class KnowledgeBaseQuestionService {
   private final KnowledgeBaseRepository knowledgeBaseRepository;
   private final KnowledgeBaseQuestionRepository questionRepository;
   private final ObjectMapper objectMapper;
+
+  private static final TypeReference<List<InterviewQuestionDTO.QuestionOption>> OPTION_LIST_TYPE =
+      new TypeReference<>() {};
   private final QuestionGenStreamProducer questionGenStreamProducer;
   private final QuestionGenerationStateService questionGenerationStateService;
 
@@ -53,6 +62,9 @@ public class KnowledgeBaseQuestionService {
                                                       String category,
                                                       String difficulty,
                                                       String keyword) {
+    // 题库挂在资料库上：先校验资料可见性，否则别人的题库会被直接读出来
+    knowledgeBaseRepository.findByIdAccessible(knowledgeBaseId, ownerScope.effectiveOwnerId())
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在或无权访问"));
     List<KnowledgeBaseQuestionEntity> questions = status == null
         ? questionRepository.findByKnowledgeBase_IdOrderByUpdatedAtDesc(knowledgeBaseId)
         : questionRepository.findByKnowledgeBase_IdAndStatusOrderByUpdatedAtDesc(knowledgeBaseId, status);
@@ -73,6 +85,9 @@ public class KnowledgeBaseQuestionService {
    */
   @Transactional(readOnly = true)
   public List<CategoryCount> listCategories(Long knowledgeBaseId) {
+    // 与 listQuestions 同一口径：自己的 + 全局共享的资料才能看它的题库方向
+    knowledgeBaseRepository.findByIdAccessible(knowledgeBaseId, ownerScope.effectiveOwnerId())
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在或无权访问"));
     return questionRepository.findCategoryCounts(knowledgeBaseId);
   }
 
@@ -90,7 +105,7 @@ public class KnowledgeBaseQuestionService {
 
   @Transactional(rollbackFor = Exception.class)
   public KnowledgeBaseQuestionDTO updateQuestion(Long questionId, UpdateKnowledgeBaseQuestionRequest request) {
-    KnowledgeBaseQuestionEntity question = getQuestion(questionId);
+    KnowledgeBaseQuestionEntity question = getOwnedQuestion(questionId);
     if (request.difficulty() != null) {
       question.setDifficulty(normalizeDifficulty(request.difficulty()));
     }
@@ -135,16 +150,15 @@ public class KnowledgeBaseQuestionService {
 
   @Transactional(rollbackFor = Exception.class)
   public KnowledgeBaseQuestionDTO updateStatus(Long questionId, KnowledgeBaseQuestionStatus status) {
-    KnowledgeBaseQuestionEntity question = getQuestion(questionId);
+    KnowledgeBaseQuestionEntity question = getOwnedQuestion(questionId);
     question.setStatus(status);
     return toDTO(questionRepository.save(question));
   }
 
   @Transactional(rollbackFor = Exception.class)
   public void deleteQuestion(Long questionId) {
-    if (!questionRepository.existsById(questionId)) {
-      throw new BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND);
-    }
+    // 归属校验：别人的题目不能删
+    getOwnedQuestion(questionId);
     questionRepository.deleteById(questionId);
   }
 
@@ -155,6 +169,8 @@ public class KnowledgeBaseQuestionService {
   public QuestionGenStatusResponse submitGenerationTask(
       Long knowledgeBaseId,
       GenerateKnowledgeBaseQuestionsRequest request) {
+    // 归属校验：出题是写操作，只能给自己名下的资料出题（越权一律 404）
+    getKnowledgeBase(knowledgeBaseId);
     String difficulty = normalizeDifficulty(request.difficulty());
     int followUpCount = request.followUpCount() == null
         ? DEFAULT_FOLLOW_UP_COUNT
@@ -216,6 +232,10 @@ public class KnowledgeBaseQuestionService {
         readStringList(question.getKeyPointsJson()),
         question.getScoringRubric(),
         readFollowUps(question.getFollowUpsJson()),
+        question.getQuestionType(),
+        readOptions(question.getOptionsJson()),
+        question.getFullScore(),
+        question.getAnalysis(),
         question.getSourceContext(),
         question.getStatus(),
         question.getCreatedAt(),
@@ -223,9 +243,33 @@ public class KnowledgeBaseQuestionService {
     );
   }
 
+  /** 选择题选项解析；老题目没有该字段时返回空列表，作答端会退化成文本作答 */
+  private List<InterviewQuestionDTO.QuestionOption> readOptions(String json) {
+    if (json == null || json.isBlank()) {
+      return List.of();
+    }
+    try {
+      return objectMapper.readValue(json, OPTION_LIST_TYPE);
+    } catch (Exception e) {
+      log.warn("选项解析失败，按无选项处理: {}", e.toString());
+      return List.of();
+    }
+  }
+
+  /** 题目归属校验：题目挂在资料库上，资料库不可维护时按"题目不存在"处理 */
+  private KnowledgeBaseQuestionEntity getOwnedQuestion(Long questionId) {
+    KnowledgeBaseQuestionEntity question = getQuestion(questionId);
+    Long kbId = question.getKnowledgeBase() != null && question.getKnowledgeBase().getId() != null
+        ? question.getKnowledgeBase().getId()
+        : question.getKnowledgeBaseId();
+    // 资料不可维护 ⇒ 题目也不可维护（对外一律 404，不暴露题库是否存在）
+    accessService.requireManageable(kbId);
+    return question;
+  }
+
   private KnowledgeBaseEntity getKnowledgeBase(Long knowledgeBaseId) {
-    return knowledgeBaseRepository.findById(knowledgeBaseId)
-        .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    // 题库的写入口（新增/编辑/删除/启停/出题）统一要求"可维护"
+    return accessService.requireManageable(knowledgeBaseId);
   }
 
   private KnowledgeBaseQuestionEntity getQuestion(Long questionId) {

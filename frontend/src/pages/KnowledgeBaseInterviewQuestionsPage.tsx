@@ -37,6 +37,8 @@ import GenerateKnowledgeBaseQuestionsModal, {
   type GenerateQuestionsConfig,
 } from '../components/knowledgebaseInterview/GenerateKnowledgeBaseQuestionsModal';
 import QuestionCard from '../components/knowledgebaseInterview/QuestionCard';
+import { useAuth } from '../context/AuthContext';
+import { canManageKnowledgeBase } from '../utils/knowledgeBasePermission';
 import {
   getQuestionGenerationNotice,
   isQuestionGenerationActive,
@@ -79,6 +81,9 @@ export default function KnowledgeBaseInterviewQuestionsPage() {
   const knowledgeBaseIdNum = knowledgeBaseId ? parseInt(knowledgeBaseId, 10) : NaN;
 
   const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBaseItem | null>(null);
+  const { user } = useAuth();
+  // 共享资料只有管理员能维护：普通用户进来是只读浏览（看题干/答案/解析，可下载、可开始测验）
+  const canManage = canManageKnowledgeBase(knowledgeBase, user);
   const [loadingKb, setLoadingKb] = useState(true);
 
   const [allQuestions, setAllQuestions] = useState<KnowledgeBaseQuestion[]>([]);
@@ -323,7 +328,7 @@ export default function KnowledgeBaseInterviewQuestionsPage() {
       return;
     }
     if (!payload.category) {
-      setFormError('面试方向不能为空');
+      setFormError('知识板块不能为空');
       return;
     }
     setSaving(true);
@@ -441,13 +446,15 @@ export default function KnowledgeBaseInterviewQuestionsPage() {
             className="inline-flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400 hover:text-primary-500 mb-2"
           >
             <ArrowLeft className="w-4 h-4" />
-            返回知识库面试
+            返回资料测验
           </button>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white truncate">
             题库管理：{knowledgeBase.name}
           </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1 truncate">
-            维护题干、答案、追问与状态
+            {canManage
+              ? '维护题干、答案、追问与状态'
+              : '共享资料的题库仅供查看（可下载、可开始测验），维护请找管理员'}
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -456,25 +463,29 @@ export default function KnowledgeBaseInterviewQuestionsPage() {
             className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-500 text-white text-sm font-medium hover:bg-indigo-600 shadow-sm shadow-indigo-500/20 whitespace-nowrap"
           >
             <BarChart3 className="w-4 h-4" />
-            查看面试记录
+            查看答题记录
           </button>
-          <button
-            onClick={() => setGenerateOpen(true)}
-            disabled={generationActive}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-primary-200 dark:border-primary-800 text-primary-600 dark:text-primary-400 text-sm font-medium hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-          >
-            {generationActive
-              ? <Loader2 className="w-4 h-4 animate-spin" />
-              : <Sparkles className="w-4 h-4" />}
-            {generationActive ? '生成中' : '生成题目'}
-          </button>
-          <button
-            onClick={openCreateForm}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 whitespace-nowrap"
-          >
-            <Plus className="w-4 h-4" />
-            手动新增
-          </button>
+          {canManage && (
+            <>
+              <button
+                onClick={() => setGenerateOpen(true)}
+                disabled={generationActive}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-primary-200 dark:border-primary-800 text-primary-600 dark:text-primary-400 text-sm font-medium hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {generationActive
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Sparkles className="w-4 h-4" />}
+                {generationActive ? '生成中' : '生成题目'}
+              </button>
+              <button
+                onClick={openCreateForm}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 whitespace-nowrap"
+              >
+                <Plus className="w-4 h-4" />
+                手动新增
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -546,7 +557,7 @@ export default function KnowledgeBaseInterviewQuestionsPage() {
         </div>
       </div>
 
-      {questions.length > 0 && (
+      {canManage && questions.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 mb-4 px-1">
           <label className="inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer">
             <input
@@ -617,7 +628,7 @@ export default function KnowledgeBaseInterviewQuestionsPage() {
               {generationActive && <Loader2 className="w-4 h-4 animate-spin" />}
               {generationNotice.text}
             </span>
-            {generationStatus?.questionGenStatus === 'FAILED' && (
+            {canManage && generationStatus?.questionGenStatus === 'FAILED' && (
               <button
                 type="button"
                 onClick={() => {
@@ -639,14 +650,16 @@ export default function KnowledgeBaseInterviewQuestionsPage() {
         ) : questions.length === 0 ? (
           <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-dashed border-slate-200 dark:border-slate-700 text-slate-400 flex-col gap-3">
             <p>当前条件下暂无题目</p>
-            <button
-              onClick={() => setGenerateOpen(true)}
-              disabled={generationActive}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Sparkles className="w-4 h-4" />
-              生成第一批题目
-            </button>
+            {canManage && (
+              <button
+                onClick={() => setGenerateOpen(true)}
+                disabled={generationActive}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Sparkles className="w-4 h-4" />
+                生成第一批题目
+              </button>
+            )}
           </div>
         ) : (
           <>
@@ -656,10 +669,10 @@ export default function KnowledgeBaseInterviewQuestionsPage() {
                 question={question}
                 targetFollowUpCount={generationStatus?.questionGenConfig?.followUpCount}
                 selected={selectedIds.has(question.id)}
-                onSelect={toggleSelectOne}
-                onEdit={openEditForm}
-                onUpdateStatus={handleUpdateStatus}
-                onDelete={q => setDeleteQuestion(q)}
+                onSelect={canManage ? toggleSelectOne : undefined}
+                onEdit={canManage ? openEditForm : undefined}
+                onUpdateStatus={canManage ? handleUpdateStatus : undefined}
+                onDelete={canManage ? (q => setDeleteQuestion(q)) : undefined}
               />
             ))}
             <Pagination

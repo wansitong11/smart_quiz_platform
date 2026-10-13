@@ -39,6 +39,17 @@ public interface KnowledgeBaseQuestionRepository extends JpaRepository<Knowledge
       Long knowledgeBaseId, String difficulty);
 
   /**
+   * 该知识库下全部题干（最新的在前）。出题去重与「已有题目」提示词都用它：不限难度，
+   * 因为重新出题是**追加**，重复判定必须覆盖整个题库。
+   */
+  @Query("select q.question from KnowledgeBaseQuestionEntity q "
+      + "where q.knowledgeBase.id = :kbId order by q.updatedAt desc")
+  List<String> findQuestionTextsByKnowledgeBaseId(@Param("kbId") Long knowledgeBaseId);
+
+  /** 该知识库下的题目总数（生成完成时用于回报「原有 K 道保留」） */
+  long countByKnowledgeBase_Id(Long knowledgeBaseId);
+
+  /**
    * 同知识库 + 难度 + 方向（category）下的已启用题目，用于开始知识库面试抽题。
    */
   List<KnowledgeBaseQuestionEntity> findByKnowledgeBase_IdAndDifficultyAndCategoryAndStatusOrderByUpdatedAtDesc(
@@ -74,7 +85,8 @@ public interface KnowledgeBaseQuestionRepository extends JpaRepository<Knowledge
   }
 
   /**
-   * 删除某知识库下的所有题目（用于重新生成时替换）
+   * 删除某知识库下的所有题目。只在「删除资料」这类场景使用；
+   * 生成题目是**追加**语义，不要再走这个方法（见 QuestionGenerationStateService）。
    */
   @Modifying
   @Query("DELETE FROM KnowledgeBaseQuestionEntity q WHERE q.knowledgeBase.id = :kbId")

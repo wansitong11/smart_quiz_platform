@@ -7,9 +7,9 @@ export type InterviewMode = 'text' | 'voice';
 export type Difficulty = 'junior' | 'mid' | 'senior';
 
 export const DIFFICULTY_OPTIONS: { value: Difficulty; label: string; desc: string }[] = [
-  { value: 'junior', label: '基础', desc: '课本同步' },
+  { value: 'junior', label: '简单', desc: '基础概念与直接应用' },
   { value: 'mid', label: '中等', desc: '常规考点' },
-  { value: 'senior', label: '综合', desc: '高考难度' },
+  { value: 'senior', label: '偏难', desc: '综合运用' },
 ];
 
 export const CUSTOM_SKILL_ID = 'custom';

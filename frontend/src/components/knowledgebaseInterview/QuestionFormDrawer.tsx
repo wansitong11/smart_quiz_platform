@@ -173,7 +173,7 @@ export default function QuestionFormDrawer({
               </select>
             </Field>
           </div>
-          <Field label="面试方向（用于筛选和开始面试）">
+          <Field label="知识板块（用于筛选和组卷）">
             <input
               value={form.category}
               list="knowledge-base-question-category-options"

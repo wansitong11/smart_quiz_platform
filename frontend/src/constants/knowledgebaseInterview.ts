@@ -19,9 +19,10 @@ export interface DifficultyOption {
 }
 
 export const DIFFICULTY_OPTIONS: DifficultyOption[] = [
-  { value: 'junior', label: '校招' },
-  { value: 'mid', label: '中级' },
-  { value: 'senior', label: '高级' },
+  // 值仍是 junior/mid/senior（库里的既有编码），展示统一成"简单/中等/偏难"
+  { value: 'junior', label: '简单' },
+  { value: 'mid', label: '中等' },
+  { value: 'senior', label: '偏难' },
 ];
 
 export const MAIN_QUESTION_COUNT_OPTIONS = [1, 3, 5, 8, 10];

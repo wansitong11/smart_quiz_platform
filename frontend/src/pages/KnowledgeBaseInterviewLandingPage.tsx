@@ -145,7 +145,7 @@ export default function KnowledgeBaseInterviewLandingPage() {
         state: { knowledgeBaseId: kbId },
       });
     } catch (error) {
-      setStartError(error instanceof Error ? error.message : '创建知识库面试失败');
+      setStartError(error instanceof Error ? error.message : '创建资料测验失败');
     } finally {
       setStarting(false);
     }
@@ -182,10 +182,10 @@ export default function KnowledgeBaseInterviewLandingPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
             <BookOpen className="w-7 h-7 text-primary-500" />
-            知识库面试
+            资料测验
           </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
-            选择知识库进入面试，或维护题库
+            选择资料开始测验，或维护题库
           </p>
         </div>
         <div className="flex gap-2">

@@ -1,8 +1,10 @@
 package interview.guide.modules.knowledgebase.service;
 
-import interview.guide.common.constant.CommonConstants.InterviewDefaults;
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.common.model.DifficultyLevel;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.service.InterviewSessionService;
@@ -36,6 +38,8 @@ import java.util.stream.IntStream;
 @RequiredArgsConstructor
 public class KnowledgeBaseInterviewService {
 
+  private final OwnerScope ownerScope;
+
   private static final int MAX_FOLLOW_UP_COUNT = 5;
 
   private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {
@@ -55,13 +59,14 @@ public class KnowledgeBaseInterviewService {
   }
 
   public InterviewSessionDTO createSession(CreateKnowledgeBaseInterviewRequest request) {
-    knowledgeBaseRepository.findById(request.knowledgeBaseId())
-        .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    knowledgeBaseRepository.findByIdAccessible(request.knowledgeBaseId(), ownerScope.effectiveOwnerId())
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
 
     String category = trimToNull(request.category());
     String difficulty = normalizeDifficulty(request.difficulty());
     int mainCount = request.mainQuestionCount();
-    int followUpCount = request.followUpCount();
+    // 资料测验不做追问：忽略请求里的追问数，也不再按追问数过滤题库
+    int followUpCount = 0;
 
     List<KnowledgeBaseQuestionEntity> raw = selectActiveQuestions(
         request.knowledgeBaseId(), category, difficulty);
@@ -103,8 +108,8 @@ public class KnowledgeBaseInterviewService {
       String difficulty,
       int mainQuestionCount
   ) {
-    knowledgeBaseRepository.findById(knowledgeBaseId)
-        .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    knowledgeBaseRepository.findByIdAccessible(knowledgeBaseId, ownerScope.effectiveOwnerId())
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
 
     String normalizedCategory = trimToNull(category);
     String normalizedDifficulty = normalizeDifficulty(difficulty);
@@ -157,45 +162,44 @@ public class KnowledgeBaseInterviewService {
     List<InterviewQuestionDTO> questions = new ArrayList<>();
     for (QuestionSource source : selected) {
       KnowledgeBaseQuestionEntity entity = source.question();
-      int mainIndex = questions.size();
-      questions.add(InterviewQuestionDTO.fromQuestionBank(
-          mainIndex,
+      // 与模拟测验同构：带上题型 / 选项 / 分值 / 解析，作答端才能渲染成考卷题。
+      // 老题目这些字段为空 → 前端退化为文本作答。
+      questions.add(new InterviewQuestionDTO(
+          questions.size(),
           entity.getQuestion(),
           defaultString(entity.getType(), "KNOWLEDGE_BASE"),
           defaultString(entity.getCategory(), "知识库"),
           entity.getTopicSummary(),
+          null,
+          null,
+          null,
+          false,
+          null,
           entity.getReferenceAnswer(),
           source.keyPoints(),
           entity.getScoringRubric(),
-          entity.getSourceContext()
+          entity.getSourceContext(),
+          entity.getFullScore(),
+          entity.getQuestionType(),
+          readOptions(entity.getOptionsJson()),
+          entity.getAnalysis()
       ));
-
-      // 在可用的追问池里随机抽 followUpCount 个，避免每次面试都问同一组追问
-      List<KnowledgeBaseQuestionFollowUpDTO> picked = pickFollowUps(source.followUps(), followUpCount);
-      for (KnowledgeBaseQuestionFollowUpDTO followUp : picked) {
-        questions.add(new InterviewQuestionDTO(
-            questions.size(),
-            followUp.question(),
-            defaultString(entity.getType(), "KNOWLEDGE_BASE"),
-            defaultString(entity.getCategory(), "知识库追问"),
-            entity.getTopicSummary(),
-            null,
-            null,
-            null,
-            true,
-            mainIndex,
-            followUp.referenceAnswer(),
-            followUp.keyPoints(),
-            followUp.scoringRubric(),
-            entity.getSourceContext(),
-            null,
-            null,
-            null,
-            null
-        ));
-      }
     }
     return questions;
+  }
+
+  /** 选项解析；老题目为空时返回空列表 */
+  private List<InterviewQuestionDTO.QuestionOption> readOptions(String json) {
+    if (json == null || json.isBlank()) {
+      return List.of();
+    }
+    try {
+      return objectMapper.readValue(json,
+          new TypeReference<List<InterviewQuestionDTO.QuestionOption>>() {});
+    } catch (Exception e) {
+      log.warn("选项解析失败，按无选项处理: {}", e.toString());
+      return List.of();
+    }
   }
 
   /**
@@ -307,10 +311,8 @@ public class KnowledgeBaseInterviewService {
   }
 
   private String normalizeDifficulty(String difficulty) {
-    if (difficulty == null || difficulty.isBlank()) {
-      return InterviewDefaults.DIFFICULTY;
-    }
-    return difficulty.trim();
+    // 与出题侧同一套归一化：junior/mid/senior、easy/medium/hard、简单/中等/偏难 都能识别
+    return DifficultyLevel.normalize(difficulty);
   }
 
   private String trimToNull(String value) {

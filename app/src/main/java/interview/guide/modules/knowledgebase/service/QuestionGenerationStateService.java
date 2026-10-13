@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
@@ -26,6 +28,8 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class QuestionGenerationStateService {
+
+  private final OwnerScope ownerScope;
 
   public static final String SAFE_FAILURE_MESSAGE = "题目生成失败，请稍后重试";
 
@@ -61,15 +65,18 @@ public class QuestionGenerationStateService {
 
   @Transactional(readOnly = true)
   public QuestionGenStatusResponse getStatus(Long knowledgeBaseId) {
-    KnowledgeBaseEntity kb = knowledgeBaseRepository.findById(knowledgeBaseId)
-        .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    // 只读：共享资料普通用户也能看它的出题状态（能看题库就该能看状态）
+    KnowledgeBaseEntity kb = knowledgeBaseRepository
+        .findByIdAccessible(knowledgeBaseId, ownerScope.effectiveOwnerId())
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在或无权访问"));
     return toResponse(kb, readConfigOrNull(kb.getQuestionGenConfig()));
   }
 
   @Transactional(readOnly = true)
   public QuestionGenerationConfig getConfig(Long knowledgeBaseId, String taskId) {
-    KnowledgeBaseEntity kb = knowledgeBaseRepository.findById(knowledgeBaseId)
-        .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    KnowledgeBaseEntity kb = knowledgeBaseRepository
+        .findByIdOwned(knowledgeBaseId, ownerScope.effectiveOwnerId())
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在或无权访问"));
     if (!taskId.equals(kb.getQuestionGenTaskId())) {
       throw new BusinessException(ErrorCode.BAD_REQUEST, "题目生成任务已失效");
     }
@@ -118,8 +125,14 @@ public class QuestionGenerationStateService {
     return true;
   }
 
+  /**
+   * 把新生成的题目**追加**到题库并置为完成。
+   *
+   * <p>追加而不是替换：同一份资料可能多次出题，原先的"先删光再写"会把手工新增、
+   * 已启用、已归档的题目一起清掉。去重（同题干跳过）在生成阶段完成，这里只负责落库。
+   */
   @Transactional(rollbackFor = Exception.class)
-  public boolean replaceQuestionsAndComplete(
+  public boolean appendQuestionsAndComplete(
       Long knowledgeBaseId,
       String taskId,
       List<KnowledgeBaseQuestionEntity> questions,
@@ -131,13 +144,13 @@ public class QuestionGenerationStateService {
     }
 
     questions.forEach(question -> question.setKnowledgeBase(kb));
-    questionRepository.deleteByKnowledgeBaseId(knowledgeBaseId);
     questionRepository.saveAll(questions);
 
     int savedCount = questions.size();
+    long keptCount = Math.max(0, questionRepository.countByKnowledgeBase_Id(knowledgeBaseId) - savedCount);
     String message = skippedCount > 0
-        ? String.format("已生成 %d 道题，跳过 %d 道重复题", savedCount, skippedCount)
-        : String.format("已生成 %d 道题", savedCount);
+        ? String.format("新增 %d 道题，跳过 %d 道重复题，原有 %d 道保留", savedCount, skippedCount, keptCount)
+        : String.format("新增 %d 道题，原有 %d 道保留", savedCount, keptCount);
     kb.setQuestionGenStatus(QuestionGenStatus.COMPLETED);
     kb.setQuestionGenError(null);
     kb.setQuestionGenMessage(message);
@@ -180,7 +193,7 @@ public class QuestionGenerationStateService {
 
   private KnowledgeBaseEntity lockKnowledgeBase(Long knowledgeBaseId) {
     return knowledgeBaseRepository.findByIdForUpdate(knowledgeBaseId)
-        .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在或无权访问"));
   }
 
   private KnowledgeBaseEntity lockKnowledgeBaseOrNull(Long knowledgeBaseId) {

@@ -92,7 +92,8 @@ export default function GenerateKnowledgeBaseQuestionsModal({
               <div className="px-6 py-5 space-y-4">
                 <p className="text-sm text-slate-500 dark:text-slate-400">
                   基于知识库 <span className="font-semibold text-slate-700 dark:text-slate-200">{knowledgeBaseName}</span> 的内容，
-                  按难度和方向生成草稿题。面试方向由模型基于知识库内容自动归类，并优先复用已有方向。
+                  按难度和知识板块生成草稿题；新题会<span className="font-medium text-slate-600 dark:text-slate-300">追加</span>到现有题库，
+                  不会覆盖已有题目（与已有题重复的会被自动跳过）。知识板块由模型基于知识库内容自动归类，并优先复用已有板块。
                 </p>
 
                 <div className="grid grid-cols-2 gap-3">

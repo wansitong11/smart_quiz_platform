@@ -69,6 +69,23 @@ public class KnowledgeBaseQuestionEntity {
   @Column(columnDefinition = "TEXT")
   private String followUpsJson;
 
+    // ===== 考卷题字段（模拟测验同构）=====
+    // 题型：SINGLE_CHOICE / MULTI_CHOICE / FILL_BLANK / SHORT_ANSWER / READING / WRITING / OTHER
+    @Column(name = "question_type", length = 32)
+    private String questionType;
+
+    // 选择题选项，形如 [{"key":"A","text":"..."}]
+    @Column(name = "options_json", columnDefinition = "TEXT")
+    private String optionsJson;
+
+    // 该题分值
+    @Column(name = "full_score")
+    private Integer fullScore;
+
+    // 题目解析（作答后展示）
+    @Column(columnDefinition = "TEXT")
+    private String analysis;
+
   @Column(columnDefinition = "TEXT")
   private String sourceContext;
 
@@ -190,6 +207,38 @@ public class KnowledgeBaseQuestionEntity {
 
   public void setFollowUpsJson(String followUpsJson) {
     this.followUpsJson = followUpsJson;
+  }
+
+  public String getQuestionType() {
+    return questionType;
+  }
+
+  public void setQuestionType(String questionType) {
+    this.questionType = questionType;
+  }
+
+  public String getOptionsJson() {
+    return optionsJson;
+  }
+
+  public void setOptionsJson(String optionsJson) {
+    this.optionsJson = optionsJson;
+  }
+
+  public Integer getFullScore() {
+    return fullScore;
+  }
+
+  public void setFullScore(Integer fullScore) {
+    this.fullScore = fullScore;
+  }
+
+  public String getAnalysis() {
+    return analysis;
+  }
+
+  public void setAnalysis(String analysis) {
+    this.analysis = analysis;
   }
 
   public String getSourceContext() {

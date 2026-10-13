@@ -91,28 +91,29 @@ class QuestionGenerationStateServiceTest {
   }
 
   @Test
-  @DisplayName("旧任务不能替换题目或更新完成状态")
+  @DisplayName("旧任务不能写入题目或更新完成状态")
   void shouldNotPersistResultForStaleTask() {
     KnowledgeBaseEntity kb = buildKb(QuestionGenStatus.PROCESSING, "task-2");
     when(knowledgeBaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(kb));
 
-    boolean completed = service.replaceQuestionsAndComplete(
+    boolean completed = service.appendQuestionsAndComplete(
         1L, "task-1", List.of(new KnowledgeBaseQuestionEntity()), 0);
 
     assertThat(completed).isFalse();
-    verify(questionRepository, never()).deleteByKnowledgeBaseId(any());
     verify(questionRepository, never()).saveAll(anyList());
   }
 
   @Test
-  @DisplayName("替换题目与完成状态在同一状态操作中提交")
-  void shouldReplaceQuestionsAndCompleteCurrentTask() {
+  @DisplayName("新题追加进题库，原有题目不被删除")
+  void shouldAppendQuestionsAndCompleteCurrentTask() {
     KnowledgeBaseEntity kb = buildKb(QuestionGenStatus.PROCESSING, "task-1");
     when(knowledgeBaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(kb));
     when(questionRepository.saveAll(anyList())).thenAnswer(invocation -> invocation.getArgument(0));
+    // 落库后题库总数 = 原有 3 道 + 本次新增 1 道
+    when(questionRepository.countByKnowledgeBase_Id(1L)).thenReturn(4L);
 
     KnowledgeBaseQuestionEntity question = new KnowledgeBaseQuestionEntity();
-    boolean completed = service.replaceQuestionsAndComplete(
+    boolean completed = service.appendQuestionsAndComplete(
         1L, "task-1", List.of(question), 2);
 
     assertThat(completed).isTrue();
@@ -120,7 +121,8 @@ class QuestionGenerationStateServiceTest {
     assertThat(kb.getQuestionGenStatus()).isEqualTo(QuestionGenStatus.COMPLETED);
     assertThat(kb.getQuestionGenSavedCount()).isEqualTo(1);
     assertThat(kb.getQuestionGenSkippedCount()).isEqualTo(2);
-    verify(questionRepository).deleteByKnowledgeBaseId(1L);
+    assertThat(kb.getQuestionGenMessage()).contains("原有 3 道保留");
+    verify(questionRepository, never()).deleteByKnowledgeBaseId(any());
     verify(questionRepository).saveAll(List.of(question));
   }
 

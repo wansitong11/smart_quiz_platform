@@ -12,6 +12,8 @@ import {
   type KnowledgeBaseQuestion,
 } from '../../api/knowledgebase';
 import { isQuestionGenerationActive } from '../../pages/questionGenerationStatus';
+import { useAuth } from '../../context/AuthContext';
+import { canManageKnowledgeBase } from '../../utils/knowledgeBasePermission';
 
 interface KbStats {
   total: number;
@@ -49,6 +51,9 @@ export default function KnowledgeBaseCard({
   onManage,
 }: KnowledgeBaseCardProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const { user } = useAuth();
+  // 共享资料只有管理员能维护：普通用户不渲染「生成题目」（管理题库仍可进去只读浏览）
+  const canManage = canManageKnowledgeBase(kb, user);
   const [stats, setStats] = useState<KbStats | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -128,7 +133,7 @@ export default function KnowledgeBaseCard({
         }`}>
           {generating
             ? kb.questionGenStatus === 'QUEUED' ? '等待生成' : '生成中'
-            : loading ? '加载中' : stats && stats.active > 0 ? '可面试' : '未启用'}
+            : loading ? '加载中' : stats && stats.active > 0 ? '可测验' : '未启用'}
         </div>
       </div>
 
@@ -152,22 +157,25 @@ export default function KnowledgeBaseCard({
           className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
         >
           <Layers className="w-4 h-4" />
-          开始面试
+          开始测验
         </button>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={() => onGenerate(kb)}
-            disabled={generating}
-            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-          >
-            {generating
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Sparkles className="w-3.5 h-3.5" />}
-            {generating ? '生成中' : '生成题目'}
-          </button>
+        <div className={canManage ? 'grid grid-cols-2 gap-2' : 'flex'}>
+          {canManage && (
+            <button
+              onClick={() => onGenerate(kb)}
+              disabled={generating}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              {generating
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Sparkles className="w-3.5 h-3.5" />}
+              {generating ? '生成中' : '生成题目'}
+            </button>
+          )}
           <button
             onClick={() => onManage(kb)}
-            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-700 whitespace-nowrap"
+            className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-700 whitespace-nowrap ${canManage ? '' : 'w-full'}`}
+            title={canManage ? '维护题库' : '共享资料题库仅管理员可维护，这里可以只读查看'}
           >
             <Settings2 className="w-3.5 h-3.5" />
             管理题库

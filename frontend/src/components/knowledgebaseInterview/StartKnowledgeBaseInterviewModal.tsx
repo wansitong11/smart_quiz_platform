@@ -9,7 +9,6 @@ import { knowledgeBaseApi } from '../../api/knowledgebase';
 import {
   DEFAULT_DIFFICULTY,
   DIFFICULTY_OPTIONS,
-  FOLLOW_UP_COUNT_OPTIONS,
   INPUT_CLASS,
   MAIN_QUESTION_COUNT_OPTIONS,
 } from '../../constants/knowledgebaseInterview';
@@ -47,7 +46,8 @@ export default function StartKnowledgeBaseInterviewModal({
   const [category, setCategory] = useState('');
   const [difficulty, setDifficulty] = useState(defaultDifficulty);
   const [mainQuestionCount, setMainQuestionCount] = useState(5);
-  const [followUpCount, setFollowUpCount] = useState(1);
+  // 资料测验不做追问，固定为 0（容量统计按 0 追问计算，即全部可用题目）
+  const followUpCount = 0;
   const [capacity, setCapacity] =
     useState<KnowledgeBaseInterviewCapacityResponse | null>(null);
   const [loadingCapacity, setLoadingCapacity] = useState(false);
@@ -62,7 +62,7 @@ export default function StartKnowledgeBaseInterviewModal({
     setCategory('');
     setDifficulty(defaultDifficulty);
     setMainQuestionCount(5);
-    setFollowUpCount(1);
+    // 追问数固定为 0（资料测验不做追问），无需重置
   }, [open, knowledgeBase, defaultDifficulty]);
 
   useEffect(() => {
@@ -125,7 +125,7 @@ export default function StartKnowledgeBaseInterviewModal({
                 <div className="flex items-center gap-2">
                   <Play className="w-5 h-5 text-primary-500" />
                   <div>
-                    <h3 className="text-lg font-bold text-slate-900 dark:text-white">开始知识库面试</h3>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white">开始资料测验</h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                       仅从 <span className="font-medium">{knowledgeBase?.name}</span> 的已启用题目抽题
                     </p>
@@ -143,7 +143,7 @@ export default function StartKnowledgeBaseInterviewModal({
 
               <div className="px-6 py-5 space-y-4">
                 <label className="block">
-                  <span className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">面试方向</span>
+                  <span className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">知识板块</span>
                   <select
                     value={category}
                     onChange={event => setCategory(event.target.value)}
@@ -187,30 +187,7 @@ export default function StartKnowledgeBaseInterviewModal({
                       ))}
                     </select>
                   </label>
-                  <label className="block">
-                    <span className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">每题追问</span>
-                    <select
-                      value={followUpCount}
-                      onChange={event => setFollowUpCount(parseInt(event.target.value, 10))}
-                      className={INPUT_CLASS}
-                    >
-                      {FOLLOW_UP_COUNT_OPTIONS.map(count => {
-                        const optionCapacity = getSelectedCapacity(followUpOptions, count);
-                        const label = optionCapacity
-                          ? `${count} 个（${optionCapacity.availableQuestionCount} 道题可用）`
-                          : `${count} 个`;
-                        return (
-                          <option
-                            key={count}
-                            value={count}
-                            disabled={!optionCapacity?.selectable}
-                          >
-                            {label}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </label>
+                  {/* 每题追问已下线：资料测验是一次性作答的整卷测验 */}
                 </div>
 
                 <div className="rounded-lg bg-slate-50 dark:bg-slate-900 px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
@@ -265,7 +242,7 @@ export default function StartKnowledgeBaseInterviewModal({
                   className="px-5 py-2.5 inline-flex items-center gap-2 text-white rounded-xl font-semibold shadow-lg bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                  {starting ? '创建中…' : '开始面试'}
+                  {starting ? '创建中…' : '开始测验'}
                 </motion.button>
               </div>
             </motion.div>

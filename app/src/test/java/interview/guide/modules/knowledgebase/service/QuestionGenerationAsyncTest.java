@@ -326,9 +326,8 @@ class QuestionGenerationAsyncTest {
       when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(kb));
       when(knowledgeBaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(kb));
       when(questionRepository.findCategoryCounts(1L)).thenReturn(List.of());
-      when(questionRepository.findTop20ByKnowledgeBase_IdAndDifficultyOrderByUpdatedAtDesc(1L, "mid"))
+      when(questionRepository.findQuestionTextsByKnowledgeBaseId(1L))
           .thenReturn(List.of());
-      when(questionRepository.deleteByKnowledgeBaseId(1L)).thenReturn(3);
       when(questionRepository.saveAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
       stubInvokerForGeneration(new KnowledgeBaseQuestionGenerationService.QuestionListDTO(List.of(
           new KnowledgeBaseQuestionGenerationService.QuestionDTO(
@@ -342,8 +341,8 @@ class QuestionGenerationAsyncTest {
       generationService.executeGeneration(
           1L, "task-1", new QuestionGenerationConfig("mid", 5, 2, 3, null));
 
-      // 验证删除旧问题
-      verify(questionRepository).deleteByKnowledgeBaseId(1L);
+      // 追加语义：不再删除旧题目
+      verify(questionRepository, never()).deleteByKnowledgeBaseId(any());
       // 验证批量保存
       ArgumentCaptor<List<KnowledgeBaseQuestionEntity>> captor =
           ArgumentCaptor.forClass(List.class);
@@ -359,7 +358,7 @@ class QuestionGenerationAsyncTest {
       when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(kb));
       when(knowledgeBaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(kb));
       when(questionRepository.findCategoryCounts(1L)).thenReturn(List.of());
-      when(questionRepository.findTop20ByKnowledgeBase_IdAndDifficultyOrderByUpdatedAtDesc(1L, "mid"))
+      when(questionRepository.findQuestionTextsByKnowledgeBaseId(1L))
           .thenReturn(List.of());
       when(questionRepository.saveAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
       stubInvokerForGeneration(new KnowledgeBaseQuestionGenerationService.QuestionListDTO(List.of(
@@ -401,7 +400,7 @@ class QuestionGenerationAsyncTest {
       when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(kb));
       when(knowledgeBaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(kb));
       when(questionRepository.findCategoryCounts(1L)).thenReturn(List.of());
-      when(questionRepository.findTop20ByKnowledgeBase_IdAndDifficultyOrderByUpdatedAtDesc(1L, "mid"))
+      when(questionRepository.findQuestionTextsByKnowledgeBaseId(1L))
           .thenReturn(List.of());
       when(structuredOutputInvoker.invoke(
           eq(chatClient), anyString(), anyString(), any(),
@@ -441,7 +440,7 @@ class QuestionGenerationAsyncTest {
       when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(kb));
       when(knowledgeBaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(kb));
       when(questionRepository.findCategoryCounts(1L)).thenReturn(List.of());
-      when(questionRepository.findTop20ByKnowledgeBase_IdAndDifficultyOrderByUpdatedAtDesc(1L, "mid"))
+      when(questionRepository.findQuestionTextsByKnowledgeBaseId(1L))
           .thenReturn(List.of());
       when(structuredOutputInvoker.invoke(
           eq(chatClient), anyString(), anyString(), any(),
@@ -471,7 +470,7 @@ class QuestionGenerationAsyncTest {
       when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(kb));
       when(knowledgeBaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(kb));
       when(questionRepository.findCategoryCounts(1L)).thenReturn(List.of());
-      when(questionRepository.findTop20ByKnowledgeBase_IdAndDifficultyOrderByUpdatedAtDesc(1L, "mid"))
+      when(questionRepository.findQuestionTextsByKnowledgeBaseId(1L))
           .thenReturn(List.of());
       when(questionRepository.saveAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
       stubInvokerForGeneration(new KnowledgeBaseQuestionGenerationService.QuestionListDTO(List.of(
@@ -505,10 +504,8 @@ class QuestionGenerationAsyncTest {
           categoryCount("JVM", 5L),
           categoryCount("Spring", 3L)
       ));
-      KnowledgeBaseQuestionEntity existing = new KnowledgeBaseQuestionEntity();
-      existing.setQuestion("已有的 JVM 问题");
-      when(questionRepository.findTop20ByKnowledgeBase_IdAndDifficultyOrderByUpdatedAtDesc(1L, "mid"))
-          .thenReturn(List.of(existing));
+      when(questionRepository.findQuestionTextsByKnowledgeBaseId(1L))
+          .thenReturn(List.of("已有的 JVM 问题"));
       when(questionRepository.saveAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
       stubInvokerForGeneration(new KnowledgeBaseQuestionGenerationService.QuestionListDTO(List.of(
           new KnowledgeBaseQuestionGenerationService.QuestionDTO(

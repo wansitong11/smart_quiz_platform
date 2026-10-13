@@ -14,38 +14,44 @@ import {
   getDifficultyLabel,
   getStatusLabel,
 } from '../../constants/knowledgebaseInterview';
-import { getFollowUpQualityWarning } from './interviewCapacity';
+
+/** 题型中文名（与后端 InterviewQuestionDTO.questionType 对齐） */
+const QUESTION_TYPE_LABELS: Record<string, string> = {
+  SINGLE_CHOICE: '单选题',
+  MULTI_CHOICE: '多选题',
+  FILL_BLANK: '填空题',
+  SHORT_ANSWER: '简答题',
+  READING: '阅读题',
+  WRITING: '写作题',
+  OTHER: '其他',
+};
 
 interface QuestionCardProps {
   question: KnowledgeBaseQuestion;
   selected?: boolean;
   targetFollowUpCount?: number | null;
   onSelect?: (id: number) => void;
-  onEdit: (question: KnowledgeBaseQuestion) => void;
-  onUpdateStatus: (questionId: number, status: KnowledgeBaseQuestionStatus) => void;
-  onDelete: (question: KnowledgeBaseQuestion) => void;
+  /** 下面三个回调不传即表示"只读"（共享资料对普通用户只读），对应按钮不渲染 */
+  onEdit?: (question: KnowledgeBaseQuestion) => void;
+  onUpdateStatus?: (questionId: number, status: KnowledgeBaseQuestionStatus) => void;
+  onDelete?: (question: KnowledgeBaseQuestion) => void;
 }
 
 export default function QuestionCard({
   question,
   selected = false,
-  targetFollowUpCount,
   onSelect,
   onEdit,
   onUpdateStatus,
   onDelete,
 }: QuestionCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const usableFollowUpCount = question.followUps
-    .filter(followUp => followUp.question?.trim())
-    .length;
-  const followUpQualityWarning =
-    getFollowUpQualityWarning(usableFollowUpCount, targetFollowUpCount);
+  const options = question.options ?? [];
   const hasDetail = Boolean(
     question.referenceAnswer
       || question.keyPoints.length > 0
       || question.scoringRubric
-      || question.followUps.length > 0
+      || question.analysis
   );
 
   return (
@@ -70,10 +76,10 @@ export default function QuestionCard({
             <Badge>{getStatusLabel(question.status)}</Badge>
             {question.category && <Badge>{question.category}</Badge>}
             <Badge>{getDifficultyLabel(question.difficulty)}</Badge>
-            <Badge>{`${usableFollowUpCount} 个追问`}</Badge>
-            {followUpQualityWarning && (
-              <Badge tone="warning">{followUpQualityWarning}</Badge>
+            {question.questionType && (
+              <Badge>{QUESTION_TYPE_LABELS[question.questionType] ?? question.questionType}</Badge>
             )}
+            {question.fullScore ? <Badge>{`${question.fullScore} 分`}</Badge> : null}
           </div>
           <button
             type="button"
@@ -84,10 +90,21 @@ export default function QuestionCard({
               {question.question}
             </h3>
           </button>
-          {!expanded && question.referenceAnswer && (
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 line-clamp-2">
-              {question.referenceAnswer}
-            </p>
+          {/* 选项直接展示，避免"只有题干、看着不像完整题目"（答案仍只在展开区） */}
+          {options.length >= 2 && (
+            <ul className="mt-3 space-y-1.5">
+              {options.map(option => (
+                <li
+                  key={option.key}
+                  className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200"
+                >
+                  <span className="min-w-[18px] font-medium text-slate-500 dark:text-slate-400">
+                    {option.key}
+                  </span>
+                  <span className="whitespace-pre-wrap">{option.text}</span>
+                </li>
+              ))}
+            </ul>
           )}
           {hasDetail && (
             <button
@@ -96,7 +113,7 @@ export default function QuestionCard({
               className="mt-2 inline-flex items-center gap-1 text-xs text-primary-500 hover:text-primary-600"
             >
               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-              {expanded ? '收起详情' : '查看参考答案与追问'}
+              {expanded ? '收起详情' : '查看参考答案与解析'}
             </button>
           )}
           {expanded && (
@@ -106,6 +123,9 @@ export default function QuestionCard({
               )}
               {question.referenceAnswer && (
                 <DetailSection title="参考答案" body={question.referenceAnswer} />
+              )}
+              {question.analysis && (
+                <DetailSection title="题目解析" body={question.analysis} />
               )}
               {question.keyPoints.length > 0 && (
                 <div>
@@ -155,30 +175,36 @@ export default function QuestionCard({
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <IconButton title="编辑" onClick={() => onEdit(question)}>
-            <Pencil className="w-4 h-4" />
-          </IconButton>
-          {question.status !== 'ACTIVE' && (
-            <IconButton
-              title="启用"
-              onClick={() => onUpdateStatus(question.id, 'ACTIVE')}
-            >
-              <Check className="w-4 h-4" />
-            </IconButton>
-          )}
-          {question.status !== 'ARCHIVED' && (
-            <IconButton
-              title="归档"
-              onClick={() => onUpdateStatus(question.id, 'ARCHIVED')}
-            >
-              <Archive className="w-4 h-4" />
-            </IconButton>
-          )}
-          <IconButton title="删除" onClick={() => onDelete(question)}>
-            <Trash2 className="w-4 h-4" />
-          </IconButton>
-        </div>
+        {(onEdit || onUpdateStatus || onDelete) && (
+          <div className="flex items-center gap-1 shrink-0">
+            {onEdit && (
+              <IconButton title="编辑" onClick={() => onEdit(question)}>
+                <Pencil className="w-4 h-4" />
+              </IconButton>
+            )}
+            {onUpdateStatus && question.status !== 'ACTIVE' && (
+              <IconButton
+                title="启用"
+                onClick={() => onUpdateStatus(question.id, 'ACTIVE')}
+              >
+                <Check className="w-4 h-4" />
+              </IconButton>
+            )}
+            {onUpdateStatus && question.status !== 'ARCHIVED' && (
+              <IconButton
+                title="归档"
+                onClick={() => onUpdateStatus(question.id, 'ARCHIVED')}
+              >
+                <Archive className="w-4 h-4" />
+              </IconButton>
+            )}
+            {onDelete && (
+              <IconButton title="删除" onClick={() => onDelete(question)}>
+                <Trash2 className="w-4 h-4" />
+              </IconButton>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

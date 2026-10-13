@@ -1,13 +1,15 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
+
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.ai.StructuredOutputInvoker;
-import interview.guide.common.constant.CommonConstants.InterviewDefaults;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.log.ErrorLogSanitizer;
+import interview.guide.common.model.DifficultyLevel;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionFollowUpDTO;
@@ -43,16 +45,20 @@ import java.util.stream.Collectors;
 /**
  * 知识库问题异步生成服务
  * 由 QuestionGenStreamConsumer 调用，负责实际的 LLM 生成和结果持久化。
- * LLM 调用不在事务内；删除旧问题和保存新问题在同一个最小事务中完成。
+ * LLM 调用不在事务内；追加新题目与更新完成状态在同一个最小事务中完成。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class KnowledgeBaseQuestionGenerationService {
 
+  private final OwnerScope ownerScope;
+
   private static final int RETRIEVAL_TOP_K = 12;
   private static final int RETRIEVAL_QUERY_TOP_K = 4;
   private static final int MAX_CONTEXT_CHARS = 5000;
+  /** 提示词里"已有题目"最多列多少条（避免提示词过长；去重不受此限制，用的是全量题目） */
+  private static final int MAX_PROMPT_EXISTING_QUESTIONS = 30;
 
   private final KnowledgeBaseRepository knowledgeBaseRepository;
   private final KnowledgeBaseQuestionRepository questionRepository;
@@ -82,8 +88,14 @@ public class KnowledgeBaseQuestionGenerationService {
       String referenceAnswer,
       List<String> keyPoints,
       String scoringRubric,
+      String questionType,
+      List<OptionDTO> options,
+      Integer fullScore,
+      String analysis,
       List<KnowledgeBaseQuestionFollowUpDTO> followUps
   ) {}
+
+  record OptionDTO(String key, String text) {}
 
   private record GenerationBatch(
       List<KnowledgeBaseQuestionEntity> questions,
@@ -100,8 +112,9 @@ public class KnowledgeBaseQuestionGenerationService {
       String taskId,
       QuestionGenerationConfig config
   ) {
-    KnowledgeBaseEntity kb = knowledgeBaseRepository.findById(kbId)
-        .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    KnowledgeBaseEntity kb = knowledgeBaseRepository
+        .findByIdOwned(kbId, ownerScope.effectiveOwnerId())
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在或无权访问"));
 
     // 再次确认任务ID匹配
     if (!taskId.equals(kb.getQuestionGenTaskId())) {
@@ -117,10 +130,18 @@ public class KnowledgeBaseQuestionGenerationService {
     // 1. 检索上下文（不在事务中）
     String context = buildGenerationContext(kb);
 
+    // 已有题目：既进提示词避免重复出题，也用于落库前的全库去重（出题是追加语义，不覆盖旧题）
+    List<String> existingQuestions = questionRepository.findQuestionTextsByKnowledgeBaseId(kbId);
+    Set<String> existingKeys = existingQuestions.stream()
+        .map(this::normalizeQuestionKey)
+        .filter(key -> !key.isBlank())
+        .collect(Collectors.toCollection(LinkedHashSet::new));
+
     // 2. 调用 LLM（不在事务中）
     ChatClient chatClient = llmProviderRegistry.getPlainChatClient(config.llmProvider());
     QuestionListDTO generated = callLlm(kb, chatClient, normalizedDifficulty,
-        Math.max(1, config.questionCount()), normalizedFollowUp, normalizedCategoryLimit, context);
+        Math.max(1, config.questionCount()), normalizedFollowUp, normalizedCategoryLimit, context,
+        existingQuestions);
 
     // 3. 校验生成结果
     if (generated == null || generated.questions() == null || generated.questions().isEmpty()) {
@@ -129,13 +150,13 @@ public class KnowledgeBaseQuestionGenerationService {
 
     // 4. 构建实体列表（不在事务中）
     GenerationBatch batch =
-        buildEntities(kb, normalizedDifficulty, context, normalizedFollowUp, generated);
+        buildEntities(kb, normalizedDifficulty, context, normalizedFollowUp, generated, existingKeys);
     if (batch.questions().isEmpty()) {
       throw new BusinessException(ErrorCode.INTERVIEW_QUESTION_GENERATION_FAILED, "知识库题库生成结果无有效题干");
     }
 
-    // 5. 在一个小事务中校验当前任务、替换题目并更新完成状态
-    boolean completed = stateService.replaceQuestionsAndComplete(
+    // 5. 在一个小事务中校验当前任务、追加题目并更新完成状态
+    boolean completed = stateService.appendQuestionsAndComplete(
         kbId, taskId, batch.questions(), batch.skippedCount());
     if (!completed) {
       log.info("题目生成任务已被替换，丢弃旧结果: kbId={}, taskId={}", kbId, taskId);
@@ -153,7 +174,8 @@ public class KnowledgeBaseQuestionGenerationService {
       int questionCount,
       int followUpCount,
       int categoryLimit,
-      String context
+      String context,
+      List<String> existingQuestions
   ) {
     try {
       String systemPrompt = loadTemplate(systemPromptResource).render()
@@ -162,14 +184,15 @@ public class KnowledgeBaseQuestionGenerationService {
       String userPrompt = loadTemplate(userPromptResource)
           .render(Map.of(
               "knowledgeBaseName", promptSanitizer.sanitize(kb.getName()),
-              "difficulty", difficulty,
+              // 给模型的是中文难度描述（简单/中等/偏难 + 认知要求），不是 junior/mid/senior 这种内部编码
+              "difficultyDescription", DifficultyLevel.describe(difficulty),
               "questionCount", questionCount,
               "followUpCount", followUpCount,
               "categoryLimit", categoryLimit,
               "existingCategories", promptSanitizer.sanitize(
                   buildExistingCategorySection(kb.getId())),
               "existingQuestions", promptSanitizer.sanitize(
-                  buildExistingQuestionSection(kb.getId(), difficulty)),
+                  buildExistingQuestionSection(existingQuestions)),
               "context", PromptSecurityConstants.DATA_BOUNDARY_INSTRUCTION + "\n"
                   + promptSanitizer.wrapWithDelimiters("knowledge-base",
                       promptSanitizer.sanitize(context))
@@ -200,7 +223,8 @@ public class KnowledgeBaseQuestionGenerationService {
       String difficulty,
       String sourceContext,
       int followUpCount,
-      QuestionListDTO generated
+      QuestionListDTO generated,
+      Set<String> existingKeys
   ) {
     List<KnowledgeBaseQuestionEntity> entities = new ArrayList<>();
     Set<String> batchKeys = new LinkedHashSet<>();
@@ -212,7 +236,8 @@ public class KnowledgeBaseQuestionGenerationService {
       }
       String rawQuestion = dto.question().trim();
       String key = normalizeQuestionKey(rawQuestion);
-      if (!batchKeys.add(key)) {
+      // 本批内重复，或与题库里已有的题重复（追加语义：重复的跳过，不动旧题）
+      if (existingKeys.contains(key) || !batchKeys.add(key)) {
         skippedCount += 1;
         continue;
       }
@@ -228,7 +253,15 @@ public class KnowledgeBaseQuestionGenerationService {
       entity.setReferenceAnswer(trimToNull(dto.referenceAnswer()));
       entity.setKeyPointsJson(writeStringList(dto.keyPoints()));
       entity.setScoringRubric(trimToNull(dto.scoringRubric()));
-      entity.setFollowUpsJson(writeFollowUps(dto.followUps(), followUpCount));
+      // 考卷题：题型 + 选项 + 分值 + 解析（选择题才有选项）
+      String questionType = normalizeQuestionType(dto.questionType(), dto.options());
+      entity.setQuestionType(questionType);
+      entity.setOptionsJson(writeOptions(isChoiceType(questionType) ? normalizeOptions(dto.options()) : List.of()));
+      entity.setFullScore(dto.fullScore() != null && dto.fullScore() > 0
+          ? dto.fullScore() : defaultScoreFor(questionType));
+      entity.setAnalysis(trimToNull(dto.analysis()));
+      // 测验不做追问：即使模型返回了也忽略，老数据仍可读取
+      entity.setFollowUpsJson(writeFollowUps(List.of(), 0));
       entity.setSourceContext(sourceContext);
       entity.setKbContentHash(kb.getFileHash());
       entity.setStatus(KnowledgeBaseQuestionStatus.DRAFT);
@@ -289,12 +322,14 @@ public class KnowledgeBaseQuestionGenerationService {
         .collect(Collectors.joining("\n"));
   }
 
-  private String buildExistingQuestionSection(Long knowledgeBaseId, String difficulty) {
-    List<String> questions = questionRepository
-        .findTop20ByKnowledgeBase_IdAndDifficultyOrderByUpdatedAtDesc(knowledgeBaseId, difficulty)
-        .stream()
-        .map(KnowledgeBaseQuestionEntity::getQuestion)
+  /**
+   * 已有题目清单（最新在前，限 {@link #MAX_PROMPT_EXISTING_QUESTIONS} 条）。
+   * 不限难度：题库存量是多次生成的累积，跨难度也要避免出重复题。
+   */
+  private String buildExistingQuestionSection(List<String> existingQuestions) {
+    List<String> questions = existingQuestions.stream()
         .filter(question -> question != null && !question.isBlank())
+        .limit(MAX_PROMPT_EXISTING_QUESTIONS)
         .map(question -> "- " + question.trim())
         .toList();
     return questions.isEmpty() ? "暂无已有题目" : String.join("\n", questions);
@@ -308,10 +343,8 @@ public class KnowledgeBaseQuestionGenerationService {
   }
 
   private String normalizeDifficulty(String difficulty) {
-    if (difficulty == null || difficulty.isBlank()) {
-      return InterviewDefaults.DIFFICULTY;
-    }
-    return difficulty.trim();
+    // 接受 junior/mid/senior、easy/medium/hard 与"简单/中等/偏难"，统一落成库里的编码
+    return DifficultyLevel.normalize(difficulty);
   }
 
   private String normalizeCategory(String category, String fallback) {
@@ -353,6 +386,74 @@ public class KnowledgeBaseQuestionGenerationService {
     } catch (JacksonException e) {
       throw new BusinessException(ErrorCode.INTERNAL_ERROR, "序列化题目列表字段失败", e);
     }
+  }
+
+  // ==================== 考卷题规范化（与模拟测验对齐） ====================
+
+  private static final Set<String> VALID_QUESTION_TYPES = Set.of(
+      "SINGLE_CHOICE", "MULTI_CHOICE", "FILL_BLANK", "SHORT_ANSWER",
+      "READING", "WRITING", "OTHER");
+
+  /** 题型兜底：非法值按「有选项 → 单选，无选项 → 简答」处理 */
+  private String normalizeQuestionType(String rawType, List<OptionDTO> options) {
+    String type = rawType == null ? "" : rawType.trim().toUpperCase(Locale.ROOT);
+    boolean hasOptions = normalizeOptions(options).size() >= 2;
+    if (isChoiceType(type)) {
+      return hasOptions ? type : "SHORT_ANSWER";
+    }
+    return VALID_QUESTION_TYPES.contains(type)
+        ? type
+        : (hasOptions ? "SINGLE_CHOICE" : "SHORT_ANSWER");
+  }
+
+  private boolean isChoiceType(String type) {
+    return "SINGLE_CHOICE".equals(type) || "MULTI_CHOICE".equals(type);
+  }
+
+  /** 选项清洗：去标签、去空、去重、按 A/B/C/D 补 key，最多 10 项；不足 2 项视为无选项 */
+  private List<OptionDTO> normalizeOptions(List<OptionDTO> raw) {
+    if (raw == null || raw.isEmpty()) {
+      return List.of();
+    }
+    List<OptionDTO> result = new ArrayList<>();
+    Set<String> seenTexts = new LinkedHashSet<>();
+    for (OptionDTO option : raw) {
+      if (option == null || option.text() == null || option.text().isBlank()) {
+        continue;
+      }
+      String text = option.text().trim().replaceFirst("^\\s*[A-Da-d][\\.．、:：)]?\\s*", "");
+      if (!seenTexts.add(text)) {
+        continue;
+      }
+      String key = option.key() == null ? "" : option.key().trim().toUpperCase(Locale.ROOT);
+      if (key.length() != 1 || key.charAt(0) < 'A' || key.charAt(0) > 'J') {
+        key = String.valueOf((char) ('A' + result.size()));
+      }
+      result.add(new OptionDTO(key, text));
+      if (result.size() >= 10) {
+        break;
+      }
+    }
+    return result.size() >= 2 ? result : List.of();
+  }
+
+  private String writeOptions(List<OptionDTO> options) {
+    try {
+      return options == null || options.isEmpty() ? null : objectMapper.writeValueAsString(options);
+    } catch (Exception e) {
+      log.warn("选项序列化失败，按无选项处理: {}", e.toString());
+      return null;
+    }
+  }
+
+  private int defaultScoreFor(String questionType) {
+    return switch (questionType) {
+      case "SINGLE_CHOICE", "MULTI_CHOICE", "FILL_BLANK" -> 3;
+      case "READING" -> 8;
+      case "WRITING" -> 20;
+      case "SHORT_ANSWER" -> 6;
+      default -> 5;
+    };
   }
 
   private String writeFollowUps(

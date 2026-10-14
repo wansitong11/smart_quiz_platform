@@ -4,7 +4,11 @@
 #   1. app / frontend 改用「只复制产物」的运行时镜像，服务器上不跑 Gradle 和 pnpm；
 #   2. 给每个容器设硬内存上限，让 OOM 发生在容器自己的 cgroup 里，
 #      不触发整机 OOM 影响同机其他服务；
-#   3. JVM 使用实测过的压缩参数（实测 RSS 约 300-450MB）。
+#   3. JVM 参数留出真实余量（2026-10-14 事故复盘后调整）：
+#      旧值 -Xmx384m + Metaspace192m + Direct64m ≈ 640MB，而容器上限只有 700MB，
+#      正常态就用掉 570~590MB，随便多要几十 MB 就顶到 cgroup 上限触发内核回收抖动；
+#      现在把上限抬到 900m、堆抬到 512m，并把 SerialGC（单线程，压力下缓不过来）
+#      换成 ParallelGC，同时给连接池加保活，减少"客户端硬断连接 → postgres 后端崩"。
 # 用法：
 #   docker compose -f docker-compose.prod.yml -f deploy/docker-compose.server.yml \
 #     --env-file deploy/env.prod up -d --build
@@ -18,12 +22,18 @@ services:
     build:
       context: .
       dockerfile: deploy/server/Dockerfile.app
-    mem_limit: 700m
+    mem_limit: 900m
     environment:
       JAVA_TOOL_OPTIONS: >-
-        -Xmx384m -XX:MaxMetaspaceSize=192m -XX:+UseSerialGC -XX:ActiveProcessorCount=1
+        -Xmx512m -XX:MaxMetaspaceSize=192m -XX:+UseParallelGC -XX:ActiveProcessorCount=2
         -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError
         -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8
+      # 连接池保活与超时：避免连接被静默掐断后 postgres 后端异常退出
+      SPRING_DATASOURCE_HIKARI_KEEPALIVE_TIME: "120000"
+      SPRING_DATASOURCE_HIKARI_MAX_LIFETIME: "900000"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "2"
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "10000"
+      SPRING_DATASOURCE_HIKARI_VALIDATION_TIMEOUT: "3000"
   frontend:
     image: smart-quiz-frontend:local
     build:

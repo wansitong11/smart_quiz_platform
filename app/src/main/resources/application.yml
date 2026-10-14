@@ -44,6 +44,15 @@ spring:
     # 与 docker-compose.dev.yml 中 postgres 服务默认一致（本地只起依赖容器 + bootRun 时无需改）
     password: ${POSTGRES_PASSWORD:123456}
     driver-class-name: org.postgresql.Driver
+    # 连接池：加保活 + 明确超时，避免连接被静默掐断时把 postgres 后端也带崩
+    # （2026-10-14 事故：客户端异常断连 → pg 后端退出 → 整个集群重建、所有连接断开）
+    hikari:
+      maximum-pool-size: ${APP_DB_POOL_SIZE:10}
+      minimum-idle: 2
+      keepalive-time: 120000
+      max-lifetime: 900000
+      connection-timeout: 10000
+      validation-timeout: 3000
 
   jpa:
     hibernate:

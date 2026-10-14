@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, GraduationCap, Loader2, LockKeyhole, User, UserPlus } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, GraduationCap, Loader2, LockKeyhole, User, UserPlus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getErrorMessage } from '../api/request';
 import authApi from '../api/auth';
@@ -14,6 +14,9 @@ type Mode = 'login' | 'register';
 const inputClass =
   'w-full pl-10 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-white outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 dark:focus:ring-primary-900/40 transition';
 
+/** 右侧要放"显示/隐藏密码"按钮时，把右边距让出来，避免文字压到按钮上 */
+const inputClassWithEye = inputClass.replace('pr-3', 'pr-10');
+
 export default function LoginPage() {
   const { login, user } = useAuth();
   const navigate = useNavigate();
@@ -23,6 +26,8 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -39,6 +44,8 @@ export default function LoginPage() {
     setNotice('');
     setPassword('');
     setConfirmPassword('');
+    setShowPassword(false);
+    setShowConfirmPassword(false);
   };
 
   const handleLogin = async (event: FormEvent) => {
@@ -128,13 +135,25 @@ export default function LoginPage() {
           <div className={`relative ${isRegister ? 'mb-4' : 'mb-5'}`}>
             <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete={isRegister ? 'new-password' : 'current-password'}
-              className={inputClass}
+              className={inputClassWithEye}
               placeholder={isRegister ? '至少 8 位' : '请输入密码'}
             />
+            {/* 有内容就一直显示（浏览器自带的那个会在失焦后消失，已在 index.css 里隐藏） */}
+            {password.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowPassword(value => !value)}
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                title={showPassword ? '隐藏密码' : '显示密码'}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            )}
           </div>
 
           {/* 注册要输两遍密码：本地比对一致才提交 */}
@@ -146,16 +165,27 @@ export default function LoginPage() {
               <div className="relative mb-5">
                 <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
-                  type="password"
+                  type={showConfirmPassword ? 'text' : 'password'}
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
                   autoComplete="new-password"
                   aria-invalid={passwordMismatch}
-                  className={`${inputClass} ${
+                  className={`${inputClassWithEye} ${
                     passwordMismatch ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100' : ''
                   }`}
                   placeholder="请再输入一遍密码"
                 />
+                {confirmPassword.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(value => !value)}
+                    aria-label={showConfirmPassword ? '隐藏密码' : '显示密码'}
+                    title={showConfirmPassword ? '隐藏密码' : '显示密码'}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                )}
               </div>
               {passwordMismatch && (
                 <p className="-mt-3 mb-4 text-xs text-rose-500">两次输入的密码不一致</p>

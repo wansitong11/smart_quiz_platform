@@ -5,6 +5,15 @@
 /* 启用深色模式 - 使用 class 策略 */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * 浏览器自带的密码"小眼睛"（Edge/IE 的 ::-ms-reveal）只在该输入框聚焦时出现、失焦就消失，
+ * 和页面里的眼睛按钮会打架，统一隐藏，改用页面自己的按钮（有内容时常显）。
+ */
+input[type='password']::-ms-reveal,
+input[type='password']::-ms-clear {
+  display: none;
+}
+
 
 /* 自定义主题 */
 @theme {

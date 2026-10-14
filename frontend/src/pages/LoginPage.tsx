@@ -22,6 +22,7 @@ export default function LoginPage() {
   const [mode, setMode] = useState<Mode>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -37,6 +38,7 @@ export default function LoginPage() {
     setError('');
     setNotice('');
     setPassword('');
+    setConfirmPassword('');
   };
 
   const handleLogin = async (event: FormEvent) => {
@@ -63,6 +65,10 @@ export default function LoginPage() {
     }
     setError('');
     setNotice('');
+    if (password !== confirmPassword) {
+      setError('两次输入的密码不一致，请重新确认');
+      return;
+    }
     setSubmitting(true);
     try {
       const result = await authApi.register({ username: username.trim(), password });
@@ -79,7 +85,10 @@ export default function LoginPage() {
   };
 
   const isRegister = mode === 'register';
-  const canSubmit = Boolean(username.trim()) && password.length >= (isRegister ? 8 : 1);
+  const passwordMismatch = isRegister && confirmPassword.length > 0 && password !== confirmPassword;
+  const canSubmit = Boolean(username.trim())
+    && password.length >= (isRegister ? 8 : 1)
+    && (!isRegister || (confirmPassword.length > 0 && password === confirmPassword));
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-indigo-50 dark:from-slate-900 dark:to-slate-800 px-4">
@@ -116,7 +125,7 @@ export default function LoginPage() {
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1.5">
             密码
           </label>
-          <div className="relative mb-5">
+          <div className={`relative ${isRegister ? 'mb-4' : 'mb-5'}`}>
             <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="password"
@@ -127,6 +136,32 @@ export default function LoginPage() {
               placeholder={isRegister ? '至少 8 位' : '请输入密码'}
             />
           </div>
+
+          {/* 注册要输两遍密码：本地比对一致才提交 */}
+          {isRegister && (
+            <>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1.5">
+                确认密码
+              </label>
+              <div className="relative mb-5">
+                <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  autoComplete="new-password"
+                  aria-invalid={passwordMismatch}
+                  className={`${inputClass} ${
+                    passwordMismatch ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100' : ''
+                  }`}
+                  placeholder="请再输入一遍密码"
+                />
+              </div>
+              {passwordMismatch && (
+                <p className="-mt-3 mb-4 text-xs text-rose-500">两次输入的密码不一致</p>
+              )}
+            </>
+          )}
 
           {notice && (
             <div className="mb-4 px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300 text-sm">

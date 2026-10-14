@@ -39,6 +39,15 @@ public class UserRegistrationService {
   @Transactional
   public UserEntity createUser(String username, String rawPassword, String displayName,
       String email, Set<String> roleCodes) {
+    return createUser(username, rawPassword, displayName, email, roleCodes, null);
+  }
+
+  /**
+   * 创建账号（带自助注册来源 IP；管理员建号传 null）。
+   */
+  @Transactional
+  public UserEntity createUser(String username, String rawPassword, String displayName,
+      String email, Set<String> roleCodes, String registeredIp) {
     if (userRepository.existsByUsername(username)) {
       throw new BusinessException(ErrorCode.AUTH_USERNAME_EXISTS, "用户名已存在");
     }
@@ -51,6 +60,7 @@ public class UserRegistrationService {
     user.setStatus(UserStatus.ACTIVE);
     user.setTokenVersion(0);
     user.setCreatedAt(LocalDateTime.now());
+    user.setRegisteredIp(registeredIp);
     user.setRoles(resolveRoles(roleCodes));
 
     try {

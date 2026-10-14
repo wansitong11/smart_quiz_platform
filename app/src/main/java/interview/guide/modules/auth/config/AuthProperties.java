@@ -63,6 +63,12 @@ public class AuthProperties {
    */
   private boolean registrationEnabled = true;
 
+  /** 同一来源 IP 24 小时内最多成功注册几个账号（0 或负数表示不限制） */
+  private int registerMaxPerIpPerDay = 3;
+
+  /** 全站每天最多成功自助注册几个账号（0 或负数表示不限制） */
+  private int registerMaxGlobalPerDay = 5;
+
   public long accessTokenTtlSeconds() {
     return accessTokenTtl.toSeconds();
   }

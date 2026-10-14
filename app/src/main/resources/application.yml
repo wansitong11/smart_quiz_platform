@@ -126,6 +126,9 @@ app:
     login-rate-limit-per-minute: ${APP_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE:10}
     # 是否开放自助注册；只给少数人用时建议置 false，改为管理员建号
     registration-enabled: ${APP_AUTH_REGISTRATION_ENABLED:true}
+    # 自助注册配额：同一来源 IP 24 小时内最多 N 个、全站每天最多 M 个（0 或负数=不限制）
+    register-max-per-ip-per-day: ${APP_AUTH_REGISTER_MAX_PER_IP_PER_DAY:3}
+    register-max-global-per-day: ${APP_AUTH_REGISTER_MAX_GLOBAL_PER_DAY:5}
 
   ai:
     default-provider: dashscope

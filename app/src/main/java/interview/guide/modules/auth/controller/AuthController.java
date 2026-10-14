@@ -42,8 +42,10 @@ public class AuthController {
   @PostMapping("/register")
   @RateLimit(dimension = RateLimit.Dimension.IP, count = 5, interval = 1, timeUnit = RateLimit.TimeUnit.HOURS)
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 50, interval = 1, timeUnit = RateLimit.TimeUnit.HOURS)
-  public Result<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
-    String username = authService.register(request.username(), request.password());
+  public Result<RegisterResponse> register(@Valid @RequestBody RegisterRequest request,
+      HttpServletRequest httpRequest) {
+    String username = authService.register(request.username(), request.password(),
+        ClientIpResolver.resolve(httpRequest));
     return Result.success("注册成功，请登录", new RegisterResponse(username));
   }
 

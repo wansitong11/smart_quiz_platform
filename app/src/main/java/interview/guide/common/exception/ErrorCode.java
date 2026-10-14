@@ -103,7 +103,10 @@ public enum ErrorCode {
     AUTH_ROLE_NOT_FOUND(12010, "角色不存在"),
     AUTH_OLD_PASSWORD_MISMATCH(12011, "原密码不正确"),
     AUTH_CANNOT_DISABLE_SELF(12012, "不能禁用当前登录账号"),
-    AUTH_REGISTRATION_DISABLED(12013, "当前未开放注册，请联系管理员开通账号");
+    AUTH_REGISTRATION_DISABLED(12013, "当前未开放注册，请联系管理员开通账号"),
+
+    /** 注册配额用尽（同一网络 24 小时内上限 / 全站每日上限） */
+    AUTH_REGISTRATION_LIMITED(12014, "注册名额已用完");
 
     private final Integer code;
     private final String message;

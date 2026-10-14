@@ -13,6 +13,7 @@ import interview.guide.modules.auth.security.CurrentUserHolder;
 import interview.guide.modules.auth.security.JwtTokenService;
 import interview.guide.modules.auth.security.TokenRevocationService;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -49,10 +50,11 @@ public class AuthService {
    * @return 标准化后的用户名
    */
   @Transactional
-  public String register(String username, String rawPassword) {
+  public String register(String username, String rawPassword, String clientIp) {
     if (!authProperties.isRegistrationEnabled()) {
       throw new BusinessException(ErrorCode.AUTH_REGISTRATION_DISABLED, "当前未开放注册，请联系管理员开通账号");
     }
+    assertRegistrationQuota(clientIp);
 
     String normalized = username.trim();
     UserEntity user = userRegistrationService.createUser(
@@ -60,9 +62,37 @@ public class AuthService {
         rawPassword,
         normalized,
         null,
-        UserRegistrationService.SELF_REGISTER_ROLES);
-    log.info("自助注册成功: username={}", user.getUsername());
+        UserRegistrationService.SELF_REGISTER_ROLES,
+        clientIp);
+    log.info("自助注册成功: username={}, ip={}", user.getUsername(), clientIp);
     return user.getUsername();
+  }
+
+  /**
+   * 自助注册配额：同一来源 IP 24 小时内上限 + 全站每日上限。
+   *
+   * <p>只统计「成功注册」的账号（管理员建号不计入，因为它不写 registeredIp），
+   * 请求频率那一层由 {@code @RateLimit} 单独兜着。
+   */
+  private void assertRegistrationQuota(String clientIp) {
+    int perIpLimit = authProperties.getRegisterMaxPerIpPerDay();
+    if (perIpLimit > 0 && clientIp != null && !clientIp.isBlank()) {
+      long usedByIp = userRepository.countSelfRegisteredByIpSince(
+          clientIp, LocalDateTime.now().minusHours(24));
+      if (usedByIp >= perIpLimit) {
+        throw new BusinessException(ErrorCode.AUTH_REGISTRATION_LIMITED,
+            "同一网络 24 小时内最多注册 " + perIpLimit + " 个账号，请稍后再试或联系管理员开通");
+      }
+    }
+
+    int globalLimit = authProperties.getRegisterMaxGlobalPerDay();
+    if (globalLimit > 0) {
+      long usedToday = userRepository.countSelfRegisteredSince(LocalDate.now().atStartOfDay());
+      if (usedToday >= globalLimit) {
+        throw new BusinessException(ErrorCode.AUTH_REGISTRATION_LIMITED,
+            "今日注册名额已用完（每天 " + globalLimit + " 个），请明天再试或联系管理员开通");
+      }
+    }
   }
 
   @Transactional

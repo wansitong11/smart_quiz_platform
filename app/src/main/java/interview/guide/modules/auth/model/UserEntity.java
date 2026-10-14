@@ -58,6 +58,10 @@ public class UserEntity {
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
 
+    /** 自助注册的来源 IP（管理员建号为 null）；用于按 IP 的注册配额与事后排查 */
+    @Column(name = "registered_ip", length = 64)
+    private String registeredIp;
+
   @Column(name = "updated_at")
   private LocalDateTime updatedAt;
 

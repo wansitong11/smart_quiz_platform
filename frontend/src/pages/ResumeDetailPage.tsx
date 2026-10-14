@@ -120,7 +120,7 @@ export default function ResumeDetailPage({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `简历分析报告_${resume?.filename || resumeId}.pdf`;
+      a.download = `试卷解析报告_${resume?.filename || resumeId}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject, ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   AlertCircle,
@@ -10,7 +10,6 @@ import {
   Loader2,
   RotateCcw,
   Send,
-  Upload,
 } from 'lucide-react';
 import { resumeApi } from '../api/resume';
 import { historyApi, type InterviewDetail, type ResumeDetail } from '../api/history';
@@ -26,6 +25,8 @@ import { buildQuestionGroups, groupProgress, sectionTitlesOf } from '../utils/pa
 import type { PaperTree } from '../types/interview';
 import { summarizeCategories, summarizePaperScore } from '../utils/paperScore';
 import type { InterviewQuestion } from '../types/interview';
+import UploadPage from './UploadPage';
+import { ROUTES } from '../constants/routes';
 
 type Stage = 'upload' | 'extracting' | 'ready' | 'practice' | 'grading' | 'report';
 
@@ -46,6 +47,7 @@ interface ReportQuestionLike {
  * - `?session=xxx` 练习已生成，恢复作答或查看报告
  */
 export default function PaperAnalysisPage() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [stage, setStage] = useState<Stage>('upload');
   const [paperDetail, setPaperDetail] = useState<ResumeDetail | null>(null);
@@ -54,7 +56,6 @@ export default function PaperAnalysisPage() {
   const [paperTree, setPaperTree] = useState<PaperTree | null>(null);
   const [answers, setAnswers] = useState<Record<number, AnswerValue>>({});
   const [report, setReport] = useState<InterviewDetail | null>(null);
-  const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const questionRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -186,25 +187,6 @@ export default function PaperAnalysisPage() {
 
   // ==================== 交互 ====================
 
-  const handleUpload = async (file: File) => {
-    setUploading(true);
-    setError('');
-    try {
-      const result = await resumeApi.uploadAndAnalyze(file);
-      const id = result.resume?.id ?? result.storage?.resumeId;
-      if (!id) {
-        throw new Error('上传成功但未返回材料 ID');
-      }
-      setSearchParams({ paper: String(id) });
-      setStage('extracting');
-      await loadPaper(id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '上传失败');
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const handleReanalyze = async () => {
     if (!paperId) return;
     setError('');
@@ -328,7 +310,13 @@ export default function PaperAnalysisPage() {
       )}
 
       {stage === 'upload' && (
-        <UploadPanel uploading={uploading} onUpload={handleUpload} />
+        /* 上传界面与「试卷管理 → 上传试卷」共用同一个组件（批量上传 + 逐个异步切题），
+           切完可以直接点「开始作答」进入下面的作答流程 */
+        <UploadPage
+          embedded
+          onBack={() => navigate(ROUTES.resumeHistory)}
+          onOpenPaper={id => setSearchParams({ paper: String(id) })}
+        />
       )}
 
       {stage === 'extracting' && (
@@ -398,45 +386,6 @@ function StageCard({ icon, title, description }: {
       </div>
       <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-2">{title}</h3>
       <p className="text-sm text-slate-500 dark:text-slate-400">{description}</p>
-    </div>
-  );
-}
-
-function UploadPanel({ uploading, onUpload }: {
-  uploading: boolean;
-  onUpload: (file: File) => void;
-}) {
-  const inputId = 'paper-upload-input';
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-2xl p-8">
-      <label
-        htmlFor={inputId}
-        className="block border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-2xl p-12 text-center cursor-pointer hover:border-primary-400 hover:bg-primary-50/40 dark:hover:bg-primary-900/10 transition-colors"
-      >
-        {uploading ? (
-          <Loader2 className="w-10 h-10 mx-auto mb-4 text-primary-500 animate-spin" />
-        ) : (
-          <Upload className="w-10 h-10 mx-auto mb-4 text-slate-400" />
-        )}
-        <p className="text-base font-medium text-slate-700 dark:text-slate-200 mb-2">
-          {uploading ? '正在上传...' : '点击选择试卷 / 练习材料'}
-        </p>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          支持有文字层的 PDF、Word、txt —— 扫描件与拍照暂不支持
-        </p>
-      </label>
-      <input
-        id={inputId}
-        type="file"
-        className="hidden"
-        accept=".pdf,.doc,.docx,.txt"
-        disabled={uploading}
-        onChange={event => {
-          const file = event.target.files?.[0];
-          if (file) onUpload(file);
-          event.target.value = '';
-        }}
-      />
     </div>
   );
 }

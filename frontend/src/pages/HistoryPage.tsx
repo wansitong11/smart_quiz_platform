@@ -292,7 +292,7 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
       <DeleteConfirmDialog
         open={deleteConfirm !== null}
         item={deleteConfirm}
-        itemType="简历"
+        itemType="试卷"
         loading={deletingId !== null}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteConfirm(null)}

@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   canRetryUpload,
   KNOWLEDGE_BASE_FILE_POLICY,
-  RESUME_FILE_POLICY,
+  PAPER_FILE_POLICY,
   getFileIdentity,
   MAX_BATCH_FILES,
   MAX_CONCURRENT_UPLOADS,
@@ -103,8 +103,8 @@ test('上传和向量化状态、生产限制保持独立', () => {
 
 
 test('简历复用同一校验器，但保留 10MB 和自身格式限制', () => {
-  assert.equal(validateUploadFile(file('resume.pdf', 10 * 1024 * 1024), RESUME_FILE_POLICY), null);
-  assert.equal(validateUploadFile(file('resume.pdf', 10 * 1024 * 1024 + 1), RESUME_FILE_POLICY), '文件超过 10MB');
-  assert.equal(validateUploadFile(file('resume.md'), RESUME_FILE_POLICY), '仅支持 PDF、DOCX、DOC、TXT');
-  assert.equal(validateUploadFile(file('resume.doc'), RESUME_FILE_POLICY), null);
+  assert.equal(validateUploadFile(file('resume.pdf', 10 * 1024 * 1024), PAPER_FILE_POLICY), null);
+  assert.equal(validateUploadFile(file('resume.pdf', 10 * 1024 * 1024 + 1), PAPER_FILE_POLICY), '文件超过 10MB');
+  assert.equal(validateUploadFile(file('resume.md'), PAPER_FILE_POLICY), '仅支持 PDF、DOCX、DOC、TXT');
+  assert.equal(validateUploadFile(file('resume.doc'), PAPER_FILE_POLICY), null);
 });

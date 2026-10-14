@@ -370,7 +370,7 @@ export default function UnifiedInterviewModal({
                         <div className="flex items-center gap-3 mb-3">
                           <FileStack className="w-5 h-5 text-primary-500" />
                           <p className="font-semibold text-sm text-primary-900 dark:text-primary-100">
-                            基于简历面试（可选）
+                            基于试卷面试（可选）
                           </p>
                         </div>
                         <select
@@ -380,7 +380,7 @@ export default function UnifiedInterviewModal({
                             bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white
                             focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-shadow"
                         >
-                          <option value="">不使用简历（通用提问）</option>
+                          <option value="">不使用试卷（通用提问）</option>
                           {config.resumes.map(r => (
                             <option key={r.id} value={r.id}>{r.filename}</option>
                           ))}

@@ -40,13 +40,14 @@ export function createKnowledgeBaseUploadAdapter(
 export const knowledgeBaseUploadAdapter: BatchUploadAdapter =
   createKnowledgeBaseUploadAdapter();
 
-export const resumeUploadAdapter: BatchUploadAdapter = {
-  processLabel: '分析',
+/** 试卷 / 练习材料的上传适配器（页面、试卷管理、试卷分析共用同一套批量上传逻辑） */
+export const paperUploadAdapter: BatchUploadAdapter = {
+  processLabel: '切题',
   async upload(file) {
     const result = await resumeApi.uploadAndAnalyze(file);
     const id = result.resume?.id ?? result.storage?.resumeId;
-    if (!id) throw new Error('上传结果缺少简历 ID，请重试');
-    // 历史重复简历可能只返回 analysis + storage；有显式状态时以显式状态为准。
+    if (!id) throw new Error('上传结果缺少试卷 ID，请重试');
+    // 历史上重复上传的试卷可能只返回 analysis + storage；有显式状态时以显式状态为准。
     const status = normalizeProcessingStatus(result.resume?.analysisStatus,
       result.analysis ? 'COMPLETED' : 'PENDING');
     return {

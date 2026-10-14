@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ArrowRight,
   CheckCircle2,
   Clock3,
   FileText,
@@ -24,6 +25,9 @@ interface BatchUploadListProps {
   onRemove: (clientId: string) => void;
   onRetryUpload: (clientId: string) => void;
   onRetryProcessing: (clientId: string) => void;
+  /** 处理完成（切题成功）后给一个跳转入口，如「开始作答」；不传则不显示 */
+  onOpenProcessed?: (entityId: number) => void;
+  openLabel?: string;
 }
 
 function formatFileSize(bytes: number): string {
@@ -100,6 +104,8 @@ export default function BatchUploadList({
   onRemove,
   onRetryUpload,
   onRetryProcessing,
+  onOpenProcessed,
+  openLabel,
 }: BatchUploadListProps) {
   if (items.length === 0) return null;
 
@@ -185,6 +191,16 @@ export default function BatchUploadList({
                       <RefreshCw className={`h-4 w-4 ${
                         retryingProcessId === item.entityId ? 'animate-spin' : ''
                       }`} />
+                    </button>
+                  )}
+                  {item.status === 'COMPLETED' && item.entityId && onOpenProcessed && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenProcessed(item.entityId as number)}
+                      className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg border border-primary-200 px-3 py-1.5 text-xs font-medium text-primary-600 transition hover:bg-primary-50 dark:border-primary-800 dark:text-primary-400 dark:hover:bg-primary-900/20"
+                    >
+                      <ArrowRight className="h-3.5 w-3.5" />
+                      {openLabel ?? '开始作答'}
                     </button>
                   )}
                   {canEdit && (

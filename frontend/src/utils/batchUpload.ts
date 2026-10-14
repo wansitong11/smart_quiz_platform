@@ -12,7 +12,8 @@ export const KNOWLEDGE_BASE_FILE_POLICY: FileUploadPolicy = {
   maxSizeLabel: '50MB',
   formatLabel: 'PDF、DOCX、DOC、TXT、MD',
 };
-export const RESUME_FILE_POLICY: FileUploadPolicy = {
+/** 试卷 / 练习材料的文件策略（与后端 PaperProperties 的限制保持一致） */
+export const PAPER_FILE_POLICY: FileUploadPolicy = {
   extensions: ['pdf', 'doc', 'docx', 'txt'],
   maxFileSize: 10 * 1024 * 1024,
   maxSizeLabel: '10MB',

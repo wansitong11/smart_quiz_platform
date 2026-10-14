@@ -16,16 +16,22 @@ interface BatchUploadPageProps {
   onBack: () => void;
   /** 上传前需要先确认的上下文（如「导入到哪个分类」），展示在标题下方 */
   contextSlot?: ReactNode;
+  /** 嵌在其它页面里时用：去掉外层留白（标题仍保留，作为区块标题） */
+  embedded?: boolean;
+  /** 处理完成后可跳转（如「开始作答」）；不传则不显示该入口 */
+  onOpenProcessed?: (entityId: number) => void;
+  openLabel?: string;
 }
 
 export default function BatchUploadPage({
   entityLabel, policy, adapter, customNamePlaceholder, backLabel, onBack, contextSlot,
+  embedded = false, onOpenProcessed, openLabel,
 }: BatchUploadPageProps) {
   const batchUpload = useBatchUpload(adapter, policy);
   const processLabel = adapter.processLabel;
 
   return (
-    <div className="mx-auto max-w-5xl pb-16 pt-10">
+    <div className={embedded ? 'mx-auto max-w-5xl' : 'mx-auto max-w-5xl pb-16 pt-10'}>
       <div className="mb-8 text-center">
         <h1 className="mb-3 text-4xl font-bold tracking-tight text-slate-900 dark:text-white">
           批量上传{entityLabel}
@@ -65,6 +71,8 @@ export default function BatchUploadPage({
         onRemove={batchUpload.removeItem}
         onRetryUpload={batchUpload.retryUpload}
         onRetryProcessing={clientId => void batchUpload.retryProcessing(clientId)}
+        onOpenProcessed={onOpenProcessed}
+        openLabel={openLabel}
       />
 
       <div className="mt-8 flex flex-wrap justify-center gap-4">

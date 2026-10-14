@@ -1,9 +1,12 @@
-# Dependencies (will be installed inside container)
-node_modules
+# 注意：现在的前端镜像是「本地 pnpm build 出 dist，容器只 COPY」的模式
+# （见 frontend/Dockerfile 与 deploy/docker-compose.server.yml）。
+# 所以 **dist 必须参与构建，不能再忽略** —— 之前这里写着 dist，
+# 结果本地/CI 用 context: frontend 构建时报 "/dist": not found。
 
-# Build output (will be generated inside container)
-dist
+# 依赖与构建缓存不需要进镜像
+node_modules
 build
+.pnpm-store
 
 # Development files
 .env.local

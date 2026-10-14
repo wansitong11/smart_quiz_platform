@@ -47,7 +47,10 @@ const Loading = () => (
 function UploadPageWrapper() {
   const navigate = useNavigate();
 
-  return <UploadPage onBack={() => navigate(ROUTES.resumeHistory)} />;
+  return <UploadPage
+    onBack={() => navigate(ROUTES.resumeHistory)}
+    onOpenPaper={id => navigate(`${ROUTES.paperAnalysis}?paper=${id}`)}
+  />;
 }
 
 // 模拟测验包装器：作答与报告共用同一个页面组件，用 mode 区分

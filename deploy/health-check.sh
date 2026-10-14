@@ -56,11 +56,16 @@ done < <(docker stats --no-stream --format '{{.Name}}|{{.MemPerc}}' 2>/dev/null)
 # 3) postgres 是否又崩了（统计日志里 reinitializing 的次数，与上次比较）
 restarts=$(docker logs smart-quiz-postgres 2>&1 | grep -c "all server processes terminated")
 restarts=${restarts:-0}
-prev=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
-echo "$restarts" > "$STATE_FILE"
-if [ "$restarts" -gt "$prev" ]; then
-  alerts+=("postgres 又重建了集群：累计 ${restarts} 次（上次巡检 ${prev} 次）——查 docker logs smart-quiz-postgres 里的 broken pipe / connection reset")
+if [ -f "$STATE_FILE" ]; then
+  prev=$(cat "$STATE_FILE" 2>/dev/null || echo "$restarts")
+  if [ "$restarts" -gt "$prev" ]; then
+    alerts+=("postgres 又重建了集群：累计 ${restarts} 次（上次巡检 ${prev} 次）——查 docker logs smart-quiz-postgres 里的 broken pipe / connection reset")
+  fi
+else
+  # 首次运行只记录基线，不告警（否则会把历史次数当成新发生的）
+  echo "首次运行：记录 postgres 重建次数基线 = ${restarts}"
 fi
+echo "$restarts" > "$STATE_FILE"
 
 # 4) load
 load1=$(awk '{print $1}' /proc/loadavg)

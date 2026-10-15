@@ -4,11 +4,13 @@
 #   1. app / frontend 改用「只复制产物」的运行时镜像，服务器上不跑 Gradle 和 pnpm；
 #   2. 给每个容器设硬内存上限，让 OOM 发生在容器自己的 cgroup 里，
 #      不触发整机 OOM 影响同机其他服务；
-#   3. JVM 参数留出真实余量（2026-10-14 事故复盘后调整）：
-#      旧值 -Xmx384m + Metaspace192m + Direct64m ≈ 640MB，而容器上限只有 700MB，
-#      正常态就用掉 570~590MB，随便多要几十 MB 就顶到 cgroup 上限触发内核回收抖动；
-#      现在把上限抬到 900m、堆抬到 512m，并把 SerialGC（单线程，压力下缓不过来）
-#      换成 ParallelGC，同时给连接池加保活，减少"客户端硬断连接 → postgres 后端崩"。
+#   3. 内存配额（2026-10-15 第二次事故复盘后重排）：
+#      事故原因：容器 mem_limit 之和 1700MB > 机器实际可用内存 1613MB
+#      （2GB 机器被 kdump 预留 256MB + 固件预留 ~130MB），于是宿主机先 OOM，
+#      内核直接杀掉 app 的 java（613MB），随后整机僵死 3 小时。
+#      现在把限额之和压到 1440MB（留给系统 + 页缓存约 400MB）：
+#        app 832 + postgres 224 + rustfs 176 + redis 80 + frontend 48 + gateway 48 + certbot 32
+#      app 的 JVM 上限之和 688MB（Xmx448 + Metaspace192 + Direct48）< 832m，留 ~140MB 余量。
 # 用法：
 #   docker compose -f docker-compose.prod.yml -f deploy/docker-compose.server.yml \
 #     --env-file deploy/env.prod up -d --build
@@ -22,11 +24,11 @@ services:
     build:
       context: .
       dockerfile: deploy/server/Dockerfile.app
-    mem_limit: 900m
+    mem_limit: 832m
     environment:
       JAVA_TOOL_OPTIONS: >-
-        -Xmx512m -XX:MaxMetaspaceSize=192m -XX:+UseParallelGC -XX:ActiveProcessorCount=2
-        -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError
+        -Xmx448m -XX:MaxMetaspaceSize=192m -XX:+UseParallelGC -XX:ActiveProcessorCount=2
+        -XX:MaxDirectMemorySize=48m -XX:+ExitOnOutOfMemoryError
         -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8
       # 连接池保活与超时：避免连接被静默掐断后 postgres 后端异常退出
       SPRING_DATASOURCE_HIKARI_KEEPALIVE_TIME: "120000"
@@ -41,9 +43,9 @@ services:
       # 与 CI（context: frontend / file: frontend/Dockerfile）保持一致
       context: ./frontend
       dockerfile: Dockerfile
-    mem_limit: 64m
+    mem_limit: 48m
   postgres:
-    mem_limit: 256m
+    mem_limit: 224m
     # 只绑回环：方便通过 SSH 隧道接 GUI 客户端（DBeaver/Navicat）查看数据。
     # 绑的是 127.0.0.1，公网依然完全访问不到。
     ports:
@@ -65,17 +67,17 @@ services:
       - -c
       - min_wal_size=80MB
   redis:
-    mem_limit: 96m
+    mem_limit: 80m
     ports:
       - "127.0.0.1:6379:6379"
   rustfs:
-    mem_limit: 256m
+    mem_limit: 176m
     # 打开存储控制台（仅回环），配合 SSH 隧道可在浏览器里浏览对象
     environment:
       RUSTFS_CONSOLE_ENABLE: "true"
     ports:
       - "127.0.0.1:9001:9001"
   gateway:
-    mem_limit: 64m
+    mem_limit: 48m
   certbot:
-    mem_limit: 64m
+    mem_limit: 32m

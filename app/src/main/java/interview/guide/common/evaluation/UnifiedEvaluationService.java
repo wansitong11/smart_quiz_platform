@@ -144,7 +144,7 @@ public class UnifiedEvaluationService {
         List<String> fallbackStrengths = mergeListItems(batchResults, true);
         List<String> fallbackImprovements = mergeListItems(batchResults, false);
 
-        // 二次汇总
+        // 二次汇总评语评估，防止评语割裂
         SummaryDTO summary = summarizeBatchResults(
             chatClient, sessionId, resumeContext, referenceBaseline, qaRecords,
             mergedEvaluations, fallbackFeedback, fallbackStrengths, fallbackImprovements

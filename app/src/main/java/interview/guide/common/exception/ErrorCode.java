@@ -33,6 +33,7 @@ public enum ErrorCode {
     PAPER_EXTRACTION_FAILED(2012, "试卷切题失败"),
     PAPER_EXTRACTION_NOT_FOUND(2013, "试卷解析结果不存在"),
     PAPER_NO_QUESTION_FOUND(2014, "未从材料中识别到题目"),
+    PAPER_RECOGNITION_FAILED(2015, "试卷图片识别失败"),
     
     // ========== 面试模块错误 3xxx ==========
     INTERVIEW_SESSION_NOT_FOUND(3001, "面试会话不存在"),
@@ -89,6 +90,7 @@ public enum ErrorCode {
     VOICE_CONFIG_READ_FAILED(11009, "读取语音服务配置失败"),
     VOICE_CONFIG_WRITE_FAILED(11010, "写入语音服务配置失败"),
     VOICE_CONFIG_TEST_FAILED(11011, "语音服务连通性测试失败"),
+    VISION_PROVIDER_NOT_CONFIGURED(11012, "识图模型未配置或不可用"),
 
     // ========== 认证与权限模块错误 12xxx ==========
     AUTH_INVALID_CREDENTIALS(12001, "用户名或密码错误"),

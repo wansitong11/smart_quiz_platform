@@ -11,7 +11,9 @@ public record ProviderDTO(
     String embeddingModel,
     Integer embeddingDimensions,
     boolean supportsEmbedding,
+    boolean supportsVision,
     Double temperature,
     boolean defaultChatProvider,
-    boolean defaultEmbeddingProvider
+    boolean defaultEmbeddingProvider,
+    boolean defaultVisionProvider
 ) {}

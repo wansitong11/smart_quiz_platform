@@ -31,6 +31,10 @@ public class LlmGlobalSettingEntity {
   @Column(name = "default_embedding_provider_id", nullable = false, length = 64)
   private String defaultEmbeddingProviderId;
 
+  /** 识图默认 Provider；为空表示沿用 yml 的 app.ai.default-vision-provider。 */
+  @Column(name = "default_vision_provider_id", length = 64)
+  private String defaultVisionProviderId;
+
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
 

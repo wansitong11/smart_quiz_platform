@@ -154,9 +154,11 @@ public class LlmProviderConfigService {
                 .embeddingDimensions(resolveEmbeddingDimensions(e.getValue().getEmbeddingDimensions()))
                 .supportsEmbedding(Boolean.TRUE.equals(e.getValue().getSupportsEmbedding())
                     || trimOrNull(e.getValue().getEmbeddingModel()) != null)
+                .supportsVision(Boolean.TRUE.equals(e.getValue().getSupportsVision()))
                 .temperature(e.getValue().getTemperature())
                 .defaultChatProvider(e.getKey().equals(properties.getDefaultProvider()))
                 .defaultEmbeddingProvider(e.getKey().equals(properties.getDefaultEmbeddingProvider()))
+                .defaultVisionProvider(e.getKey().equals(properties.getDefaultVisionProvider()))
                 .build())
             .toList();
       }
@@ -170,9 +172,11 @@ public class LlmProviderConfigService {
               .embeddingModel(provider.getEmbeddingModel())
               .embeddingDimensions(resolveEmbeddingDimensions(provider.getEmbeddingDimensions()))
               .supportsEmbedding(provider.isSupportsEmbedding())
+              .supportsVision(provider.isSupportsVision())
               .temperature(provider.getTemperature())
               .defaultChatProvider(provider.getId().equals(setting.getDefaultChatProviderId()))
               .defaultEmbeddingProvider(provider.getId().equals(setting.getDefaultEmbeddingProviderId()))
+              .defaultVisionProvider(provider.getId().equals(setting.getDefaultVisionProviderId()))
               .build())
           .toList();
     } finally {
@@ -194,9 +198,11 @@ public class LlmProviderConfigService {
             .embeddingDimensions(resolveEmbeddingDimensions(config.getEmbeddingDimensions()))
             .supportsEmbedding(Boolean.TRUE.equals(config.getSupportsEmbedding())
                 || trimOrNull(config.getEmbeddingModel()) != null)
+            .supportsVision(Boolean.TRUE.equals(config.getSupportsVision()))
             .temperature(config.getTemperature())
             .defaultChatProvider(id.equals(properties.getDefaultProvider()))
             .defaultEmbeddingProvider(id.equals(properties.getDefaultEmbeddingProvider()))
+            .defaultVisionProvider(id.equals(properties.getDefaultVisionProvider()))
             .build();
       }
       LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
@@ -209,9 +215,11 @@ public class LlmProviderConfigService {
           .embeddingModel(provider.getEmbeddingModel())
           .embeddingDimensions(resolveEmbeddingDimensions(provider.getEmbeddingDimensions()))
           .supportsEmbedding(provider.isSupportsEmbedding())
+          .supportsVision(provider.isSupportsVision())
           .temperature(provider.getTemperature())
           .defaultChatProvider(id.equals(setting.getDefaultChatProviderId()))
           .defaultEmbeddingProvider(id.equals(setting.getDefaultEmbeddingProviderId()))
+          .defaultVisionProvider(id.equals(setting.getDefaultVisionProviderId()))
           .build();
     } finally {
       rwLock.readLock().unlock();
@@ -222,12 +230,14 @@ public class LlmProviderConfigService {
     rwLock.readLock().lock();
     try {
       if (!isDatabaseBacked()) {
-        return new DefaultProviderDTO(properties.getDefaultProvider(), properties.getDefaultEmbeddingProvider());
+        return new DefaultProviderDTO(properties.getDefaultProvider(),
+            properties.getDefaultEmbeddingProvider(), properties.getDefaultVisionProvider());
       }
       LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
       return new DefaultProviderDTO(
           setting.getDefaultChatProviderId(),
-          setting.getDefaultEmbeddingProviderId());
+          setting.getDefaultEmbeddingProviderId(),
+          setting.getDefaultVisionProviderId());
     } finally {
       rwLock.readLock().unlock();
     }
@@ -350,6 +360,7 @@ public class LlmProviderConfigService {
           .embeddingModel(embeddingModel)
           .embeddingDimensions(embeddingDimensions)
           .supportsEmbedding(supportsEmbedding)
+          .supportsVision(Boolean.TRUE.equals(request.supportsVision()))
           .temperature(request.temperature())
           .enabled(true)
           .builtin(false)
@@ -394,6 +405,9 @@ public class LlmProviderConfigService {
       }
       if (request.supportsEmbedding() != null) {
         provider.setSupportsEmbedding(request.supportsEmbedding());
+      }
+      if (request.supportsVision() != null) {
+        provider.setSupportsVision(request.supportsVision());
       }
       validateEmbeddingConfig(
           id,
@@ -487,6 +501,41 @@ public class LlmProviderConfigService {
       globalSettingRepository.save(setting);
       registry.reload();
       log.info("Updated default embedding provider: {}", providerId);
+    } finally {
+      rwLock.writeLock().unlock();
+    }
+  }
+
+  /**
+   * 设置默认识图 Provider：必须存在、启用，且标记为支持图片。
+   */
+  public void updateDefaultVisionProvider(DefaultProviderDTO request) {
+    rwLock.writeLock().lock();
+    try {
+      String providerId = trimOrNull(request.defaultVisionProvider());
+      if (providerId == null) {
+        throw new BusinessException(ErrorCode.BAD_REQUEST, "defaultVisionProvider 不能为空");
+      }
+      if (!isDatabaseBacked()) {
+        ProviderConfig config = getLegacyProviderConfigOrThrow(providerId);
+        if (!Boolean.TRUE.equals(config.getSupportsVision())) {
+          throw new BusinessException(ErrorCode.BAD_REQUEST,
+              "Provider '" + providerId + "' 未标记为支持图片输入");
+        }
+        properties.setDefaultVisionProvider(providerId);
+        registry.reload();
+        return;
+      }
+      LlmProviderEntity provider = getProviderEntityOrThrow(providerId);
+      if (!provider.isSupportsVision()) {
+        throw new BusinessException(ErrorCode.BAD_REQUEST,
+            "Provider '" + providerId + "' 未标记为支持图片输入，不能设为默认识图模型");
+      }
+      LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
+      setting.setDefaultVisionProviderId(providerId);
+      globalSettingRepository.save(setting);
+      registry.reload();
+      log.info("Updated default vision provider: {}", providerId);
     } finally {
       rwLock.writeLock().unlock();
     }
@@ -596,6 +645,9 @@ public class LlmProviderConfigService {
     config.setEmbeddingModel(request.embeddingModel());
     config.setEmbeddingDimensions(request.embeddingDimensions());
     config.setSupportsEmbedding(request.supportsEmbedding());
+    if (request.supportsVision() != null) {
+      config.setSupportsVision(request.supportsVision());
+    }
     config.setTemperature(request.temperature());
     providers.put(request.id(), config);
 
@@ -630,6 +682,9 @@ public class LlmProviderConfigService {
     }
     if (request.supportsEmbedding() != null) {
       config.setSupportsEmbedding(request.supportsEmbedding());
+    }
+    if (request.supportsVision() != null) {
+      config.setSupportsVision(request.supportsVision());
     }
     if (request.temperature() != null) {
       config.setTemperature(request.temperature());

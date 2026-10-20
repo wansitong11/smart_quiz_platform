@@ -9,5 +9,5 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "app.cors")
 public class CorsProperties {
 
-    private String allowedOrigins = "http://localhost:5173";
+    private String allowedOrigins = "http://localhost:3000,http://localhost:5173";
 }

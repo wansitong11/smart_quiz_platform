@@ -20,20 +20,34 @@ public final class ApiPathResolver {
   private ApiPathResolver() {}
 
   public static OpenAIClient buildOpenAiClient(String baseUrl, String apiKey) {
-    return buildOpenAiClient(baseUrl, apiKey, DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT);
+    return buildOpenAiClient(baseUrl, apiKey, DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT,
+        DEFAULT_READ_TIMEOUT);
   }
 
   public static OpenAIClient buildOpenAiClient(String baseUrl, String apiKey,
       int connectTimeout, int readTimeout) {
+    return buildOpenAiClient(baseUrl, apiKey, connectTimeout, readTimeout, readTimeout);
+  }
+
+  /**
+   * @param requestTimeout 整体调用超时（OkHttp callTimeout）。必须设置：HTTP/2 下仅有
+   *                       read 超时时，服务端持续 PING 但迟迟不返回响应头会让调用无限等待。
+   */
+  public static OpenAIClient buildOpenAiClient(String baseUrl, String apiKey,
+      int connectTimeout, int readTimeout, int requestTimeout) {
     Timeout timeout = Timeout.builder()
         .connect(Duration.ofMillis(connectTimeout))
         .read(Duration.ofMillis(readTimeout))
+        .write(Duration.ofMillis(readTimeout))
+        .request(Duration.ofMillis(requestTimeout))
         .build();
     ClientOptions options = ClientOptions.Companion.builder()
         .apiKey(apiKey)
         .credential(BearerTokenCredential.create(apiKey))
         .baseUrl(resolveVersionedBaseUrl(baseUrl))
         .timeout(timeout)
+        // 重试由 StructuredOutputInvoker 统一控制；SDK 内部再重试会让"单次超时"成倍放大
+        .maxRetries(0)
         .httpClient(SpringAiOpenAiHttpClient.builder().timeout(timeout).build())
         .build();
     return new OpenAIClientImpl(options);

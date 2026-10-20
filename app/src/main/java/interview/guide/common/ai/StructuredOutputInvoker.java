@@ -7,10 +7,12 @@ import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.log.ErrorLogSanitizer;
 import org.slf4j.Logger;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.content.Media;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
@@ -69,6 +71,61 @@ public class StructuredOutputInvoker {
         String logContext,
         Logger log
     ) {
+        return invoke(chatClient, systemPromptWithFormat, userPrompt, List.of(),
+            outputConverter, errorCode, errorPrefix, logContext, log);
+    }
+
+    /**
+     * 多模态重载：在 user 消息里附带图片等媒体（Spring AI {@code PromptUserSpec.media}）。
+     * <p>
+     * 重试时会把同一份媒体再发一次（图片 token 会重复计费），调用方需要自己限制重试次数。
+     * </p>
+     */
+    public <T> T invoke(
+        ChatClient chatClient,
+        String systemPromptWithFormat,
+        String userPrompt,
+        List<Media> media,
+        BeanOutputConverter<T> outputConverter,
+        ErrorCode errorCode,
+        String errorPrefix,
+        String logContext,
+        Logger log
+    ) {
+        return invoke(chatClient, systemPromptWithFormat, userPrompt, media, outputConverter,
+            errorCode, errorPrefix, logContext, log, true);
+    }
+
+    /**
+     * 不启用 Spring AI 的 JSON Schema 强校验：复杂嵌套 DTO 的可空字段会被 schema 生成器标成必填，
+     * 模型省略可选字段时会误判失败。调用方自己负责语义校验。
+     */
+    public <T> T invokeWithoutSchemaValidation(
+        ChatClient chatClient,
+        String systemPromptWithFormat,
+        String userPrompt,
+        BeanOutputConverter<T> outputConverter,
+        ErrorCode errorCode,
+        String errorPrefix,
+        String logContext,
+        Logger log
+    ) {
+        return invoke(chatClient, systemPromptWithFormat, userPrompt, List.of(), outputConverter,
+            errorCode, errorPrefix, logContext, log, false);
+    }
+
+    private <T> T invoke(
+        ChatClient chatClient,
+        String systemPromptWithFormat,
+        String userPrompt,
+        List<Media> media,
+        BeanOutputConverter<T> outputConverter,
+        ErrorCode errorCode,
+        String errorPrefix,
+        String logContext,
+        Logger log,
+        boolean validateSchema
+    ) {
         long startNanos = System.nanoTime();
         String contextTag = normalizeContextTag(logContext);
         String securedSystemPrompt = systemPromptWithFormat
@@ -80,7 +137,8 @@ public class StructuredOutputInvoker {
                 : buildRetrySystemPrompt(securedSystemPrompt, lastError);
             try {
                 T result = callStructuredOutput(
-                    chatClient, attemptSystemPrompt, userPrompt, outputConverter, logContext, log);
+                    chatClient, attemptSystemPrompt, userPrompt, media, outputConverter, logContext,
+                    log, validateSchema);
                 recordAttempt(contextTag, STATUS_SUCCESS);
                 recordInvocation(contextTag, STATUS_SUCCESS, startNanos);
                 return result;
@@ -110,15 +168,22 @@ public class StructuredOutputInvoker {
         ChatClient chatClient,
         String systemPrompt,
         String userPrompt,
+        List<Media> media,
         BeanOutputConverter<T> outputConverter,
         String logContext,
-        Logger log
+        Logger log,
+        boolean validateSchema
     ) {
         var call = chatClient.prompt()
             .system(systemPrompt)
-            .user(userPrompt)
+            .user(spec -> {
+                spec.text(userPrompt);
+                if (media != null && !media.isEmpty()) {
+                    spec.media(media.toArray(Media[]::new));
+                }
+            })
             .call();
-        if (schemaValidationEnabled) {
+        if (schemaValidationEnabled && validateSchema) {
             return call.entity(outputConverter, spec -> spec.validateSchema());
         }
         String content = call.content();

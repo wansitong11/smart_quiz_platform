@@ -45,6 +45,10 @@ public class LlmProviderEntity {
   @Column(name = "supports_embedding", nullable = false)
   private boolean supportsEmbedding;
 
+  /** 该 Provider 的模型能否接收图片（视觉模型）。 */
+  @Column(name = "supports_vision", nullable = false)
+  private boolean supportsVision;
+
   private Double temperature;
 
   @Column(nullable = false)

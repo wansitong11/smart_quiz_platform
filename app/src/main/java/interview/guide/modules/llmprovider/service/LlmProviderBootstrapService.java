@@ -26,11 +26,10 @@ public class LlmProviderBootstrapService {
   @PostConstruct
   @Transactional
   public void seedProvidersIfNecessary() {
-    if (providerRepository.count() == 0) {
-      seedProviders();
-    } else {
-      warnIfConfiguredModelDiffers();
-    }
+    // 只补 yml 中缺失的 Provider，已存在的行不覆盖（数据库仍是权威来源）。
+    // 这条是"新增视觉 Provider 后旧库无需手工建行"的落地方式。
+    seedProviders();
+    warnIfConfiguredModelDiffers();
     ensureGlobalSetting();
   }
 
@@ -67,9 +66,13 @@ public class LlmProviderBootstrapService {
       return;
     }
 
+    int[] added = {0};
     providers.forEach((id, config) -> {
       if (isBlank(id) || config == null || isBlank(config.getBaseUrl()) || isBlank(config.getModel())) {
         log.warn("Skip invalid provider seed: id={}", id);
+        return;
+      }
+      if (providerRepository.existsById(id)) {
         return;
       }
       ApiKeyEncryptionService.EncryptedValue encrypted =
@@ -86,17 +89,30 @@ public class LlmProviderBootstrapService {
           .embeddingModel(trimOrNull(config.getEmbeddingModel()))
           .embeddingDimensions(resolveEmbeddingDimensions(config.getEmbeddingDimensions()))
           .supportsEmbedding(supportsEmbedding)
+          .supportsVision(Boolean.TRUE.equals(config.getSupportsVision()))
           .temperature(config.getTemperature())
           .enabled(true)
           .builtin(true)
           .build();
       providerRepository.save(entity);
+      added[0]++;
+      log.info("从配置补入缺失的 Provider: id={}, model={}, supportsVision={}",
+          id, config.getModel(), Boolean.TRUE.equals(config.getSupportsVision()));
     });
-    log.info("Seeded {} LLM providers from application configuration", providerRepository.count());
+    log.info("LLM Provider 种子检查完成: 新增 {} 个, 当前共 {} 个",
+        added[0], providerRepository.count());
   }
 
   private void ensureGlobalSetting() {
     if (globalSettingRepository.existsById(LlmGlobalSettingEntity.SINGLETON_ID)) {
+      LlmGlobalSettingEntity setting = globalSettingRepository
+          .findById(LlmGlobalSettingEntity.SINGLETON_ID).orElse(null);
+      if (setting != null && isBlank(setting.getDefaultVisionProviderId())
+          && !isBlank(properties.getDefaultVisionProvider())) {
+        setting.setDefaultVisionProviderId(properties.getDefaultVisionProvider());
+        globalSettingRepository.save(setting);
+        log.info("补充默认识图 Provider: {}", properties.getDefaultVisionProvider());
+      }
       return;
     }
     String defaultChatProvider = resolveExistingProvider(
@@ -112,6 +128,7 @@ public class LlmProviderBootstrapService {
         .id(LlmGlobalSettingEntity.SINGLETON_ID)
         .defaultChatProviderId(defaultChatProvider)
         .defaultEmbeddingProviderId(defaultEmbeddingProvider)
+        .defaultVisionProviderId(properties.getDefaultVisionProvider())
         .build());
     log.info("Initialized LLM global setting: chatProvider={}, embeddingProvider={}",
         defaultChatProvider, defaultEmbeddingProvider);

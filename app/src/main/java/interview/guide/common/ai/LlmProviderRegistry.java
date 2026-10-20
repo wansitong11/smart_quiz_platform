@@ -146,6 +146,45 @@ public class LlmProviderRegistry {
     }
 
     /**
+     * 取默认识图模型（app.ai.default-vision-provider / 数据库覆盖）的视觉客户端。
+     * 识别服务只依赖这个方法，不感知具体厂商与模型名。
+     */
+    public ChatClient getDefaultVisionChatClient() {
+        return getVisionChatClientOrDefault(null);
+    }
+
+    /** 当前视觉默认 Provider 实际使用的模型名（落库展示 / 排障用）。 */
+    public String getDefaultVisionModelName() {
+        String id = resolveDefaultVisionProviderId();
+        if (isBlank(id)) {
+            return null;
+        }
+        return loadProviderOrThrow(id).model();
+    }
+
+    /**
+     * 视觉任务的独立客户端：单轮、无工具、无记忆、无文本兜底话术。
+     * <p>
+     * 空白 id 解析成「视觉默认」，不能落到 {@link #getPlainChatClient(String)} ——
+     * 后者会把空白解析成 default-chat-provider（通常是纯文本模型）。
+     * </p>
+     *
+     * @param providerId 指定 Provider；空或 "default" 时使用视觉默认
+     */
+    public ChatClient getVisionChatClientOrDefault(String providerId) {
+        String id = providerId == null || providerId.isBlank() || "default".equalsIgnoreCase(providerId.trim())
+            ? resolveDefaultVisionProviderId()
+            : providerId.trim();
+        if (isBlank(id)) {
+            throw new BusinessException(ErrorCode.VISION_PROVIDER_NOT_CONFIGURED,
+                "未配置识图模型：请设置 app.ai.default-vision-provider，"
+                    + "并确认该 Provider 已启用且标记为支持图片输入");
+        }
+        assertVisionCapable(id);
+        return clientCache.computeIfAbsent(id + ":vision", key -> createVisionChatClient(id));
+    }
+
+    /**
      * 获取语音面试专用 ChatClient：SkillsTool + ToolCallAdvisor（流式）。
      * 不加 Memory Advisor（语音面试手动管理对话历史）。
      */
@@ -210,6 +249,20 @@ public class LlmProviderRegistry {
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         buildSafeGuardAdvisor().ifPresent(advisor -> builder.defaultAdvisors(List.of(advisor)));
         log.info("[LlmProviderRegistry] Created plain ChatClient (no tools) for {}", providerId);
+        return builder.build();
+    }
+
+    /**
+     * 视觉客户端走独立工厂：以后要加/去 Advisor、调参、换观测，都不会波及文本链路。
+     * <p>
+     * 当前刻意不挂任何 Advisor：{@code SafeGuardAdvisor} 的拒答话术面向面试问答，
+     * 且会误伤试卷原文（例如阅读材料里出现"忽略之前的指令"）。
+     * </p>
+     */
+    private ChatClient createVisionChatClient(String providerId) {
+        OpenAiChatModel chatModel = getChatModel(providerId);
+        ChatClient.Builder builder = ChatClient.builder(chatModel);
+        log.info("[LlmProviderRegistry] Created vision ChatClient (no advisors) for {}", providerId);
         return builder.build();
     }
 
@@ -298,7 +351,11 @@ public class LlmProviderRegistry {
         log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}",
                  providerId, config.baseUrl(), config.model());
 
-        OpenAIClient openAiClient = ApiPathResolver.buildOpenAiClient(config.baseUrl(), config.apiKey());
+        long requestTimeout = config.supportsVision()
+            ? properties.getVisionRequestTimeout().toMillis()
+            : properties.getChatRequestTimeout().toMillis();
+        OpenAIClient openAiClient = ApiPathResolver.buildOpenAiClient(
+            config.baseUrl(), config.apiKey(), 10_000, (int) requestTimeout, (int) requestTimeout);
 
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                 .model(config.model())
@@ -439,6 +496,42 @@ public class LlmProviderRegistry {
                 : properties.getDefaultProvider());
     }
 
+    /**
+     * 视觉默认值：数据库覆盖 → yml 配置 → 空（由调用方抛 VISION_PROVIDER_NOT_CONFIGURED）。
+     * 不继承 default-chat-provider / default-embedding-provider：三者语义不同。
+     */
+    private String resolveDefaultVisionProviderId() {
+        if (globalSettingRepository != null) {
+            String fromDb = globalSettingRepository.findById(LlmGlobalSettingEntity.SINGLETON_ID)
+                .map(LlmGlobalSettingEntity::getDefaultVisionProviderId)
+                .filter(id -> !isBlank(id))
+                .orElse(null);
+            if (!isBlank(fromDb)) {
+                return fromDb;
+            }
+        }
+        return properties.getDefaultVisionProvider();
+    }
+
+    /**
+     * 校验视觉能力：不存在 / 已禁用 / 未声明 supports-vision 都给出可操作的错误，
+     * 而不是把图片发给文本模型后拿厂商 400。
+     */
+    private void assertVisionCapable(String providerId) {
+        ProviderSnapshot snapshot;
+        try {
+            snapshot = loadProviderOrThrow(providerId);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.VISION_PROVIDER_NOT_CONFIGURED,
+                "识图 Provider '" + providerId + "' 不存在或已禁用，请在「设置 → 模型 Provider」中检查");
+        }
+        if (!snapshot.supportsVision()) {
+            throw new BusinessException(ErrorCode.VISION_PROVIDER_NOT_CONFIGURED,
+                "Provider '" + providerId + "' 的模型 '" + snapshot.model()
+                    + "' 未标记为支持图片输入，请更换为视觉模型并勾选「支持图片输入」");
+        }
+    }
+
     private ProviderSnapshot loadProviderOrThrow(String providerId) {
         if (providerRepository == null) {
             return loadProviderFromPropertiesOrThrow(providerId);
@@ -454,6 +547,7 @@ public class LlmProviderRegistry {
             entity.getEmbeddingModel(),
             entity.getEmbeddingDimensions(),
             entity.isSupportsEmbedding(),
+            entity.isSupportsVision(),
             entity.getTemperature()
         );
     }
@@ -474,6 +568,7 @@ public class LlmProviderRegistry {
             config.getEmbeddingModel(),
             config.getEmbeddingDimensions(),
             supportsEmbedding,
+            Boolean.TRUE.equals(config.getSupportsVision()),
             config.getTemperature()
         );
     }
@@ -507,6 +602,7 @@ public class LlmProviderRegistry {
         String embeddingModel,
         Integer embeddingDimensions,
         boolean supportsEmbedding,
+        boolean supportsVision,
         Double temperature
     ) {
     }

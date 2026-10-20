@@ -101,6 +101,13 @@ public class LlmProviderController {
     return Result.success();
   }
 
+  @PutMapping("/default-vision-provider")
+  @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 5)
+  public Result<Void> updateDefaultVisionProvider(@RequestBody DefaultProviderDTO request) {
+    configService.updateDefaultVisionProvider(request);
+    return Result.success();
+  }
+
   // ===== Voice ASR/TTS Config =====
 
   @GetMapping("/voice/asr")

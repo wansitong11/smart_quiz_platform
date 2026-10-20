@@ -167,7 +167,7 @@ pnpm install
 pnpm run dev
 ```
 
-开发服务器监听 `5173`，`/api` 与 `/ws` 由 Vite 代理到 `http://localhost:8080`（可用 `VITE_API_PROXY_TARGET` 覆盖）。
+开发服务器默认监听 `3000`（可用 `VITE_DEV_PORT` 覆盖；Windows 若把 5173 划进系统保留端口段，绑定会报 `EACCES`），`/api` 与 `/ws` 由 Vite 代理到 `http://localhost:8080`（可用 `VITE_API_PROXY_TARGET` 覆盖）。
 
 ### 5. Docker 一键部署
 

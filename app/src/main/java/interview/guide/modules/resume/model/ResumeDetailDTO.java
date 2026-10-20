@@ -20,6 +20,9 @@ public record ResumeDetailDTO(
     String resumeText,
     AsyncTaskStatus analysisStatus,
     String analysisError,
+    RecognitionStatus recognitionStatus,
+    String recognitionError,
+    Integer pageCount,
     List<AnalysisHistoryDTO> analyses,
     List<InterviewHistoryItemDTO> interviews
 ) {

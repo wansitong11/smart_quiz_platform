@@ -292,7 +292,9 @@ public class QuizPaperService {
         fullScore,
         questionType,
         options.isEmpty() ? null : options,
-        trimToNull(raw.analysis()));
+        trimToNull(raw.analysis()),
+        null,
+        null);
   }
 
   private List<InterviewQuestionDTO.QuestionOption> normalizeOptions(List<GeneratedPaperDTO.Option> raw) {

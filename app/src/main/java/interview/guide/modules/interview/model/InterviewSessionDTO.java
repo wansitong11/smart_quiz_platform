@@ -15,7 +15,9 @@ public record InterviewSessionDTO(
     Long knowledgeBaseId,
     String subjectCategory,
     /** 试卷层级树（卷 → 大题 → 小节 → 材料/题目），供作答页按层级渲染 */
-    PaperTree paperTree
+    PaperTree paperTree,
+    /** 来源试卷 ID：图形选项需要它来取资源；知识库会话为 null */
+    Long paperId
 ) {
     public enum SessionStatus {
         CREATED,      // 会话已创建

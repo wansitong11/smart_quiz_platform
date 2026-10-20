@@ -158,6 +158,9 @@ public class ResumePersistenceService {
             || !Objects.equals(paper.getAnalysisAttemptId(), attemptId)) {
             throw new BusinessException(ErrorCode.PAPER_EXTRACTION_FAILED, "试卷切题任务执行权已失效");
         }
+        if (paper.getRecognitionStatus() == interview.guide.modules.resume.model.RecognitionStatus.EXTRACTING) {
+            paper.setRecognitionStatus(interview.guide.modules.resume.model.RecognitionStatus.READY);
+        }
         paper.setAnalysisUpdatedAt(java.time.LocalDateTime.now());
         resumeRepository.save(paper);
         return saveExtractionSummaryInternal(paper, result, practiceSessionId);

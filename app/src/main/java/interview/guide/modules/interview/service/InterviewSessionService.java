@@ -192,7 +192,8 @@ public class InterviewSessionService {
             SessionStatus.CREATED,
             null,
             null,
-            paperTree
+            paperTree,
+            request.resumeId()
         );
     }
 
@@ -259,7 +260,8 @@ public class InterviewSessionService {
             SessionStatus.CREATED,
             knowledgeBaseId,
             subjectCategory,
-            tree
+            tree,
+            paperId
         );
     }
 
@@ -781,7 +783,8 @@ public class InterviewSessionService {
             session.getStatus(),
             session.getKnowledgeBaseId(),
             session.getSubjectCategory(),
-            session.getPaperTree(objectMapper)
+            session.getPaperTree(objectMapper),
+            session.getResumeId()
         );
     }
 }

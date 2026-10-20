@@ -94,7 +94,9 @@ public record PaperTree(int version, PaperNode root) {
             .mapToInt(Integer::intValue)
             .sum();
         PaperNode.PaperMeta meta = new PaperNode.PaperMeta(totalScore, totalQuestions,
-            node.meta() != null ? node.meta().durationMinutes() : null);
+            node.meta() != null ? node.meta().durationMinutes() : null,
+            node.meta() != null && node.meta().assetIds() != null
+                ? node.meta().assetIds() : List.of());
         return new PaperNode(node.id(), node.type(), isRoot ? 0 : node.order(), depth, leaf,
             node.title(), node.subtitle(), node.content(), meta, node.questionIndex(),
             node.question(), children);
@@ -138,7 +140,8 @@ public record PaperTree(int version, PaperNode root) {
                     updated.fullScore() != null ? updated.fullScore()
                         : (meta != null ? meta.fullScore() : null),
                     meta != null ? meta.questionCount() : 1,
-                    meta != null ? meta.durationMinutes() : null
+                    meta != null ? meta.durationMinutes() : null,
+                    meta != null && meta.assetIds() != null ? meta.assetIds() : List.of()
                 );
             }
         }

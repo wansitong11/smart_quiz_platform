@@ -136,4 +136,91 @@ public interface ResumeRepository extends JpaRepository<PracticePaperEntity, Lon
     List<PracticePaperEntity> findStaleByAnalysisStatus(@Param("status") interview.guide.common.model.AsyncTaskStatus status,
                                                 @Param("threshold") LocalDateTime threshold,
                                                 Pageable pageable);
+
+    // ========== 图片 / 扫描件识别：与切题同构的条件状态更新 ==========
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionStatus = 'PROCESSING', "
+        + "r.recognitionAttemptId = :attemptId, r.recognitionUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.recognitionStatus = 'PENDING'")
+    int tryMarkRecognitionProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
+                                     @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.recognitionStatus = 'PROCESSING' "
+        + "AND r.recognitionAttemptId = :attemptId")
+    int heartbeatRecognitionProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
+                                       @Param("now") LocalDateTime now);
+
+    /** PROCESSING → NEEDS_REVIEW（识别结束，等待预览校对）。 */
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionStatus = 'NEEDS_REVIEW', r.recognitionError = null, "
+        + "r.recognitionAttemptId = null, r.recognitionUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.recognitionStatus = 'PROCESSING' "
+        + "AND r.recognitionAttemptId = :attemptId")
+    int completeRecognitionIfProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
+                                        @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionStatus = 'FAILED', r.recognitionError = :error, "
+        + "r.recognitionAttemptId = null, r.recognitionUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.recognitionStatus = 'PROCESSING' "
+        + "AND r.recognitionAttemptId = :attemptId")
+    int failRecognitionIfProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
+                                    @Param("error") String error, @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionStatus = 'FAILED', r.recognitionError = :error, "
+        + "r.recognitionAttemptId = null, r.recognitionUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.recognitionStatus = 'PENDING'")
+    int failRecognitionIfPending(@Param("id") Long id, @Param("error") String error,
+                                 @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionStatus = 'PENDING', r.recognitionAttemptId = null, "
+        + "r.recognitionUpdatedAt = :now WHERE r.id = :id AND r.recognitionStatus = 'PROCESSING' "
+        + "AND r.recognitionAttemptId = :attemptId")
+    int resetRecognitionToPending(@Param("id") Long id, @Param("attemptId") String attemptId,
+                                  @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionUpdatedAt = :now WHERE r.id = :id "
+        + "AND r.recognitionStatus = 'PENDING' AND r.recognitionUpdatedAt < :threshold")
+    int touchQueuedRecognitionForRecovery(@Param("id") Long id,
+                                          @Param("threshold") LocalDateTime threshold,
+                                          @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionStatus = 'PENDING', r.recognitionAttemptId = null, "
+        + "r.recognitionUpdatedAt = :now WHERE r.id = :id AND r.recognitionStatus = 'PROCESSING' "
+        + "AND r.recognitionUpdatedAt < :threshold")
+    int resetStaleRecognitionProcessing(@Param("id") Long id,
+                                        @Param("threshold") LocalDateTime threshold,
+                                        @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionRecoveryCount = r.recognitionRecoveryCount + 1 WHERE r.id = :id")
+    int incrementRecognitionRecoveryCount(@Param("id") Long id);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.recognitionRecoveryCount = 0 WHERE r.id = :id")
+    int resetRecognitionRecoveryCount(@Param("id") Long id);
+
+    @Query("SELECT r FROM PracticePaperEntity r WHERE r.recognitionStatus = :status "
+        + "AND r.recognitionUpdatedAt < :threshold ORDER BY r.recognitionUpdatedAt ASC")
+    List<PracticePaperEntity> findStaleByRecognitionStatus(
+        @Param("status") interview.guide.modules.resume.model.RecognitionStatus status,
+        @Param("threshold") LocalDateTime threshold,
+        Pageable pageable);
 }

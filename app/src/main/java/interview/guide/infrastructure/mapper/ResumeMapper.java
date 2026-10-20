@@ -40,6 +40,7 @@ public interface ResumeMapper {
             lastAnalyzedAt,
             interviewCount,
             null,
+            null,
             null
         );
     }

@@ -4,10 +4,14 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.file.FileStorageService;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
+import interview.guide.modules.resume.model.PaperPageEntity;
 import interview.guide.modules.resume.model.PracticePaperEntity;
+import interview.guide.modules.resume.repository.PaperPageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 /**
  * 简历删除服务
@@ -21,6 +25,8 @@ public class ResumeDeleteService {
     private final ResumePersistenceService persistenceService;
     private final InterviewPersistenceService interviewPersistenceService;
     private final FileStorageService storageService;
+    private final PaperPageRepository pageRepository;
+    private final PaperAssetService assetService;
     
     /**
      * 删除简历
@@ -42,6 +48,20 @@ public class ResumeDeleteService {
         } catch (Exception e) {
             log.warn("删除存储文件失败，继续删除数据库记录: {}", e.getMessage());
         }
+
+        // 1.1 删除页图（paper_pages 随试卷级联删除，但 S3 对象要显式清）
+        List<PaperPageEntity> pages = pageRepository.findByPaperIdOrderByPageNoAsc(id);
+        for (PaperPageEntity page : pages) {
+            try {
+                storageService.deleteIfExists(page.getImageKey());
+            } catch (Exception e) {
+                log.warn("删除页图失败: paperId={}, pageNo={}, error={}",
+                    id, page.getPageNo(), e.getMessage());
+            }
+        }
+
+        // 1.2 删除页面资源（选项图 / 题干图 / 表格截图）
+        assetService.deleteByPaperId(id);
         
         // 2. 删除面试会话（会自动删除面试答案）
         interviewPersistenceService.deleteSessionsByResumeId(id);

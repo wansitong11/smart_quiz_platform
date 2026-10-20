@@ -51,6 +51,13 @@ public class PaperQuestionExtractionService {
     private static final Pattern QUESTION_NO_PATTERN =
         Pattern.compile("(?m)^\\s*(\\d{1,3})\\s*[.．、)）]\\s*");
 
+    /** 一级大题标题：一、 / 二. */
+    private static final Pattern MAJOR_HEADING_PATTERN =
+        Pattern.compile("^\\s*([一二三四五六七八九十]{1,3})\\s*[、.．]\\s*(\\S.*)$");
+
+    /** 大题正文达到该长度、且整段没有题号时，按「整段就是一道题」补一个题号 */
+    private static final int MIN_UNNUMBERED_SECTION_CHARS = 30;
+
     /** 分批时向前携带的上下文长度：阅读类题目的材料通常写在题号之前 */
     private static final int CONTEXT_LOOKBACK_CHARS = 300;
 
@@ -129,10 +136,23 @@ public class PaperQuestionExtractionService {
      * @param llmProvider 指定模型 Provider，为空时用默认 Provider
      */
     public PaperExtractionResult extract(String paperText, String llmProvider) {
+        return extract(paperText, llmProvider, null);
+    }
+
+    /**
+     * 结构化切题（可带题号 → 页码映射）。
+     *
+     * @param pageLocator 题干 → 页码定位器；扫描件识别时用于"查看原页"，文字材料传 null
+     */
+    public PaperExtractionResult extract(String paperText, String llmProvider,
+                                         PageTextMerger.PageLocator pageLocator) {
         String text = normalizeText(paperText);
         if (text.isBlank()) {
             throw new BusinessException(ErrorCode.PAPER_PARSE_FAILED, "材料内容为空，无法切题");
         }
+        // 很多试卷每个大题内部重新从 1 编号；切题链路（分批、去重、结构归属）要求题号全卷唯一，
+        // 所以先做一次确定性的行首重排。模型看到的就是 1..N，不会再把同号题互相覆盖。
+        text = renumberQuestions(ensureSectionQuestions(text));
 
         Map<String, String> categoryLabels = loadCategoryLabels();
         List<String> warnings = new ArrayList<>();
@@ -165,9 +185,9 @@ public class PaperQuestionExtractionService {
         // ③ 按题号把题目归入结构骨架，组装层级树并同时产出扁平题目列表
         Map<Integer, ExtractedQuestion> byQuestionNo = new LinkedHashMap<>();
         ordered.forEach(question -> byQuestionNo.putIfAbsent(question.questionNo(), question));
-        TreeAssembly assembly = assembleTree(structure, byQuestionNo, warnings);
+        TreeAssembly assembly = assembleTree(structure, byQuestionNo, warnings, pageLocator);
 
-        List<InterviewQuestionDTO> questions = assembly.questions();
+        List<InterviewQuestionDTO> questions = applyPageRanges(assembly.questions(), pageLocator);
         PaperTree paperTree = assembly.tree();
         return new PaperExtractionResult(resolvedSubject, paperTree, questions, totalScore, categoryLabels, warnings);
     }
@@ -183,7 +203,8 @@ public class PaperQuestionExtractionService {
      */
     private TreeAssembly assembleTree(PaperStructureDetector.PaperStructure structure,
                                       Map<Integer, ExtractedQuestion> byQuestionNo,
-                                      List<String> warnings) {
+                                      List<String> warnings,
+                                      PageTextMerger.PageLocator pageLocator) {
         List<InterviewQuestionDTO> questions = new ArrayList<>();
         java.util.Set<Integer> usedQuestionNos = new java.util.LinkedHashSet<>();
         int[] idSeq = {0};
@@ -191,7 +212,7 @@ public class PaperQuestionExtractionService {
         List<PaperStructureDetector.Section> topSections = structure.sections();
         for (int i = 0; i < topSections.size(); i++) {
             sections.add(buildSectionNode(topSections.get(i), i + 1, byQuestionNo, questions,
-                usedQuestionNos, idSeq));
+                usedQuestionNos, idSeq, pageLocator));
         }
 
         List<ExtractedQuestion> orphans = byQuestionNo.entrySet().stream()
@@ -203,7 +224,7 @@ public class PaperQuestionExtractionService {
             List<PaperNode> nodes = new ArrayList<>();
             int order = 1;
             for (ExtractedQuestion orphan : orphans) {
-                InterviewQuestionDTO dto = toQuestionDTO(questions.size(), orphan);
+                InterviewQuestionDTO dto = toQuestionDTO(questions.size(), orphan, pageLocator);
                 questions.add(dto);
                 nodes.add(PaperNode.ofQuestion(order++, dto));
             }
@@ -220,7 +241,8 @@ public class PaperQuestionExtractionService {
                                        Map<Integer, ExtractedQuestion> byQuestionNo,
                                        List<InterviewQuestionDTO> questions,
                                        java.util.Set<Integer> usedQuestionNos,
-                                       int[] idSeq) {
+                                       int[] idSeq,
+                                       PageTextMerger.PageLocator pageLocator) {
         String nodeId = "n" + (++idSeq[0]);
         List<PaperNode> children = new ArrayList<>();
         int childOrder = 1;
@@ -231,7 +253,7 @@ public class PaperQuestionExtractionService {
             List<PaperStructureDetector.Section> subSections = section.children();
             for (int i = 0; i < subSections.size(); i++) {
                 children.add(buildSectionNode(subSections.get(i), i + 1, byQuestionNo, questions,
-                    usedQuestionNos, idSeq));
+                    usedQuestionNos, idSeq, pageLocator));
             }
         } else {
             for (Integer questionNo : section.questionNos()) {
@@ -239,7 +261,7 @@ public class PaperQuestionExtractionService {
                 if (extracted == null || !usedQuestionNos.add(questionNo)) {
                     continue;
                 }
-                InterviewQuestionDTO dto = toQuestionDTO(questions.size(), extracted);
+                InterviewQuestionDTO dto = toQuestionDTO(questions.size(), extracted, pageLocator);
                 questions.add(dto);
                 children.add(PaperNode.ofQuestion(childOrder++, dto));
             }
@@ -300,9 +322,47 @@ public class PaperQuestionExtractionService {
     }
 
     /**
+     * 补全结束页：下一题的起始页就是本题的结束页（跨页题 from &lt; to）；
+     * 最后一题收口在整卷末页。
+     */
+    private List<InterviewQuestionDTO> applyPageRanges(List<InterviewQuestionDTO> questions,
+                                                       PageTextMerger.PageLocator locator) {
+        if (locator == null) {
+            return questions;
+        }
+        List<InterviewQuestionDTO> result = new ArrayList<>(questions.size());
+        for (int i = 0; i < questions.size(); i++) {
+            InterviewQuestionDTO question = questions.get(i);
+            Integer from = question.sourcePageFrom();
+            if (from == null) {
+                result.add(question);
+                continue;
+            }
+            Integer nextFrom = null;
+            for (int j = i + 1; j < questions.size(); j++) {
+                if (questions.get(j).sourcePageFrom() != null) {
+                    nextFrom = questions.get(j).sourcePageFrom();
+                    break;
+                }
+            }
+            int to = nextFrom != null
+                ? Math.max(from, nextFrom)
+                : Math.max(from, locator.lastPageNo());
+            result.add(question.withSourcePages(from, to));
+        }
+        return result;
+    }
+
+    /**
      * 单个抽取结果 → 题目 DTO（questionIndex 由调用方按树中顺序指定）。
      */
     private InterviewQuestionDTO toQuestionDTO(int index, ExtractedQuestion q) {
+        return toQuestionDTO(index, q, null);
+    }
+
+    private InterviewQuestionDTO toQuestionDTO(int index, ExtractedQuestion q,
+                                               PageTextMerger.PageLocator pageLocator) {
+        int[] pages = pageLocator == null ? null : pageLocator.locate(q.toQuestionText());
         return new InterviewQuestionDTO(
             index,
             q.toQuestionText(),
@@ -321,7 +381,9 @@ public class PaperQuestionExtractionService {
             q.fullScore(),
             defaultString(q.questionType(), "OTHER"),
             q.options(),
-            truncate(defaultString(q.analysis(), ""), 300)
+            truncate(defaultString(q.analysis(), ""), 300),
+            pages == null ? null : pages[0],
+            pages == null ? null : pages[1]
         );
     }
 
@@ -706,6 +768,93 @@ public class PaperQuestionExtractionService {
             normalized = normalized.substring(0, properties.getMaxPaperChars() * 2);
         }
         return normalized;
+    }
+
+    /**
+     * 把行首题号按出现顺序重排为 1..N，保留原分隔符与行内其它内容。
+     * <p>
+     * 只改「1. / 2、/ 3）」这类行首编号；题干正文里的数字不动。
+     * </p>
+     */
+    static String renumberQuestions(String text) {
+        if (text == null || text.isBlank()) {
+            return text;
+        }
+        StringBuilder out = new StringBuilder(text.length() + 16);
+        int sequence = 0;
+        String[] lines = text.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            Matcher matcher = QUESTION_NO_PATTERN.matcher(line);
+            if (matcher.find()) {
+                sequence++;
+                out.append(line, 0, matcher.start(1))
+                    .append(sequence)
+                    .append(line, matcher.end(1), line.length());
+            } else {
+                out.append(line);
+            }
+            if (i < lines.length - 1) {
+                out.append('\n');
+            }
+        }
+        return out.toString();
+    }
+
+    /**
+     * 给「整段没有题号」的大题补一个行首题号。
+     * <p>
+     * 典型场景：「一、看拼音写词语」和「七、作文」整段就是一道题，原文没有 "1."，
+     * 而切题是按行首题号切块的，不补就会整段丢失。
+     * 只对正文足够长的大题生效，避免把「注意事项」这类短说明当成题目。
+     * </p>
+     */
+    static String ensureSectionQuestions(String text) {
+        if (text == null || text.isBlank()) {
+            return text;
+        }
+        String[] lines = text.split("\n", -1);
+        List<Integer> headings = new ArrayList<>();
+        for (int i = 0; i < lines.length; i++) {
+            if (MAJOR_HEADING_PATTERN.matcher(lines[i]).matches()) {
+                headings.add(i);
+            }
+        }
+        if (headings.isEmpty()) {
+            return text;
+        }
+
+        StringBuilder out = new StringBuilder(text.length() + 128);
+        for (int i = 0; i < lines.length; i++) {
+            out.append(lines[i]);
+            if (headings.contains(i)) {
+                int nextHeading = lines.length;
+                for (Integer heading : headings) {
+                    if (heading > i) {
+                        nextHeading = heading;
+                        break;
+                    }
+                }
+                boolean hasNumberedQuestion = false;
+                int sectionChars = 0;
+                for (int j = i + 1; j < nextHeading; j++) {
+                    if (QUESTION_NO_PATTERN.matcher(lines[j]).find()) {
+                        hasNumberedQuestion = true;
+                        break;
+                    }
+                    sectionChars += lines[j].strip().length();
+                }
+                Matcher heading = MAJOR_HEADING_PATTERN.matcher(lines[i]);
+                if (!hasNumberedQuestion && sectionChars >= MIN_UNNUMBERED_SECTION_CHARS
+                    && heading.matches()) {
+                    out.append('\n').append("1. ").append(heading.group(2).trim());
+                }
+            }
+            if (i < lines.length - 1) {
+                out.append('\n');
+            }
+        }
+        return out.toString();
     }
 
     private static String defaultString(String value, String fallback) {

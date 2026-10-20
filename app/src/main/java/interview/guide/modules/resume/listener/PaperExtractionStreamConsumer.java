@@ -12,9 +12,15 @@ import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.service.InterviewSessionService;
 import interview.guide.modules.resume.model.PracticePaperEntity;
+import interview.guide.modules.resume.model.PaperPageEntity;
+import interview.guide.modules.resume.model.PageStatus;
+import interview.guide.modules.resume.model.RecognitionStatus;
+import interview.guide.modules.resume.repository.PaperPageRepository;
 import interview.guide.modules.resume.repository.ResumeRepository;
+import interview.guide.modules.resume.service.PageTextMerger;
 import interview.guide.modules.resume.service.PaperExtractionResult;
 import interview.guide.modules.resume.service.PaperQuestionExtractionService;
+import interview.guide.modules.resume.service.PaperStructureService;
 import interview.guide.modules.resume.service.ResumeParseService;
 import interview.guide.modules.resume.service.ResumePersistenceService;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +48,9 @@ public class PaperExtractionStreamConsumer
     private final ResumePersistenceService persistenceService;
     private final ResumeRepository resumeRepository;
     private final ResumeParseService parseService;
+    private final PaperPageRepository pageRepository;
+    private final PageTextMerger pageTextMerger;
+    private final PaperStructureService structureService;
 
     public PaperExtractionStreamConsumer(
         RedisService redisService,
@@ -49,7 +58,10 @@ public class PaperExtractionStreamConsumer
         InterviewSessionService interviewSessionService,
         ResumePersistenceService persistenceService,
         ResumeRepository resumeRepository,
-        ResumeParseService parseService
+        ResumeParseService parseService,
+        PaperPageRepository pageRepository,
+        PageTextMerger pageTextMerger,
+        PaperStructureService structureService
     ) {
         super(redisService);
         this.extractionService = extractionService;
@@ -57,6 +69,9 @@ public class PaperExtractionStreamConsumer
         this.persistenceService = persistenceService;
         this.resumeRepository = resumeRepository;
         this.parseService = parseService;
+        this.pageRepository = pageRepository;
+        this.pageTextMerger = pageTextMerger;
+        this.structureService = structureService;
     }
 
     static final class PaperExtractPayload {
@@ -172,7 +187,7 @@ public class PaperExtractionStreamConsumer
             persistenceService.updateResumeText(paperId, paperText);
         }
 
-        PaperExtractionResult result = extractionService.extract(paperText, null);
+        PaperExtractionResult result = extractStructure(paperId, paperText);
         // LLM 切题完成心跳（分批调用已结束，落库前确认执行权仍在自己手里）
         heartbeat(payload);
         if (resumeRepository.findById(paperId).isEmpty()) {
@@ -200,12 +215,57 @@ public class PaperExtractionStreamConsumer
             paperId, session.sessionId(), questions.size());
     }
 
+    private PaperExtractionResult extractStructure(Long paperId, String paperText) {
+        try {
+            PaperStructureService.BuiltStructure built = structureService.build(paperId);
+            log.info("结构模型切题完成: paperId={}, questions={}, totalScore={}",
+                paperId, built.questions().size(), built.totalScore());
+            return new PaperExtractionResult(built.subjectId(), built.paperTree(),
+                built.questions(), built.totalScore(), java.util.Map.of(), built.warnings());
+        } catch (Exception e) {
+            boolean legacyPaper = resumeRepository.findById(paperId)
+                .map(paper -> paper.getRecognitionStatus() == null
+                    || paper.getRecognitionStatus() == RecognitionStatus.NONE)
+                .orElse(true);
+            if (!legacyPaper) {
+                // 新链路（扫描件/图片/DOCX）不再回退到旧正则解析：
+                // 旧解析不认材料层级，会把答案页、说明页也当成题目，产生大量脏题。
+                log.error("结构化失败，且新链路不回退旧解析: paperId={}, error={}",
+                    paperId, ErrorLogSanitizer.summarize(e));
+                if (e instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                throw new BusinessException(ErrorCode.PAPER_EXTRACTION_FAILED, "试卷结构化失败");
+            }
+            log.warn("结构模型不可用，回退旧切题: paperId={}, error={}",
+                paperId, ErrorLogSanitizer.summarize(e));
+            PageTextMerger.PageLocator pageLocator = resolvePageLocator(paperId, paperText);
+            return extractionService.extract(paperText, null, pageLocator);
+        }
+    }
+
     private void heartbeat(PaperExtractPayload payload) {
         int updated = resumeRepository.heartbeatAnalyzeProcessing(
             payload.paperId(), payload.attemptId(), java.time.LocalDateTime.now());
         if (updated != 1) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "试卷切题任务执行权已失效");
         }
+    }
+
+    /** 扫描件试卷：题干 → 页码定位器，用与确认时相同的合并算法重算，保证偏移一致。 */
+    private PageTextMerger.PageLocator resolvePageLocator(Long paperId, String paperText) {
+        List<PaperPageEntity> pages = pageRepository.findByPaperIdOrderByPageNoAsc(paperId);
+        if (pages.isEmpty()) {
+            return null;
+        }
+        List<PaperPageEntity> readyPages = pages.stream()
+            .filter(page -> page.getStatus() == PageStatus.READY)
+            .toList();
+        if (readyPages.isEmpty()) {
+            return null;
+        }
+        PageTextMerger.MergeResult merged = pageTextMerger.merge(readyPages);
+        return new PageTextMerger.PageLocator(paperText, merged.pageRanges());
     }
 
     private boolean isBlank(String value) {

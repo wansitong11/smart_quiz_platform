@@ -182,7 +182,9 @@ public class KnowledgeBaseInterviewService {
           entity.getFullScore(),
           entity.getQuestionType(),
           readOptions(entity.getOptionsJson()),
-          entity.getAnalysis()
+          entity.getAnalysis(),
+          null,
+          null
       ));
     }
     return questions;

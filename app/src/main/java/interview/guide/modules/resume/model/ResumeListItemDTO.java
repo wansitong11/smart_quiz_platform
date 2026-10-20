@@ -17,6 +17,7 @@ public record ResumeListItemDTO(
     LocalDateTime lastAnalyzedAt,
     Integer interviewCount,
     AsyncTaskStatus analysisStatus,
-    String analysisError
+    String analysisError,
+    RecognitionStatus recognitionStatus
 ) {}
 

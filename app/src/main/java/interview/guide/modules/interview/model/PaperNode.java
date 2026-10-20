@@ -36,7 +36,17 @@ public record PaperNode(
     /**
      * 节点元信息：分值、题目数、时长，均由子节点汇总（模型给的只是建议）。
      */
-    public record PaperMeta(Integer fullScore, Integer questionCount, Integer durationMinutes) {}
+    public record PaperMeta(
+        Integer fullScore,
+        Integer questionCount,
+        Integer durationMinutes,
+        List<String> assetIds
+    ) {
+
+        public PaperMeta(Integer fullScore, Integer questionCount, Integer durationMinutes) {
+            this(fullScore, questionCount, durationMinutes, List.of());
+        }
+    }
 
     // 注意：这些判断方法必须是包级可见，否则会被 Jackson 当成 isXxx 属性序列化，
     // 与 question 字段冲突（表现为 question 被写成 false）。

@@ -12,6 +12,8 @@ import interview.guide.infrastructure.file.FileValidationService;
 import interview.guide.modules.resume.listener.PaperExtractionStreamProducer;
 import interview.guide.modules.resume.model.PaperAnalysisEntity;
 import interview.guide.modules.resume.model.PracticePaperEntity;
+import interview.guide.modules.resume.model.PaperUploadResult;
+import interview.guide.modules.resume.model.RecognitionStatus;
 import interview.guide.modules.resume.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.List;
 
 /**
  * 简历上传服务
@@ -38,10 +41,11 @@ public class ResumeUploadService {
     private final AppConfigProperties appConfig;
     private final FileValidationService fileValidationService;
     private final PaperExtractionStreamProducer paperExtractionProducer;
+    private final PaperRecognitionService recognitionService;
     private final ResumeRepository resumeRepository;
     private final TransactionalExecutor transactionalExecutor;
 
-    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    private static final long MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
     /**
      * 上传并分析简历（异步）
@@ -76,6 +80,11 @@ public class ResumeUploadService {
         long parseStart = System.currentTimeMillis();
         String resumeText = parseService.parseResume(file);
         if (resumeText == null || resumeText.trim().isEmpty()) {
+            if (isPdf(contentType)) {
+                // 扫描版 PDF：走图片识别链路（先预览校对，再切题）
+                log.info("PDF 无文字层，转图片识别: {}", fileName);
+                return handleScannedUpload(file);
+            }
             throw new BusinessException(ErrorCode.RESUME_PARSE_FAILED, "无法从文件中提取文本内容，请确保文件不是扫描版PDF");
         }
         log.info("简历文本解析完成: {} - 解析耗时: {}ms, 文本长度: {} 字符",
@@ -148,11 +157,64 @@ public class ResumeUploadService {
         );
     }
 
+    private boolean isPdf(String contentType) {
+        return contentType != null && contentType.toLowerCase().contains("pdf");
+    }
+
+    /**
+     * 无文字层的单文件上传：委托给图片识别链路。
+     * <p>
+     * 返回结构与普通上传保持一致（前端批量上传队列无需特殊分支），
+     * 额外带上 recognitionStatus，试卷详情页据此进入"识别/校对"阶段。
+     * </p>
+     */
+    private Map<String, Object> handleScannedUpload(
+        org.springframework.web.multipart.MultipartFile file) {
+        PaperUploadResult result = recognitionService.upload(List.of(file));
+        return Map.of(
+            "resume", Map.of(
+                "id", result.paperId(),
+                "filename", file.getOriginalFilename(),
+                "analysisStatus", AsyncTaskStatus.COMPLETED.name()
+            ),
+            "storage", Map.of(
+                "fileKey", "",
+                "fileUrl", "",
+                "resumeId", result.paperId()
+            ),
+            "recognitionStatus", result.recognitionStatus().name(),
+            "enqueueAccepted", result.recognitionStatus() != RecognitionStatus.FAILED,
+            "message", result.message(),
+            "duplicate", result.duplicate()
+        );
+    }
+
     /**
      * 处理重复简历
      */
     private Map<String, Object> handleDuplicateResume(PracticePaperEntity resume) {
         log.info("检测到重复简历，返回历史分析结果: resumeId={}", resume.getId());
+
+        if (resume.getRecognitionStatus() != null
+            && resume.getRecognitionStatus() != RecognitionStatus.NONE
+            && resume.getRecognitionStatus() != RecognitionStatus.READY) {
+            return Map.of(
+                "resume", Map.of(
+                    "id", resume.getId(),
+                    "filename", resume.getOriginalFilename(),
+                    "analysisStatus", AsyncTaskStatus.COMPLETED.name()
+                ),
+                "storage", Map.of(
+                    "fileKey", resume.getStorageKey() != null ? resume.getStorageKey() : "",
+                    "fileUrl", resume.getStorageUrl() != null ? resume.getStorageUrl() : "",
+                    "resumeId", resume.getId()
+                ),
+                "recognitionStatus", resume.getRecognitionStatus().name(),
+                "enqueueAccepted", true,
+                "message", "检测到相同文件，已返回现有试卷（可继续预览校对）",
+                "duplicate", true
+            );
+        }
 
         // 获取历史解析摘要
         Optional<PaperAnalysisEntity> analysisOpt = persistenceService.getLatestAnalysis(resume.getId());

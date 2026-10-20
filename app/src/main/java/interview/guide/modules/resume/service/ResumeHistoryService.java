@@ -69,7 +69,8 @@ public class ResumeHistoryService {
                 lastAnalyzedAt,
                 interviewCount,
                 resume.getAnalysisStatus(),
-                resume.getAnalysisError()
+                resume.getAnalysisError(),
+                resume.getRecognitionStatus()
             );
         }).toList();
     }
@@ -107,6 +108,9 @@ public class ResumeHistoryService {
             resume.getResumeText(),
             resume.getAnalysisStatus(),
             resume.getAnalysisError(),
+            resume.getRecognitionStatus(),
+            resume.getRecognitionError(),
+            resume.getPageCount(),
             analysisHistory,
             interviewHistory
         );

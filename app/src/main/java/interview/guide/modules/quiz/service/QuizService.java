@@ -281,7 +281,9 @@ public class QuizService {
         origin.fullScore(),
         origin.questionType(),
         origin.options(),
-        origin.analysis());
+        origin.analysis(),
+        origin.sourcePageFrom(),
+        origin.sourcePageTo());
   }
 
   private String writeConfig(QuizConfig config) {

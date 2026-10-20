@@ -72,6 +72,54 @@ public class FileStorageService {
     }
 
     /**
+     * 上传字节数组（用于逐页渲染后的 JPEG、识别上传的原始文件）。
+     */
+    public String uploadBytes(byte[] data, String filename, String contentType, String prefix) {
+        String fileKey = generateFileKey(filename, prefix);
+        try {
+            PutObjectRequest putRequest = PutObjectRequest.builder()
+                .bucket(storageConfig.getBucket())
+                .key(fileKey)
+                .contentType(contentType)
+                .contentLength((long) data.length)
+                .build();
+            s3Client.putObject(putRequest, RequestBody.fromBytes(data));
+            log.info("字节文件上传成功: {} -> {} ({} bytes)", filename, fileKey, data.length);
+            return fileKey;
+        } catch (S3Exception e) {
+            log.error("上传字节文件到RustFS失败: {}", e.getMessage(), e);
+            throw new BusinessException(ErrorCode.STORAGE_UPLOAD_FAILED, "文件存储失败: " + e.getMessage());
+        }
+    }
+
+    /** 页图 key 带随机后缀：删页重排页码后不会与其它页的 key 冲突。 */
+    public String uploadPageImage(Long paperId, int pageNo, byte[] jpeg) {
+        String fileKey = pageImageKey(paperId, pageNo);
+        try {
+            PutObjectRequest putRequest = PutObjectRequest.builder()
+                .bucket(storageConfig.getBucket())
+                .key(fileKey)
+                .contentType("image/jpeg")
+                .contentLength((long) jpeg.length)
+                .build();
+            s3Client.putObject(putRequest, RequestBody.fromBytes(jpeg));
+            return fileKey;
+        } catch (S3Exception e) {
+            log.error("上传页图失败: paperId={}, pageNo={}, error={}", paperId, pageNo, e.getMessage(), e);
+            throw new BusinessException(ErrorCode.STORAGE_UPLOAD_FAILED, "页图存储失败");
+        }
+    }
+
+    public String pageImageKey(Long paperId, int pageNo) {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        return String.format("papers/%d/pages/%d-%s.jpg", paperId, pageNo, suffix);
+    }
+
+    public void deleteIfExists(String fileKey) {
+        deleteFile(fileKey);
+    }
+
+    /**
      * 删除知识库文件
      */
     public void deleteKnowledgeBase(String fileKey) {

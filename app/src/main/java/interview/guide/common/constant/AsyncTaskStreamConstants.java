@@ -93,6 +93,14 @@ public final class AsyncTaskStreamConstants {
      */
     public static final String FIELD_PAPER_ID = "paperId";
 
+    // ========== 试卷图片识别 Stream 配置 ==========
+
+    public static final String PAPER_RECOGNITION_STREAM_KEY = "paper:recognition:stream";
+
+    public static final String PAPER_RECOGNITION_GROUP_NAME = "paper-recognition-group";
+
+    public static final String PAPER_RECOGNITION_CONSUMER_PREFIX = "paper-recognition-consumer-";
+
     // ========== 面试评估 Stream 配置 ==========
 
     /**

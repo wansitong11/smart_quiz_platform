@@ -89,6 +89,38 @@ public class PracticePaperEntity {
     // 分析错误信息（失败时记录）
     @Column(length = 500)
     private String analysisError;
+
+    // ========== 图片 / 扫描件识别（与切题状态分开） ==========
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "recognition_status", nullable = false, length = 20)
+    private RecognitionStatus recognitionStatus = RecognitionStatus.NONE;
+
+    /** PDF_TEXT / PDF_SCAN / IMAGE / DOCX / DOC */
+    @Column(name = "source_type", nullable = false, length = 16)
+    private String sourceType = "PDF";
+
+    /** 结构预览缓存（行号块树），确认切题时可直接复用。 */
+    @Column(name = "structure_json", columnDefinition = "TEXT")
+    private String structureJson;
+
+    @Column(name = "structure_hash", length = 64)
+    private String structureHash;
+
+    @Column(name = "recognition_error", length = 500)
+    private String recognitionError;
+
+    @Column(name = "page_count")
+    private Integer pageCount;
+
+    @Column(name = "recognition_attempt_id", length = 36)
+    private String recognitionAttemptId;
+
+    @Column(name = "recognition_updated_at")
+    private java.time.LocalDateTime recognitionUpdatedAt;
+
+    @Column(name = "recognition_recovery_count", nullable = false)
+    private int recognitionRecoveryCount = 0;
     
     @PrePersist
     protected void onCreate() {

@@ -63,9 +63,13 @@ export default function ResumeDetailPage({
   // 待处理判断：显式的 PENDING/PROCESSING 状态，或状态未定义且无分析结果
   useEffect(() => {
     const isProcessing = resume && (
-      resume.analysisStatus === 'PENDING' ||
-      resume.analysisStatus === 'PROCESSING' ||
-      (resume.analysisStatus === undefined && (!resume.analyses || resume.analyses.length === 0))
+      resume.recognitionStatus !== 'NEEDS_REVIEW'
+      && resume.recognitionStatus !== 'FAILED'
+      && (
+        resume.analysisStatus === 'PENDING' ||
+        resume.analysisStatus === 'PROCESSING' ||
+        (resume.analysisStatus === undefined && (!resume.analyses || resume.analyses.length === 0))
+      )
     );
 
     if (isProcessing && !loading) {

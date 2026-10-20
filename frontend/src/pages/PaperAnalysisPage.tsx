@@ -21,6 +21,7 @@ import QuestionAnswerInput, {
   type AnswerValue,
 } from '../components/QuestionAnswerInput';
 import PaperTreeView from '../components/PaperTreeView';
+import PaperRecognitionPanel from '../components/paper-recognition/PaperRecognitionPanel';
 import { buildQuestionGroups, groupProgress, sectionTitlesOf } from '../utils/paperTree';
 import type { PaperTree } from '../types/interview';
 import { summarizeCategories, summarizePaperScore } from '../utils/paperScore';
@@ -28,7 +29,7 @@ import type { InterviewQuestion } from '../types/interview';
 import UploadPage from './UploadPage';
 import { ROUTES } from '../constants/routes';
 
-type Stage = 'upload' | 'extracting' | 'ready' | 'practice' | 'grading' | 'report';
+type Stage = 'upload' | 'recognition' | 'extracting' | 'ready' | 'practice' | 'grading' | 'report';
 
 const ANSWERS_STORAGE_PREFIX = 'smart-quiz-paper-answers:';
 const POLL_INTERVAL_MS = 2500;
@@ -52,6 +53,7 @@ export default function PaperAnalysisPage() {
   const [stage, setStage] = useState<Stage>('upload');
   const [paperDetail, setPaperDetail] = useState<ResumeDetail | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionPaperId, setSessionPaperId] = useState<number | null>(null);
   const [questions, setQuestions] = useState<InterviewQuestion[]>([]);
   const [paperTree, setPaperTree] = useState<PaperTree | null>(null);
   const [answers, setAnswers] = useState<Record<number, AnswerValue>>({});
@@ -71,6 +73,7 @@ export default function PaperAnalysisPage() {
   const loadQuestions = useCallback(async (id: string) => {
     const session = await interviewApi.getSession(id);
     setSessionId(id);
+    setSessionPaperId(session.paperId ?? null);
     setQuestions(session.questions ?? []);
     setPaperTree(session.paperTree ?? null);
     const cached = localStorage.getItem(ANSWERS_STORAGE_PREFIX + id);
@@ -116,6 +119,13 @@ export default function PaperAnalysisPage() {
     const detail = await historyApi.getResumeDetail(id);
     setPaperDetail(detail);
     const latest = detail.analyses?.[0];
+    const recognition = detail.recognitionStatus;
+    // 扫描件：识别 / 校对阶段优先；确认切题后 recognitionStatus=EXTRACTING，落回切题进度
+    if (recognition && recognition !== 'NONE' && recognition !== 'READY'
+      && recognition !== 'EXTRACTING') {
+      setStage('recognition');
+      return;
+    }
     if (detail.analysisStatus === 'COMPLETED' && latest?.practiceSessionId) {
       setStage('ready');
     } else if (detail.analysisStatus === 'FAILED') {
@@ -327,6 +337,16 @@ export default function PaperAnalysisPage() {
         />
       )}
 
+      {stage === 'recognition' && paperId && (
+        <PaperRecognitionPanel
+          paperId={paperId}
+          onConfirmed={() => {
+            setStage('extracting');
+            void loadPaper(paperId);
+          }}
+        />
+      )}
+
       {stage === 'ready' && (
         <ReadyPanel
           detail={paperDetail}
@@ -342,6 +362,7 @@ export default function PaperAnalysisPage() {
           answers={answers}
           answeredCount={answeredCount}
           totalFullScore={totalFullScore}
+          paperId={paperId ?? sessionPaperId ?? undefined}
           submitting={submitting}
           questionRefs={questionRefs}
           onAnswerChange={(index, value) =>
@@ -479,6 +500,7 @@ function PracticePanel({
   answers,
   answeredCount,
   totalFullScore,
+  paperId,
   submitting,
   questionRefs,
   onAnswerChange,
@@ -490,6 +512,7 @@ function PracticePanel({
   answers: Record<number, AnswerValue>;
   answeredCount: number;
   totalFullScore: number;
+  paperId?: number;
   submitting: boolean;
   questionRefs: MutableRefObject<Record<number, HTMLDivElement | null>>;
   onAnswerChange: (index: number, value: AnswerValue) => void;
@@ -572,6 +595,7 @@ function PracticePanel({
         <PaperTreeView
           tree={paperTree}
           answers={answers}
+          paperId={paperId}
           onAnswerChange={onAnswerChange}
         />
       ) : (
@@ -606,6 +630,7 @@ function PracticePanel({
             <QuestionAnswerInput
               question={question}
               value={answers[question.questionIndex] ?? EMPTY_ANSWER}
+              paperId={paperId}
               onChange={value => onAnswerChange(question.questionIndex, value)}
             />
           </motion.div>

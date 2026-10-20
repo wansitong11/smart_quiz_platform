@@ -13,6 +13,8 @@ export interface InterviewSession {
   subjectCategory?: string | null;
   /** 试卷层级树：卷 → 大题 → 小节 → 材料/题目 */
   paperTree?: PaperTree | null;
+  /** 来源试卷 ID：图形选项取资源用 */
+  paperId?: number | null;
 }
 
 /** 试卷层级树节点 */
@@ -28,7 +30,13 @@ export interface PaperNode {
   subtitle?: string | null;
   /** MATERIAL / INSTRUCTION 的正文 */
   content?: string | null;
-  meta?: { fullScore?: number | null; questionCount?: number | null; durationMinutes?: number | null } | null;
+  meta?: {
+    fullScore?: number | null;
+    questionCount?: number | null;
+    durationMinutes?: number | null;
+    /** 题干图 / 材料卡片 / 表格资源 */
+    assetIds?: string[] | null;
+  } | null;
   questionIndex?: number | null;
   question?: InterviewQuestion | null;
   children?: PaperNode[] | null;
@@ -48,6 +56,9 @@ export interface InterviewQuestion {
   questionType?: string | null;
   /** 选择题选项（无选项时为空） */
   options?: QuestionOption[] | null;
+  /** 题目来源页（扫描件识别时写入）：用于"查看原页" */
+  sourcePageFrom?: number | null;
+  sourcePageTo?: number | null;
   topicSummary?: string | null;
   userAnswer: string | null;
   score: number | null;
@@ -149,6 +160,8 @@ export interface BatchSubmitAnswerItem {
 export interface QuestionOption {
   key: string;
   text: string;
+  /** 图形选项：资源 key（通过 /api/papers/{id}/assets/{key} 获取） */
+  assetId?: string | null;
 }
 
 export interface BatchSubmitAnswerResponse {

@@ -86,6 +86,7 @@ export default function InterviewDetailPanel({ interview }: InterviewDetailPanel
         <QuestionsSection
         answers={interview.answers || []}
         optionsMap={optionsMap}
+        paperId={interview.resumeId}
         expandedQuestions={expandedQuestions}
         toggleQuestion={toggleQuestion}
       />
@@ -218,11 +219,13 @@ function ImprovementsSection({ improvements }: { improvements: string[] }) {
 function QuestionsSection({
   answers,
   optionsMap,
+  paperId,
   expandedQuestions,
   toggleQuestion
 }: {
   answers: any[];
   optionsMap: Map<number, NonNullable<InterviewQuestion['options']>>;
+  paperId?: number | null;
   expandedQuestions: Set<number>;
   toggleQuestion: (index: number) => void;
 }) {
@@ -242,6 +245,7 @@ function QuestionsSection({
             answer={answer}
             options={optionsMap.get(answer.questionIndex) ?? []}
             index={idx}
+            paperId={paperId}
             isExpanded={expandedQuestions.has(idx)}
             onToggle={() => toggleQuestion(idx)}
           />
@@ -256,12 +260,14 @@ function QuestionCard({
   answer,
   options,
   index,
+  paperId,
   isExpanded,
   onToggle
 }: {
   answer: any;
   options: NonNullable<InterviewQuestion['options']>;
   index: number;
+  paperId?: number | null;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -313,6 +319,7 @@ function QuestionCard({
             options={options}
             referenceAnswer={answer.referenceAnswer}
             chosenAnswer={answer.userAnswer}
+            paperId={paperId}
           />
         </div>
       )}

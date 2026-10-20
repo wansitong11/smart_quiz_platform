@@ -1,4 +1,5 @@
 import type { InterviewQuestion } from '../types/interview';
+import AssetImage from './AssetImage';
 
 interface ChoiceOptionsViewProps {
   options?: InterviewQuestion['options'] | null;
@@ -6,6 +7,7 @@ interface ChoiceOptionsViewProps {
   referenceAnswer?: string | null;
   /** 学生作答（选项 key 序列，如 "B" / "AC"） */
   chosenAnswer?: string | null;
+  paperId?: number | null;
 }
 
 /**
@@ -18,6 +20,7 @@ export default function ChoiceOptionsView({
   options,
   referenceAnswer,
   chosenAnswer,
+  paperId,
 }: ChoiceOptionsViewProps) {
   const list = options ?? [];
   if (list.length < 2) {
@@ -46,7 +49,14 @@ export default function ChoiceOptionsView({
               {option.key}
             </span>
             <span className="flex-1 text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
-              {option.text}
+              {option.assetId ? (
+                <AssetImage
+                  paperId={paperId}
+                  assetId={option.assetId}
+                  alt={`选项 ${option.key}`}
+                  className="max-h-24 object-contain"
+                />
+              ) : option.text}
             </span>
             {isCorrect && (
               <span className="text-xs text-emerald-600 dark:text-emerald-400 whitespace-nowrap">

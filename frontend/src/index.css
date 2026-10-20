@@ -276,3 +276,20 @@ input[type='password']::-ms-clear {
     @apply border-slate-800/30;
   }
 }
+/* 试卷行内标记 */
+.markup-dot {
+  text-emphasis: dot;
+  text-emphasis-position: under;
+  -webkit-text-emphasis: dot;
+  -webkit-text-emphasis-position: under;
+}
+
+.markup-underline {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markup-wavy {
+  text-decoration: underline wavy;
+  text-underline-offset: 2px;
+}

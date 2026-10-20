@@ -7,6 +7,9 @@ import topLevelAwait from 'vite-plugin-top-level-await'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8080'
+  // Windows/Hyper-V 会动态保留一段 TCP 端口（本机是 5141-5240），5173 落在其中时
+  // 绑定会直接 EACCES。默认改用 3000，可用 VITE_DEV_PORT 覆盖。
+  const devPort = Number(env.VITE_DEV_PORT || 3000)
 
   return {
     plugins: [
@@ -27,7 +30,9 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: '0.0.0.0',
-      port: 5173,
+      port: devPort,
+      // 端口被占用时直接报错，避免 Vite 自动 +1 又撞进系统保留段
+      strictPort: true,
       proxy: {
         '/ws': {
           target: apiProxyTarget,

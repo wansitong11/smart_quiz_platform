@@ -1,4 +1,5 @@
 import BatchUploadPage from '../components/batch-upload/BatchUploadPage';
+import ScanPaperUpload from '../components/paper-recognition/ScanPaperUpload';
 import { paperUploadAdapter } from '../api/batchUpload';
 import { PAPER_FILE_POLICY } from '../utils/batchUpload';
 
@@ -14,14 +15,23 @@ export default function UploadPage({ onBack, embedded = false, onOpenPaper }: {
   embedded?: boolean;
   onOpenPaper?: (paperId: number) => void;
 }) {
-  return <BatchUploadPage
-    entityLabel="试卷"
-    policy={PAPER_FILE_POLICY}
-    adapter={paperUploadAdapter}
-    backLabel="返回试卷管理"
-    onBack={onBack}
-    embedded={embedded}
-    onOpenProcessed={onOpenPaper}
-    openLabel="开始作答"
-  />;
+  return (
+    <div>
+      {onOpenPaper && (
+        <div className="mx-auto max-w-5xl px-0 pt-2">
+          <ScanPaperUpload onUploaded={onOpenPaper} />
+        </div>
+      )}
+      <BatchUploadPage
+        entityLabel="试卷"
+        policy={PAPER_FILE_POLICY}
+        adapter={paperUploadAdapter}
+        backLabel="返回试卷管理"
+        onBack={onBack}
+        embedded={embedded}
+        onOpenProcessed={onOpenPaper}
+        openLabel="开始作答"
+      />
+    </div>
+  );
 }

@@ -2,11 +2,15 @@ import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, FileText } from 'lucide-react';
 import type { PaperNode, PaperTree } from '../types/interview';
 import QuestionAnswerInput, { EMPTY_ANSWER, type AnswerValue } from './QuestionAnswerInput';
+import AssetImage from './AssetImage';
+import RichPaperText from './RichPaperText';
 
 interface PaperTreeViewProps {
   tree: PaperTree;
   answers: Record<number, AnswerValue>;
   disabled?: boolean;
+  /** 试卷 ID：图形选项取资源用 */
+  paperId?: number;
   onAnswerChange: (questionIndex: number, value: AnswerValue) => void;
 }
 
@@ -18,6 +22,7 @@ export default function PaperTreeView({
   tree,
   answers,
   disabled,
+  paperId,
   onAnswerChange,
 }: PaperTreeViewProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() =>
@@ -38,6 +43,7 @@ export default function PaperTreeView({
           node={node}
           answers={answers}
           disabled={disabled}
+          paperId={paperId}
           collapsed={collapsed}
           materialsOpen={materialsOpen}
           onToggle={toggle}
@@ -65,6 +71,7 @@ interface BlockProps {
   node: PaperNode;
   answers: Record<number, AnswerValue>;
   disabled?: boolean;
+  paperId?: number;
   collapsed: Record<string, boolean>;
   materialsOpen: Record<string, boolean>;
   onToggle: (id: string) => void;
@@ -76,6 +83,7 @@ function SectionBlock({
   node,
   answers,
   disabled,
+  paperId,
   collapsed,
   materialsOpen,
   onToggle,
@@ -132,6 +140,7 @@ function SectionBlock({
                   node={child}
                   answers={answers}
                   disabled={disabled}
+                  paperId={paperId}
                   collapsed={collapsed}
                   materialsOpen={materialsOpen}
                   onToggle={onToggle}
@@ -161,21 +170,72 @@ function SectionBlock({
                     </button>
                   </div>
                   {open && (
-                    <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
-                      {child.content}
-                    </p>
+                    <>
+                      <RichPaperText
+                        text={child.content}
+                        className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed"
+                      />
+                      {paperId && (child.meta?.assetIds?.length ?? 0) > 0 && (
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          {(child.meta?.assetIds ?? []).map(assetId => (
+                            <AssetImage
+                              key={assetId}
+                              paperId={paperId}
+                              assetId={assetId}
+                              alt={`${child.title || '材料'}图片`}
+                              className="max-h-56 w-full rounded-lg border border-slate-200 object-contain dark:border-slate-700"
+                            />
+                          ))}
+                        </div>
+                      )}
+                      {(child.children ?? []).length > 0 && (
+                        <div className="mt-4 space-y-3">
+                          {(child.children ?? []).map(grandChild => {
+                            if (grandChild.type === 'QUESTION') {
+                              return (
+                                <QuestionBlock
+                                  key={grandChild.id}
+                                  node={grandChild}
+                                  value={answers[grandChild.questionIndex ?? -1] ?? EMPTY_ANSWER}
+                                  disabled={disabled}
+                                  paperId={paperId}
+                                  onAnswerChange={onAnswerChange}
+                                />
+                              );
+                            }
+                            if (grandChild.type === 'SECTION') {
+                              return (
+                                <SectionBlock
+                                  key={grandChild.id}
+                                  node={grandChild}
+                                  answers={answers}
+                                  disabled={disabled}
+                                  paperId={paperId}
+                                  collapsed={collapsed}
+                                  materialsOpen={materialsOpen}
+                                  onToggle={onToggle}
+                                  onToggleMaterial={onToggleMaterial}
+                                  onAnswerChange={onAnswerChange}
+                                />
+                              );
+                            }
+                            return null;
+                          })}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               );
             }
             if (child.type === 'INSTRUCTION') {
               return (
-                <p
+                <div
                   key={child.id}
                   className="text-xs text-slate-500 dark:text-slate-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2"
                 >
-                  {child.content}
-                </p>
+                  <RichPaperText text={child.content} />
+                </div>
               );
             }
             return (
@@ -184,6 +244,7 @@ function SectionBlock({
                 node={child}
                 value={answers[child.questionIndex ?? -1] ?? EMPTY_ANSWER}
                 disabled={disabled}
+                paperId={paperId}
                 onAnswerChange={onAnswerChange}
               />
             );
@@ -198,11 +259,13 @@ function QuestionBlock({
   node,
   value,
   disabled,
+  paperId,
   onAnswerChange,
 }: {
   node: PaperNode;
   value: AnswerValue;
   disabled?: boolean;
+  paperId?: number;
   onAnswerChange: (questionIndex: number, value: AnswerValue) => void;
 }) {
   const question = node.question;
@@ -235,11 +298,28 @@ function QuestionBlock({
           </span>
         ) : null}
       </div>
-      <p className="text-slate-800 dark:text-slate-100 whitespace-pre-wrap mb-3">{question.question}</p>
+      <RichPaperText
+        text={question.question}
+        className="text-slate-800 dark:text-slate-100 whitespace-pre-wrap mb-3"
+      />
+      {paperId && (node.meta?.assetIds?.length ?? 0) > 0 && (
+        <div className="mb-3 grid gap-2 sm:grid-cols-2">
+          {(node.meta?.assetIds ?? []).map(assetId => (
+            <AssetImage
+              key={assetId}
+              paperId={paperId}
+              assetId={assetId}
+              alt={`第 ${questionIndex + 1} 题配图`}
+              className="max-h-56 w-full rounded-lg border border-slate-200 object-contain dark:border-slate-700"
+            />
+          ))}
+        </div>
+      )}
       <QuestionAnswerInput
         question={question}
         value={value}
         disabled={disabled}
+        paperId={paperId}
         onChange={next => onAnswerChange(questionIndex, next)}
       />
     </article>

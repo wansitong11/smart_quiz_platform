@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Settings, Plus, Trash2, Plug, CheckCircle, XCircle,
   Loader2, Eye, EyeOff, RefreshCw, Server, Edit2, Mic, Volume2, ChevronDown, Database,
+  Camera,
 } from 'lucide-react';
 import { llmProviderApi } from '../api/llmProvider';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -141,6 +142,7 @@ export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderItem[]>([]);
   const [defaultProviderId, setDefaultProviderId] = useState('');
   const [defaultEmbeddingProviderId, setDefaultEmbeddingProviderId] = useState('');
+  const [defaultVisionProviderId, setDefaultVisionProviderId] = useState('');
   const [loading, setLoading] = useState(true);
 
   // Modal state
@@ -156,6 +158,7 @@ export default function SettingsPage() {
   const [formEmbeddingModel, setFormEmbeddingModel] = useState('');
   const [formEmbeddingDimensions, setFormEmbeddingDimensions] = useState('1024');
   const [formSupportsEmbedding, setFormSupportsEmbedding] = useState(false);
+  const [formSupportsVision, setFormSupportsVision] = useState(false);
   const [formTemperature, setFormTemperature] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -178,6 +181,8 @@ export default function SettingsPage() {
   const [pendingDefaultEmbeddingProviderId, setPendingDefaultEmbeddingProviderId] = useState<string | null>(null);
   const [settingDefault, setSettingDefault] = useState(false);
   const [settingEmbeddingDefault, setSettingEmbeddingDefault] = useState(false);
+  const [pendingDefaultVisionProviderId, setPendingDefaultVisionProviderId] = useState<string | null>(null);
+  const [settingVisionDefault, setSettingVisionDefault] = useState(false);
 
   const pendingEmbeddingProvider = useMemo(
     () => providers.find(provider => provider.id === pendingDefaultEmbeddingProviderId) ?? null,
@@ -212,6 +217,10 @@ export default function SettingsPage() {
     defaultEmbeddingProviderId === providerId
   ), [defaultEmbeddingProviderId]);
 
+  const isDefaultVisionProvider = useCallback((providerId: string) => (
+    defaultVisionProviderId === providerId
+  ), [defaultVisionProviderId]);
+
   const loadData = useCallback(async () => {
     try {
       const [providerList, defaultProvider, asr, tts] = await Promise.all([
@@ -223,6 +232,7 @@ export default function SettingsPage() {
       setProviders(providerList);
       setDefaultProviderId(defaultProvider.defaultProvider);
       setDefaultEmbeddingProviderId(defaultProvider.defaultEmbeddingProvider);
+      setDefaultVisionProviderId(defaultProvider.defaultVisionProvider ?? '');
       setAsrConfig(asr);
       setTtsConfig(tts);
     } catch (err) {
@@ -247,6 +257,7 @@ export default function SettingsPage() {
     setFormEmbeddingModel('');
     setFormEmbeddingDimensions('1024');
     setFormSupportsEmbedding(false);
+    setFormSupportsVision(false);
     setShowApiKey(false);
     setShowModal(true);
   };
@@ -260,6 +271,7 @@ export default function SettingsPage() {
     setFormEmbeddingModel(provider.embeddingModel || '');
     setFormEmbeddingDimensions(provider.embeddingDimensions != null ? String(provider.embeddingDimensions) : '1024');
     setFormSupportsEmbedding(provider.supportsEmbedding);
+    setFormSupportsVision(provider.supportsVision);
     setFormTemperature(provider.temperature != null ? String(provider.temperature) : '');
     setShowApiKey(false);
     setShowModal(true);
@@ -293,6 +305,7 @@ export default function SettingsPage() {
         apiKey: formApiKey.trim(),
         model: formModel.trim(),
         supportsEmbedding: formSupportsEmbedding,
+        supportsVision: formSupportsVision,
       };
       if (formEmbeddingModel.trim()) {
         data.embeddingModel = formEmbeddingModel.trim();
@@ -336,6 +349,7 @@ export default function SettingsPage() {
         model: formModel.trim(),
         embeddingModel: formEmbeddingModel.trim(),
         supportsEmbedding: formSupportsEmbedding,
+        supportsVision: formSupportsVision,
       };
       if (formSupportsEmbedding) {
         data.embeddingDimensions = embeddingDimensions;
@@ -451,6 +465,36 @@ export default function SettingsPage() {
       showToast(err instanceof Error ? err.message : '设置默认向量 Provider 失败', 'error');
     } finally {
       setSettingEmbeddingDefault(false);
+    }
+  };
+
+  const handleSetVisionDefault = async (provider: ProviderItem) => {
+    if (!provider.supportsVision) {
+      showToast('该 Provider 未标记为支持图片输入，不能作为识图模型', 'error');
+      return;
+    }
+    setPendingDefaultVisionProviderId(provider.id);
+  };
+
+  const handleConfirmSetVisionDefault = async () => {
+    if (!pendingDefaultVisionProviderId) {
+      return;
+    }
+    setSettingVisionDefault(true);
+    try {
+      await llmProviderApi.updateDefaultVisionProvider({
+        defaultProvider: defaultProviderId,
+        defaultEmbeddingProvider: defaultEmbeddingProviderId,
+        defaultVisionProvider: pendingDefaultVisionProviderId,
+      });
+      showToast(`已将 "${pendingDefaultVisionProviderId}" 设为识图默认`);
+      setPendingDefaultVisionProviderId(null);
+      await loadData();
+    } catch (err) {
+      console.error('Failed to set vision default:', err);
+      showToast(err instanceof Error ? err.message : '设置识图 Provider 失败', 'error');
+    } finally {
+      setSettingVisionDefault(false);
     }
   };
 
@@ -628,6 +672,9 @@ export default function SettingsPage() {
                           {isEmbeddingDefault && (
                             <StatusBadge icon={<Database className="h-3 w-3" />}>向量默认</StatusBadge>
                           )}
+                          {isDefaultVisionProvider(provider.id) && (
+                            <StatusBadge icon={<Camera className="h-3 w-3" />}>识图默认</StatusBadge>
+                          )}
                         </div>
                       </div>
 
@@ -718,6 +765,15 @@ export default function SettingsPage() {
                         >
                           <Database className="w-3.5 h-3.5" />
                           设为向量
+                        </button>
+                        <button
+                          onClick={() => handleSetVisionDefault(provider)}
+                          disabled={!provider.supportsVision || isDefaultVisionProvider(provider.id) || settingVisionDefault}
+                          className={`${ACTION_BUTTON_CLASS} text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 disabled:hover:bg-transparent dark:disabled:hover:bg-transparent`}
+                          title={provider.supportsVision ? '设为默认识图模型' : '该 Provider 未标记为支持图片输入'}
+                        >
+                          <Camera className="w-3.5 h-3.5" />
+                          设为识图
                         </button>
                         <button
                           onClick={() => setDeleteConfirmId(provider.id)}
@@ -1109,6 +1165,24 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
+                  {/* Vision capability */}
+                  <div className="rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-600">
+                    <label className="flex items-start gap-3 text-sm text-slate-700 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={formSupportsVision}
+                        onChange={(e) => setFormSupportsVision(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <span>
+                        <span className="font-medium">支持图片输入（视觉模型）</span>
+                        <span className="mt-0.5 block text-xs text-slate-400">
+                          扫描件 / 拍照试卷识别会使用这个 Provider，例如 qwen-vl-max、glm-4v
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
                   {formSupportsEmbedding && (
                     <div>
                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
@@ -1404,6 +1478,21 @@ export default function SettingsPage() {
         onCancel={() => {
           if (!settingEmbeddingDefault) {
             setPendingDefaultEmbeddingProviderId(null);
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={pendingDefaultVisionProviderId !== null}
+        title="设为识图模型"
+        message={`确定要将 "${pendingDefaultVisionProviderId ?? ''}" 设为默认识图模型吗？扫描件与拍照试卷的逐页识别会使用这个模型。`}
+        confirmText="确认设置"
+        cancelText="取消"
+        loading={settingVisionDefault}
+        onConfirm={handleConfirmSetVisionDefault}
+        onCancel={() => {
+          if (!settingVisionDefault) {
+            setPendingDefaultVisionProviderId(null);
           }
         }}
       />

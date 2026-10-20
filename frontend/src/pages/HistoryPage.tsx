@@ -14,18 +14,29 @@ interface HistoryListProps {
   onSelectResume: (id: number) => void;
 }
 
-function isAnalyzing(status?: string): boolean {
+function isAnalyzing(status?: string, recognitionStatus?: string): boolean {
+  if (recognitionStatus === 'NEEDS_REVIEW' || recognitionStatus === 'FAILED') return false;
+  if (recognitionStatus === 'PENDING' || recognitionStatus === 'PROCESSING') return true;
   return status === 'PENDING' || status === 'PROCESSING';
 }
 
-function AnalyzeStatusIcon({status}: { status?: string }) {
+function AnalyzeStatusIcon({status, recognitionStatus}: { status?: string; recognitionStatus?: string }) {
+  if (recognitionStatus === 'FAILED') return <AlertCircle className="w-4 h-4 text-red-500 dark:text-red-400"/>;
+  if (recognitionStatus === 'NEEDS_REVIEW') return <Clock className="w-4 h-4 text-amber-500 dark:text-amber-400"/>;
+  if (recognitionStatus === 'PENDING' || recognitionStatus === 'PROCESSING') {
+    return <RefreshCw className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin"/>;
+  }
   if (status === 'FAILED') return <AlertCircle className="w-4 h-4 text-red-500 dark:text-red-400"/>;
   if (isAnalyzing(status)) return <RefreshCw className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin"/>;
   if (status === 'COMPLETED') return <CheckCircle className="w-4 h-4 text-green-500 dark:text-green-400"/>;
   return <Clock className="w-4 h-4 text-yellow-500 dark:text-yellow-400"/>;
 }
 
-function getAnalyzeStatusText(status?: string): string {
+function getAnalyzeStatusText(status?: string, recognitionStatus?: string): string {
+  if (recognitionStatus === 'FAILED') return '识别失败';
+  if (recognitionStatus === 'NEEDS_REVIEW') return '待校对';
+  if (recognitionStatus === 'PENDING' || recognitionStatus === 'PROCESSING') return '识别中';
+  if (recognitionStatus === 'EXTRACTING') return '切题中';
   if (status === 'FAILED') return '分析失败';
   if (status === 'PROCESSING') return '分析中';
   if (status === 'PENDING') return '等待分析';
@@ -38,6 +49,7 @@ function resumesEqual(a: ResumeListItem[], b: ResumeListItem[]): boolean {
   for (let i = 0; i < a.length; i++) {
     if (a[i].id !== b[i].id ||
         a[i].analysisStatus !== b[i].analysisStatus ||
+        a[i].recognitionStatus !== b[i].recognitionStatus ||
         a[i].latestScore !== b[i].latestScore) return false;
   }
   return true;
@@ -75,7 +87,7 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
   }, [loadResumes]);
 
   // 轮询：有分析中的简历时启动 3s 轮询
-  const hasAnalyzing = resumes.some(r => isAnalyzing(r.analysisStatus));
+  const hasAnalyzing = resumes.some(r => isAnalyzing(r.analysisStatus, r.recognitionStatus));
 
   useEffect(() => {
     if (!hasAnalyzing) return;
@@ -226,9 +238,9 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
                   <td className="px-6 py-5 text-slate-500 dark:text-slate-400">{formatDateOnly(resume.uploadedAt)}</td>
                   <td className="px-6 py-5">
                     <div className="flex items-center gap-2">
-                      <AnalyzeStatusIcon status={resume.analysisStatus}/>
+                      <AnalyzeStatusIcon status={resume.analysisStatus} recognitionStatus={resume.recognitionStatus}/>
                       <span className="text-sm text-slate-600 dark:text-slate-300">
-                        {getAnalyzeStatusText(resume.analysisStatus)}
+                        {getAnalyzeStatusText(resume.analysisStatus, resume.recognitionStatus)}
                       </span>
                     </div>
                   </td>

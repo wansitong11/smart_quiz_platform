@@ -1,6 +1,7 @@
 import { request } from './request';
 import { scopeQuery, type DataScopeParam } from './scope';
 import type { InterviewSession, PaperTree } from '../types/interview';
+import type { RecognitionStatus } from '../types/paperRecognition';
 
 export type AnalyzeStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 export type EvaluateStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
@@ -16,6 +17,7 @@ export interface ResumeListItem {
   interviewCount: number;
   analysisStatus?: AnalyzeStatus;
   analysisError?: string;
+  recognitionStatus?: RecognitionStatus;
   storageUrl?: string;
 }
 
@@ -49,6 +51,8 @@ export interface InterviewItem {
   overallScore: number | null;
   /** 会话来源：NORMAL / KNOWLEDGE_BASE / PAPER */
   sourceType?: string | null;
+  /** 来源试卷 ID（PAPER 会话） */
+  resumeId?: number | null;
   overallFeedback: string | null;
   createdAt: string;
   completedAt: string | null;
@@ -81,6 +85,10 @@ export interface ResumeDetail {
   resumeText: string;
   analysisStatus?: AnalyzeStatus;
   analysisError?: string;
+  /** 扫描件识别状态：NONE/READY 表示走普通文字链路 */
+  recognitionStatus?: RecognitionStatus;
+  recognitionError?: string | null;
+  pageCount?: number | null;
   analyses: AnalysisItem[];
   interviews: InterviewItem[];
 }

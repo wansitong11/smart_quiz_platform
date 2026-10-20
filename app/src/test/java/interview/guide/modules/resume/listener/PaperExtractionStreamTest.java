@@ -8,7 +8,10 @@ import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.model.PaperTree;
 import interview.guide.modules.interview.service.InterviewSessionService;
 import interview.guide.modules.resume.model.PracticePaperEntity;
+import interview.guide.modules.resume.repository.PaperPageRepository;
 import interview.guide.modules.resume.repository.ResumeRepository;
+import interview.guide.modules.resume.service.PageTextMerger;
+import interview.guide.modules.resume.service.PaperStructureService;
 import interview.guide.modules.resume.service.PaperExtractionResult;
 import interview.guide.modules.resume.service.PaperQuestionExtractionService;
 import interview.guide.modules.resume.service.ResumeParseService;
@@ -56,6 +59,12 @@ class PaperExtractionStreamTest {
   private ResumePersistenceService persistenceService;
   @Mock
   private ResumeParseService parseService;
+  @Mock
+  private PaperPageRepository pageRepository;
+  @Mock
+  private PageTextMerger pageTextMerger;
+  @Mock
+  private PaperStructureService structureService;
 
   private PaperExtractionStreamProducer producer;
   private PaperExtractionStreamConsumer consumer;
@@ -64,14 +73,14 @@ class PaperExtractionStreamTest {
   void setUp() {
     producer = new PaperExtractionStreamProducer(redisService, resumeRepository, transactionalExecutor);
     consumer = new PaperExtractionStreamConsumer(redisService, extractionService, interviewSessionService,
-        persistenceService, resumeRepository, parseService);
+        persistenceService, resumeRepository, parseService, pageRepository, pageTextMerger, structureService);
   }
 
   private InterviewQuestionDTO extractedQuestion() {
     return new InterviewQuestionDTO(0, "1. 下列读音正确的一项是", "SINGLE_CHOICE", "现代文阅读",
         "字音", null, null, null, false, null, "A", List.of("字音"), "选对得 3 分", null, 3,
         "SINGLE_CHOICE", List.of(new InterviewQuestionDTO.QuestionOption("A", "甲"),
-            new InterviewQuestionDTO.QuestionOption("B", "乙")), "甲项符合原文读音。");
+            new InterviewQuestionDTO.QuestionOption("B", "乙")), "甲项符合原文读音。", null, null);
   }
 
   private PaperExtractionResult extractionResult() {
@@ -98,7 +107,7 @@ class PaperExtractionStreamTest {
   }
 
   private InterviewSessionDTO createdSession() {
-    return new InterviewSessionDTO("session-1", "", 1, 0, List.of(), null, null, null, null);
+    return new InterviewSessionDTO("session-1", "", 1, 0, List.of(), null, null, null, null, null);
   }
 
   private void givenHeartbeatSucceeds() {
@@ -143,7 +152,7 @@ class PaperExtractionStreamTest {
     void shouldExtractFromDatabaseTextAndCreateSession() {
       when(resumeRepository.findById(5L))
           .thenReturn(Optional.of(paper("数据库中的试卷正文", "paper/5", "a.pdf")));
-      when(extractionService.extract("数据库中的试卷正文", null)).thenReturn(extractionResult());
+      when(extractionService.extract("数据库中的试卷正文", null, null)).thenReturn(extractionResult());
       when(interviewSessionService.createSessionFromQuestions(
           any(), any(), any(), eq("chinese"), anyString(), any(), any(), eq(5L), eq("PAPER")))
           .thenReturn(createdSession());
@@ -162,7 +171,7 @@ class PaperExtractionStreamTest {
       when(resumeRepository.findById(5L))
           .thenReturn(Optional.of(paper(null, "paper/5", "a.pdf")));
       when(parseService.downloadAndParseContent("paper/5", "a.pdf")).thenReturn("恢复的试卷正文");
-      when(extractionService.extract("恢复的试卷正文", null)).thenReturn(extractionResult());
+      when(extractionService.extract("恢复的试卷正文", null, null)).thenReturn(extractionResult());
       when(interviewSessionService.createSessionFromQuestions(
           any(), any(), any(), anyString(), anyString(), any(), any(), eq(5L), eq("PAPER")))
           .thenReturn(createdSession());

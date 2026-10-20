@@ -20,7 +20,7 @@ class PaperTreeTest {
         index, question, "SINGLE_CHOICE", "现代文阅读", null, null, null, null, false, null,
         "A", List.of("要点一"), "选对得满分", null, fullScore, InterviewQuestionDTO.TYPE_SINGLE_CHOICE,
         List.of(new QuestionOption("A", "选项甲"), new QuestionOption("B", "选项乙")),
-        "甲项与材料一致。"
+        "甲项与材料一致。", null, null
     );
   }
 

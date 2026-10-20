@@ -72,7 +72,7 @@ class KnowledgeBaseInterviewServiceTest {
     KnowledgeBaseInterviewService service = newService();
     KnowledgeBaseQuestionEntity question = questionWithFollowUp();
     InterviewSessionDTO expected =
-        new InterviewSessionDTO("session1", "", 2, 0, List.of(), SessionStatus.CREATED, 1L, null, null);
+        new InterviewSessionDTO("session1", "", 2, 0, List.of(), SessionStatus.CREATED, 1L, null, null, null);
     when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
@@ -105,7 +105,7 @@ class KnowledgeBaseInterviewServiceTest {
         1L, "mid", "Redis", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
         any(), eq(""), eq(KnowledgeBaseQuestionEntity.DEFAULT_SKILL_ID), eq("mid"), eq(1L), eq("Redis")))
-        .thenReturn(new InterviewSessionDTO("s", "", 1, 0, List.of(), SessionStatus.CREATED, 1L, "Redis", null));
+        .thenReturn(new InterviewSessionDTO("s", "", 1, 0, List.of(), SessionStatus.CREATED, 1L, "Redis", null, null));
 
     service.createSession(
         new CreateKnowledgeBaseInterviewRequest(1L, "Redis", "mid", 1, 0, ""));
@@ -126,7 +126,7 @@ class KnowledgeBaseInterviewServiceTest {
         1L, "mid", "MySQL", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
         any(), eq(""), eq(KnowledgeBaseQuestionEntity.DEFAULT_SKILL_ID), eq("mid"), eq(1L), eq("MySQL")))
-        .thenReturn(new InterviewSessionDTO("s", "", 1, 0, List.of(), SessionStatus.CREATED, 1L, "MySQL", null));
+        .thenReturn(new InterviewSessionDTO("s", "", 1, 0, List.of(), SessionStatus.CREATED, 1L, "MySQL", null, null));
 
     InterviewSessionDTO actual = service.createSession(
         new CreateKnowledgeBaseInterviewRequest(1L, "  MySQL  ", "mid", 1, 0, ""));
@@ -147,7 +147,7 @@ class KnowledgeBaseInterviewServiceTest {
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
         any(), eq(""), eq(KnowledgeBaseQuestionEntity.DEFAULT_SKILL_ID), eq("mid"), eq(1L), eq(null)))
-        .thenReturn(new InterviewSessionDTO("s", "", 3, 0, List.of(), SessionStatus.CREATED, 1L, null, null));
+        .thenReturn(new InterviewSessionDTO("s", "", 3, 0, List.of(), SessionStatus.CREATED, 1L, null, null, null));
 
     service.createSession(
         new CreateKnowledgeBaseInterviewRequest(1L, null, "mid", 1, 2, ""));

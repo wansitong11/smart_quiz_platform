@@ -66,7 +66,7 @@ class PaperAttemptServiceTest {
     return new InterviewQuestionDTO(
         index, "第 " + (index + 1) + " 题", "SINGLE_CHOICE", "现代文阅读", null,
         "A", 3, "答对", false, null, "A", List.of("要点一"), "选对得满分", null, 3,
-        InterviewQuestionDTO.TYPE_SINGLE_CHOICE, null, "甲项与材料一致。"
+        InterviewQuestionDTO.TYPE_SINGLE_CHOICE, null, "甲项与材料一致。", null, null
     );
   }
 
@@ -100,7 +100,7 @@ class PaperAttemptServiceTest {
     when(interviewPersistenceService.findByResumeId(PAPER_ID))
         .thenReturn(List.of(session(PracticeSessionEntity.SessionStatus.IN_PROGRESS)));
     InterviewSessionDTO existing = new InterviewSessionDTO("existing-session", "", 2, 0, List.of(),
-        InterviewSessionDTO.SessionStatus.IN_PROGRESS, null, null, null);
+        InterviewSessionDTO.SessionStatus.IN_PROGRESS, null, null, null, null);
     when(interviewSessionService.getSession("existing-session")).thenReturn(existing);
 
     InterviewSessionDTO result = service.startAttempt(PAPER_ID);
@@ -117,7 +117,7 @@ class PaperAttemptServiceTest {
     when(interviewPersistenceService.findByResumeId(PAPER_ID))
         .thenReturn(List.of(session(PracticeSessionEntity.SessionStatus.EVALUATED)));
     InterviewSessionDTO created = new InterviewSessionDTO("new-session", "", 2, 0, List.of(),
-        InterviewSessionDTO.SessionStatus.CREATED, null, null, null);
+        InterviewSessionDTO.SessionStatus.CREATED, null, null, null, null);
     when(interviewSessionService.createSessionFromQuestions(
         any(), any(), any(), any(), any(), any(), any(), eq(PAPER_ID), eq("PAPER")))
         .thenReturn(created);

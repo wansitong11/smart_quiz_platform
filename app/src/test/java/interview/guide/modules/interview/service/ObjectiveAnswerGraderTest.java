@@ -30,19 +30,19 @@ class ObjectiveAnswerGraderTest {
                                       String analysis) {
     return new InterviewQuestionDTO(0, "题干", questionType, "集合、不等式与向量", null, userAnswer,
         null, null, false, null, reference, List.of("集合的补集运算"), "选对得分", null, 5, questionType,
-        OPTIONS, analysis);
+        OPTIONS, analysis, null, null);
   }
 
   private InterviewQuestionDTO fillBlank(String reference, String userAnswer) {
     return new InterviewQuestionDTO(0, "补写句子", InterviewQuestionDTO.TYPE_FILL_BLANK, "名篇名句", null,
         userAnswer, null, null, false, null, reference, List.of(), "写对得分", null, 3,
-        InterviewQuestionDTO.TYPE_FILL_BLANK, null, null);
+        InterviewQuestionDTO.TYPE_FILL_BLANK, null, null, null, null);
   }
 
   private InterviewQuestionDTO subjective(String userAnswer) {
     return new InterviewQuestionDTO(0, "请分析表达效果", InterviewQuestionDTO.TYPE_SHORT_ANSWER, "现代文阅读",
         null, userAnswer, null, null, false, null, "参考答案要点", List.of("要点一"), "踩点给分", null, 6,
-        InterviewQuestionDTO.TYPE_SHORT_ANSWER, null, null);
+        InterviewQuestionDTO.TYPE_SHORT_ANSWER, null, null, null, null);
   }
 
   @Nested

@@ -1,10 +1,13 @@
 package interview.guide.common.async;
 
 import interview.guide.common.constant.AsyncTaskStreamConstants;
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
 import interview.guide.common.log.ErrorLogSanitizer;
 import interview.guide.infrastructure.redis.RedisService;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -22,21 +25,52 @@ public abstract class AbstractStreamProducer<T> {
 
     protected boolean sendTask(T payload) {
         try {
+            Map<String, String> message = new LinkedHashMap<>(buildMessage(payload));
+            attachCallContext(message);
             String messageId = redisService.streamAdd(
                 streamKey(),
-                buildMessage(payload),
+                message,
                 AsyncTaskStreamConstants.STREAM_MAX_LEN
             );
             log.info("{}任务已发送到Stream: {}, messageId={}",
                 taskDisplayName(), payloadIdentifier(payload), messageId);
             return true;
         } catch (Exception e) {
-            log.error("发送{}任务失败: {}, error={}",
-                taskDisplayName(), payloadIdentifier(payload), ErrorLogSanitizer.summarize(e),
-                ErrorLogSanitizer.forLogging(e));
+            logSendFailure(payload, e);
             onSendFailed(payload, "任务入队失败");
             return false;
         }
+    }
+
+    private void attachCallContext(Map<String, String> message) {
+        AiCallContext context = AiCallContextHolder.get();
+        if (context == null) {
+            return;
+        }
+        if (context.userId() != null) {
+            message.putIfAbsent(AsyncTaskStreamConstants.FIELD_OWNER_ID, context.userId().toString());
+        }
+        if (context.feature() != null) {
+            message.putIfAbsent(AsyncTaskStreamConstants.FIELD_AI_FEATURE, context.feature().name());
+        }
+        if (context.operation() != null) {
+            message.putIfAbsent(AsyncTaskStreamConstants.FIELD_AI_OPERATION, context.operation());
+        }
+        if (context.operationId() != null) {
+            message.putIfAbsent(AsyncTaskStreamConstants.FIELD_AI_OPERATION_ID, context.operationId());
+        }
+        if (context.requestId() != null) {
+            message.putIfAbsent(AsyncTaskStreamConstants.FIELD_AI_REQUEST_ID, context.requestId());
+        }
+    }
+
+    /**
+     * 业务子类可覆盖此方法接入专用诊断日志；默认保持其他模块原有脱敏行为。
+     */
+    protected void logSendFailure(T payload, Exception error) {
+        log.error("发送{}任务失败: {}, error={}",
+            taskDisplayName(), payloadIdentifier(payload), ErrorLogSanitizer.summarize(error),
+            ErrorLogSanitizer.forLogging(error));
     }
 
     protected String truncateError(String error) {

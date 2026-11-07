@@ -17,6 +17,13 @@ public final class AsyncTaskStreamConstants {
      */
     public static final String FIELD_RETRY_COUNT = "retryCount";
 
+    /** AI 成本归因：发起用户 / 功能 / 操作，由生产者线程上下文透传到 worker。 */
+    public static final String FIELD_OWNER_ID = "ownerId";
+    public static final String FIELD_AI_FEATURE = "aiFeature";
+    public static final String FIELD_AI_OPERATION = "aiOperation";
+    public static final String FIELD_AI_OPERATION_ID = "aiOperationId";
+    public static final String FIELD_AI_REQUEST_ID = "aiRequestId";
+
     // ========== 通用消费者配置 ==========
 
     /**
@@ -101,6 +108,14 @@ public final class AsyncTaskStreamConstants {
 
     public static final String PAPER_RECOGNITION_CONSUMER_PREFIX = "paper-recognition-consumer-";
 
+    // ========== 试卷原始文件输入处理 Stream 配置 ==========
+
+    public static final String PAPER_INPUT_STREAM_KEY = "paper:input:stream";
+
+    public static final String PAPER_INPUT_GROUP_NAME = "paper-input-group";
+
+    public static final String PAPER_INPUT_CONSUMER_PREFIX = "paper-input-consumer-";
+
     // ========== 面试评估 Stream 配置 ==========
 
     /**
@@ -117,6 +132,14 @@ public final class AsyncTaskStreamConstants {
      * 面试评估 Consumer 名称前缀
      */
     public static final String INTERVIEW_EVALUATE_CONSUMER_PREFIX = "evaluate-consumer-";
+
+    // ========== 面试出题 Stream 配置 ==========
+
+    public static final String INTERVIEW_QUESTION_GEN_STREAM_KEY = "interview:question-gen:stream";
+
+    public static final String INTERVIEW_QUESTION_GEN_GROUP_NAME = "interview-question-gen-group";
+
+    public static final String INTERVIEW_QUESTION_GEN_CONSUMER_PREFIX = "interview-question-gen-consumer-";
 
     /**
      * 面试会话ID字段

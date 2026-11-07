@@ -196,6 +196,31 @@ public class RedisService {
     /**
      * 执行带锁的操作
      */
+    public <T> T executeWithLock(String lockKey, long waitTime, TimeUnit unit,
+                                  LockedOperation<T> operation) {
+        RLock lock = redissonClient.getLock(lockKey);
+        try {
+            // 不传 leaseTime，交给 Redisson watchdog 自动续期。
+            if (lock.tryLock(waitTime, unit)) {
+                try {
+                    return operation.execute();
+                } finally {
+                    if (lock.isHeldByCurrentThread()) {
+                        lock.unlock();
+                    }
+                }
+            }
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "获取锁失败: " + lockKey);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "获取锁被中断: " + lockKey, e);
+        }
+    }
+
+    /**
+     * 执行带固定租期的锁操作。
+     * <p>租期可能在业务完成前到期，解锁前必须确认锁仍由当前线程持有。</p>
+     */
     public <T> T executeWithLock(String lockKey, long waitTime, long leaseTime,
                                   TimeUnit unit, LockedOperation<T> operation) {
         RLock lock = redissonClient.getLock(lockKey);
@@ -204,7 +229,9 @@ public class RedisService {
                 try {
                     return operation.execute();
                 } finally {
-                    lock.unlock();
+                    if (lock.isHeldByCurrentThread()) {
+                        lock.unlock();
+                    }
                 }
             }
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "获取锁失败: " + lockKey);
@@ -476,6 +503,14 @@ public class RedisService {
     public void streamAck(String streamKey, String groupName, StreamMessageId... ids) {
         RStream<String, String> stream = redissonClient.getStream(streamKey, StringCodec.INSTANCE);
         stream.ack(groupName, ids);
+    }
+
+    /**
+     * 获取 Consumer Group 的 Pending List 消息数。
+     */
+    public long streamPendingCount(String streamKey, String groupName) {
+        RStream<String, String> stream = redissonClient.getStream(streamKey, StringCodec.INSTANCE);
+        return stream.getPendingInfo(groupName).getTotal();
     }
 
     /**

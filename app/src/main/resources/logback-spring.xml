@@ -7,4 +7,41 @@
     <property name="CONSOLE_LOG_CHARSET" value="UTF-8"/>
     <property name="FILE_LOG_CHARSET" value="UTF-8"/>
     <include resource="org/springframework/boot/logging/logback/base.xml"/>
+
+    <!--
+      试卷链路专用输出：保留完整异常链、模型原始回包和多行文本，不做 ErrorLogSanitizer 脱敏。
+      additivity=false 保证它不会再次进入 root console，避免一次错误打印两遍。
+    -->
+    <appender name="PAPER_FLOW_CONSOLE"
+              class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <charset>${CONSOLE_LOG_CHARSET}</charset>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [traceId=%X{paperTraceId:-}] [stage=%X{paperStage:-}] [paperId=%X{paperId:-}] [pageNo=%X{pageNo:-}] [attemptId=%X{attemptId:-}] %logger{40} - %m%n%wEx</pattern>
+        </encoder>
+    </appender>
+
+    <!--
+      视觉链路诊断日志落盘：保存模型原始回包、解析路径和异常链，跨重启可查。
+      文件按大小与天数滚动，固定 UTF-8；密钥/令牌本来就不进入 paper.flow。
+    -->
+    <property name="PAPER_FLOW_LOG_FILE" value="${LOG_PATH:-logs}/paper-flow.log"/>
+    <appender name="PAPER_FLOW_FILE"
+              class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${PAPER_FLOW_LOG_FILE}</file>
+        <encoder>
+            <charset>${FILE_LOG_CHARSET}</charset>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [traceId=%X{paperTraceId:-}] [stage=%X{paperStage:-}] [paperId=%X{paperId:-}] [pageNo=%X{pageNo:-}] [attemptId=%X{attemptId:-}] %logger{40} - %m%n%wEx</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${PAPER_FLOW_LOG_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <logger name="paper.flow" level="TRACE" additivity="false">
+        <appender-ref ref="PAPER_FLOW_CONSOLE"/>
+        <appender-ref ref="PAPER_FLOW_FILE"/>
+    </logger>
 </configuration>

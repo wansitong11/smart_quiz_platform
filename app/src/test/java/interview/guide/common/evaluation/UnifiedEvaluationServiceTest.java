@@ -213,6 +213,22 @@ class UnifiedEvaluationServiceTest {
 
       assertThat(batchSizes()).containsExactly(8, 8, 1);
     }
+
+    @Test
+    @DisplayName("模型漏评一题时不生成 0 分评估结果")
+    void shouldNotFabricateZeroForMissingEvaluation() {
+      stubInvoker(idx -> idx == 1 ? null : 80);
+
+      EvaluationReport report = service.evaluate(
+          chatClient,
+          "missing-evaluation",
+          List.of(question(0, "Java 基础"), question(1, "Java 基础")),
+          null);
+
+      assertThat(report.questionDetails())
+          .extracting(EvaluationReport.QuestionEvaluation::questionIndex)
+          .containsExactly(0);
+    }
   }
 
   @Nested
@@ -328,7 +344,7 @@ class UnifiedEvaluationServiceTest {
     }
 
     @Test
-    @DisplayName("开关关闭：首轮失败后无额外调用，保持整批降级行为")
+    @DisplayName("开关关闭：首轮失败后无额外调用，整批不产出评估结果")
     void disabledKeepsLegacyDegrade() throws Exception {
       InterviewEvaluationProperties properties = new InterviewEvaluationProperties();
       properties.setFallbackSplitEnabled(false);
@@ -342,9 +358,7 @@ class UnifiedEvaluationServiceTest {
       EvaluationReport report = service.evaluate(chatClient, "f5", records, null);
 
       assertThat(batchCallCount()).isEqualTo(1);
-      for (int i = 0; i < 8; i++) {
-        assertThat(feedbackOf(report, i)).contains("该题未成功生成评估结果");
-      }
+      assertThat(report.questionDetails()).isEmpty();
     }
   }
 
@@ -353,8 +367,8 @@ class UnifiedEvaluationServiceTest {
   class Merging {
 
     @Test
-    @DisplayName("模型返回条数少于输入条数时缺失项按原索引降级为 0 分")
-    void shouldDegradeMissingIndexesToZero() {
+    @DisplayName("模型返回条数少于输入条数时只保留已评估题，不伪造 0 分")
+    void shouldKeepOnlyEvaluatedIndexes() {
       // 只返回索引 1 和 3（0-based），缺失 0 与 2
       stubInvoker(idx -> idx == 1 || idx == 3 ? 90 : null);
       List<interview.guide.common.evaluation.QaRecord> records = List.of(
@@ -363,9 +377,9 @@ class UnifiedEvaluationServiceTest {
 
       EvaluationReport report = service.evaluate(chatClient, "s6", records, null);
 
-      assertThat(scoreOf(report, 0)).isZero();
+      assertThat(report.questionDetails()).extracting(q -> q.questionIndex())
+          .containsExactly(1, 3);
       assertThat(scoreOf(report, 1)).isEqualTo(90);
-      assertThat(scoreOf(report, 2)).isZero();
       assertThat(scoreOf(report, 3)).isEqualTo(90);
     }
 
@@ -393,10 +407,10 @@ class UnifiedEvaluationServiceTest {
 
       EvaluationReport report = service.evaluate(chatClient, "s7", records, null);
 
+      assertThat(report.questionDetails()).extracting(q -> q.questionIndex())
+          .containsExactly(0, 2);
       assertThat(scoreOf(report, 0)).isEqualTo(60);
-      assertThat(scoreOf(report, 1)).isZero();
       assertThat(scoreOf(report, 2)).isEqualTo(70);
-      assertThat(report.questionDetails()).hasSize(3);
     }
 
     @Test

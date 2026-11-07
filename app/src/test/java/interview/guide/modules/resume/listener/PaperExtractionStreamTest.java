@@ -1,6 +1,13 @@
 package interview.guide.modules.resume.listener;
 
+import com.openai.core.http.Headers;
+import com.openai.errors.RateLimitException;
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
+import interview.guide.common.async.StreamWorkerRegistry;
 import interview.guide.common.transaction.TransactionalExecutor;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
@@ -8,14 +15,14 @@ import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.model.PaperTree;
 import interview.guide.modules.interview.service.InterviewSessionService;
 import interview.guide.modules.resume.model.PracticePaperEntity;
-import interview.guide.modules.resume.repository.PaperPageRepository;
 import interview.guide.modules.resume.repository.ResumeRepository;
-import interview.guide.modules.resume.service.PageTextMerger;
+import interview.guide.modules.resume.service.AnswerKeyPreparationService;
+import interview.guide.modules.resume.service.PaperTextPageBootstrapper;
 import interview.guide.modules.resume.service.PaperStructureService;
 import interview.guide.modules.resume.service.PaperExtractionResult;
-import interview.guide.modules.resume.service.PaperQuestionExtractionService;
 import interview.guide.modules.resume.service.ResumeParseService;
 import interview.guide.modules.resume.service.ResumePersistenceService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -42,17 +49,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("试卷切题 Stream ID-only 消息测试")
+@DisplayName("试卷切题 Stream 消息与用户上下文测试")
 class PaperExtractionStreamTest {
 
   @Mock
   private RedisService redisService;
   @Mock
+  private StreamWorkerRegistry workerRegistry;
+  @Mock
   private ResumeRepository resumeRepository;
   @Mock
   private TransactionalExecutor transactionalExecutor;
   @Mock
-  private PaperQuestionExtractionService extractionService;
+  private PaperTextPageBootstrapper textPageBootstrapper;
   @Mock
   private InterviewSessionService interviewSessionService;
   @Mock
@@ -60,27 +69,34 @@ class PaperExtractionStreamTest {
   @Mock
   private ResumeParseService parseService;
   @Mock
-  private PaperPageRepository pageRepository;
-  @Mock
-  private PageTextMerger pageTextMerger;
-  @Mock
   private PaperStructureService structureService;
+  @Mock
+  private AnswerKeyPreparationService answerKeyPreparationService;
 
   private PaperExtractionStreamProducer producer;
   private PaperExtractionStreamConsumer consumer;
 
   @BeforeEach
   void setUp() {
+    AiCallContextHolder.clear();
     producer = new PaperExtractionStreamProducer(redisService, resumeRepository, transactionalExecutor);
-    consumer = new PaperExtractionStreamConsumer(redisService, extractionService, interviewSessionService,
-        persistenceService, resumeRepository, parseService, pageRepository, pageTextMerger, structureService);
+    consumer = new PaperExtractionStreamConsumer(redisService, workerRegistry, textPageBootstrapper,
+        interviewSessionService,
+        persistenceService, resumeRepository, parseService, structureService,
+        answerKeyPreparationService);
+  }
+
+  @AfterEach
+  void tearDown() {
+    AiCallContextHolder.clear();
   }
 
   private InterviewQuestionDTO extractedQuestion() {
     return new InterviewQuestionDTO(0, "1. 下列读音正确的一项是", "SINGLE_CHOICE", "现代文阅读",
         "字音", null, null, null, false, null, "A", List.of("字音"), "选对得 3 分", null, 3,
         "SINGLE_CHOICE", List.of(new InterviewQuestionDTO.QuestionOption("A", "甲"),
-            new InterviewQuestionDTO.QuestionOption("B", "乙")), "甲项符合原文读音。", null, null);
+            new InterviewQuestionDTO.QuestionOption("B", "乙")), "甲项符合原文读音。", null, null,
+        null, null, null, false);
   }
 
   private PaperExtractionResult extractionResult() {
@@ -88,6 +104,13 @@ class PaperExtractionStreamTest {
     return new PaperExtractionResult("chinese",
         PaperTree.fromFlatQuestions(questions, "现代文阅读"),
         questions, 3, Map.of(), List.of());
+  }
+
+  private PaperStructureService.BuiltStructure builtStructure() {
+    PaperExtractionResult result = extractionResult();
+    return new PaperStructureService.BuiltStructure(
+        result.subjectId(), result.paperTree(), result.questions(),
+        result.totalScore(), result.warnings());
   }
 
   private PracticePaperEntity paper(String paperText, String storageKey, String filename) {
@@ -119,8 +142,10 @@ class PaperExtractionStreamTest {
   class ProducerTests {
 
     @Test
-    @DisplayName("Stream 消息只包含 paperId 与 retryCount")
-    void shouldSendIdOnlyMessage() {
+    @DisplayName("缺少调用上下文时按试卷归属补 ownerId 和默认功能")
+    void shouldFillOwnerAndFeatureWhenContextMissing() {
+      when(resumeRepository.findOwnerIdById(5L)).thenReturn(Optional.of(3L));
+
       producer.sendExtractTask(5L);
 
       @SuppressWarnings("unchecked")
@@ -129,7 +154,32 @@ class PaperExtractionStreamTest {
       assertThat(captor.getValue())
           .containsEntry("paperId", "5")
           .containsEntry("retryCount", "0")
-          .hasSize(2);
+          .containsEntry("ownerId", "3")
+          .containsEntry("aiFeature", "PAPER_EXTRACTION")
+          .hasSize(4);
+    }
+
+    @Test
+    @DisplayName("已有请求上下文时优先透传当前用户、功能与操作")
+    void shouldPreferRequestContext() {
+      AiCallContextHolder.set(new AiCallContext(
+          7L, AiFeature.PAPER_IMPORT, "upload", "req-1", "op-1", "SYNC"));
+
+      producer.sendExtractTask(5L);
+
+      @SuppressWarnings("unchecked")
+      ArgumentCaptor<Map<String, String>> captor = ArgumentCaptor.forClass(Map.class);
+      verify(redisService).streamAdd(anyString(), captor.capture(), anyInt());
+      verify(resumeRepository, never()).findOwnerIdById(anyLong());
+      assertThat(captor.getValue())
+          .containsEntry("paperId", "5")
+          .containsEntry("retryCount", "0")
+          .containsEntry("ownerId", "7")
+          .containsEntry("aiFeature", "PAPER_IMPORT")
+          .containsEntry("aiOperation", "upload")
+          .containsEntry("aiOperationId", "op-1")
+          .containsEntry("aiRequestId", "req-1")
+          .hasSize(7);
     }
   }
 
@@ -152,7 +202,10 @@ class PaperExtractionStreamTest {
     void shouldExtractFromDatabaseTextAndCreateSession() {
       when(resumeRepository.findById(5L))
           .thenReturn(Optional.of(paper("数据库中的试卷正文", "paper/5", "a.pdf")));
-      when(extractionService.extract("数据库中的试卷正文", null, null)).thenReturn(extractionResult());
+      PaperStructureService.BuiltStructure built = builtStructure();
+      when(structureService.build(5L)).thenReturn(built);
+      when(answerKeyPreparationService.prepare(eq(5L), eq(built), any(Runnable.class)))
+          .thenReturn(new AnswerKeyPreparationService.PreparedAnswerKeys(built, List.of()));
       when(interviewSessionService.createSessionFromQuestions(
           any(), any(), any(), eq("chinese"), anyString(), any(), any(), eq(5L), eq("PAPER")))
           .thenReturn(createdSession());
@@ -161,6 +214,8 @@ class PaperExtractionStreamTest {
       consumer.processBusiness(payload());
 
       verify(parseService, never()).downloadAndParseContent(anyString(), anyString());
+      verify(textPageBootstrapper).ensureReadyTextPage(5L, "数据库中的试卷正文");
+      verify(structureService).build(5L);
       verify(persistenceService).saveExtractionSummaryIfOwned(
           eq(5L), eq("attempt-1"), any(PaperExtractionResult.class), eq("session-1"));
     }
@@ -171,7 +226,10 @@ class PaperExtractionStreamTest {
       when(resumeRepository.findById(5L))
           .thenReturn(Optional.of(paper(null, "paper/5", "a.pdf")));
       when(parseService.downloadAndParseContent("paper/5", "a.pdf")).thenReturn("恢复的试卷正文");
-      when(extractionService.extract("恢复的试卷正文", null, null)).thenReturn(extractionResult());
+      PaperStructureService.BuiltStructure built = builtStructure();
+      when(structureService.build(5L)).thenReturn(built);
+      when(answerKeyPreparationService.prepare(eq(5L), eq(built), any(Runnable.class)))
+          .thenReturn(new AnswerKeyPreparationService.PreparedAnswerKeys(built, List.of()));
       when(interviewSessionService.createSessionFromQuestions(
           any(), any(), any(), anyString(), anyString(), any(), any(), eq(5L), eq("PAPER")))
           .thenReturn(createdSession());
@@ -180,6 +238,8 @@ class PaperExtractionStreamTest {
       consumer.processBusiness(payload());
 
       verify(persistenceService).updateResumeText(5L, "恢复的试卷正文");
+      verify(textPageBootstrapper).ensureReadyTextPage(5L, "恢复的试卷正文");
+      verify(structureService).build(5L);
       verify(persistenceService).saveExtractionSummaryIfOwned(
           eq(5L), eq("attempt-1"), any(PaperExtractionResult.class), eq("session-1"));
     }
@@ -195,7 +255,8 @@ class PaperExtractionStreamTest {
       assertThatThrownBy(() -> consumer.processBusiness(payload()))
           .isInstanceOf(BusinessException.class)
           .hasMessageContaining("无法获取试卷文本内容");
-      verify(extractionService, never()).extract(anyString(), any());
+      verify(textPageBootstrapper, never()).ensureReadyTextPage(anyLong(), anyString());
+      verify(structureService, never()).build(anyLong());
     }
 
     @Test
@@ -205,14 +266,52 @@ class PaperExtractionStreamTest {
 
       consumer.processBusiness(payload());
 
-      verify(extractionService, never()).extract(anyString(), any());
+      verify(textPageBootstrapper, never()).ensureReadyTextPage(anyLong(), anyString());
+      verify(structureService, never()).build(anyLong());
       verify(interviewSessionService, never()).createSessionFromQuestions(
           any(), any(), any(), anyString(), anyString(), any(), any(), anyLong(), anyString());
     }
 
     @Test
-    @DisplayName("重试消息只携带 paperId 与 retryCount")
-    void shouldRetryWithIdOnlyMessage() {
+    @DisplayName("结构阶段失败时标记 STRUCTURE，不回退旧切题")
+    void shouldSurfaceStructureFailureWithoutFallback() {
+      when(resumeRepository.findById(5L))
+          .thenReturn(Optional.of(paper("数据库中的试卷正文", "paper/5", "a.pdf")));
+      when(structureService.build(5L)).thenThrow(
+          new BusinessException(ErrorCode.PAPER_EXTRACTION_FAILED, "模型请求超时"));
+
+      assertThatThrownBy(() -> consumer.processBusiness(payload()))
+          .isInstanceOf(BusinessException.class)
+          .hasMessageContaining("STRUCTURE")
+          .hasMessageContaining("模型请求超时")
+          .satisfies(error -> assertThat(((BusinessException) error).getCode())
+              .isEqualTo(ErrorCode.AI_SERVICE_TIMEOUT.getCode()));
+    }
+
+    @Test
+    @DisplayName("结构阶段被包装的上游 429 仍按限流失败重试")
+    void shouldClassifyWrappedUpstreamRateLimitAsRetryable() {
+      when(resumeRepository.findById(5L))
+          .thenReturn(Optional.of(paper("数据库中的试卷正文", "paper/5", "a.pdf")));
+      RateLimitException rateLimit = RateLimitException.builder()
+          .headers(Headers.builder().put("retry-after", "5").build())
+          .build();
+      when(structureService.build(5L)).thenThrow(
+          new BusinessException(
+              ErrorCode.PAPER_EXTRACTION_FAILED, "模型调用失败", rateLimit));
+
+      assertThatThrownBy(() -> consumer.processBusiness(payload()))
+          .isInstanceOfSatisfying(BusinessException.class, error -> {
+            assertThat(error.getCode())
+                .isEqualTo(ErrorCode.AI_RATE_LIMIT_EXCEEDED.getCode());
+            assertThat(error.getCause()).isInstanceOf(BusinessException.class);
+            assertThat(error.getCause().getCause()).isSameAs(rateLimit);
+          });
+    }
+
+    @Test
+    @DisplayName("无上下文时重试消息仍只携带基础字段")
+    void shouldRetryWithBasicFieldsWhenContextMissing() {
       when(resumeRepository.resetAnalyzeToPending(eq(5L), eq("attempt-1"), any())).thenReturn(1);
       consumer.retryMessage(payload(), 3);
 
@@ -223,6 +322,27 @@ class PaperExtractionStreamTest {
           .containsEntry("paperId", "5")
           .containsEntry("retryCount", "3")
           .hasSize(2);
+    }
+
+    @Test
+    @DisplayName("重试消息保留用户与功能上下文")
+    void shouldPreserveAiContextOnRetry() {
+      AiCallContextHolder.set(new AiCallContext(
+          3L, AiFeature.PAPER_EXTRACTION, "confirm", null, null, "ASYNC"));
+      when(resumeRepository.resetAnalyzeToPending(eq(5L), eq("attempt-1"), any())).thenReturn(1);
+
+      consumer.retryMessage(payload(), 3);
+
+      @SuppressWarnings("unchecked")
+      ArgumentCaptor<Map<String, String>> captor = ArgumentCaptor.forClass(Map.class);
+      verify(redisService).streamAdd(anyString(), captor.capture(), anyInt());
+      assertThat(captor.getValue())
+          .containsEntry("paperId", "5")
+          .containsEntry("retryCount", "3")
+          .containsEntry("ownerId", "3")
+          .containsEntry("aiFeature", "PAPER_EXTRACTION")
+          .containsEntry("aiOperation", "confirm")
+          .hasSize(5);
     }
   }
 }

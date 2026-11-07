@@ -110,6 +110,8 @@ public class ResumeHistoryService {
             resume.getAnalysisError(),
             resume.getRecognitionStatus(),
             resume.getRecognitionError(),
+            resume.getInputStatus(),
+            resume.getInputError(),
             resume.getPageCount(),
             analysisHistory,
             interviewHistory

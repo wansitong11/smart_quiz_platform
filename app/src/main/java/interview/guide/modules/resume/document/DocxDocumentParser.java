@@ -3,6 +3,7 @@ package interview.guide.modules.resume.document;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.resume.model.PageSource;
+import interview.guide.modules.resume.log.PaperFlowLog;
 import interview.guide.modules.resume.service.PageImageNormalizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +43,8 @@ public class DocxDocumentParser implements DocumentParser {
 
   @Override
   public ParsedDocument parse(byte[] bytes, String filename, String contentType) {
+    PaperFlowLog.event("DOCX_PARSE_BEGIN filename={}, contentType={}, bytes={}",
+        filename, contentType, bytes == null ? 0 : bytes.length);
     List<String> warnings = new ArrayList<>();
     List<LineDraft> drafts = new ArrayList<>();
     try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(bytes))) {
@@ -53,8 +56,14 @@ public class DocxDocumentParser implements DocumentParser {
           assetSeq = readTable(table, drafts, assetSeq);
         }
       }
+      PaperFlowLog.event("DOCX_BODY_PARSED filename={}, paragraphsAndTables={}, drafts={}, "
+              + "assets={}",
+          filename, document.getBodyElements().size(), drafts.size(),
+          drafts.stream().mapToInt(draft -> draft.assets.size()).sum());
     } catch (IOException e) {
-      throw new BusinessException(ErrorCode.BAD_REQUEST, "无法打开 Word 文档，请确认文件未损坏");
+      PaperFlowLog.error("DOCX_PARSE_FAILED filename={}, bytes={}",
+          e, filename, bytes == null ? 0 : bytes.length);
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "无法打开 Word 文档，请确认文件未损坏", e);
     }
 
     List<ParsedPage> pages = new ArrayList<>();
@@ -69,9 +78,10 @@ public class DocxDocumentParser implements DocumentParser {
         pageAssets = new ArrayList<>();
       }
       String line = draft.text;
+      int lineIndex = pageLines.size();
       pageLines.add(line);
       for (DocAsset asset : draft.assets) {
-        pageAssets.add(asset);
+        pageAssets.add(asset.withAnchorLineIndex(lineIndex));
       }
     }
     if (!pageLines.isEmpty() || pages.isEmpty()) {
@@ -81,6 +91,9 @@ public class DocxDocumentParser implements DocumentParser {
     if (pages.size() == 1) {
       warnings.add("Word 文档未检测到分页符，按 40 行切分为逻辑页");
     }
+    PaperFlowLog.event("DOCX_PARSE_END filename={}, pages={}, lines={}, assets={}, warnings={}",
+        filename, pages.size(), drafts.size(),
+        pages.stream().mapToInt(page -> page.assets().size()).sum(), warnings);
     return new ParsedDocument("DOCX", pages, warnings);
   }
 
@@ -133,6 +146,8 @@ public class DocxDocumentParser implements DocumentParser {
             pictures.add(data);
           }
         } catch (Exception e) {
+          PaperFlowLog.error("DOCX_PICTURE_READ_FAILED filename={}, paragraph={}",
+              e, "unknown", paragraph.getText());
           log.warn("DOCX 图片读取失败: {}", e.getMessage());
         }
       }
@@ -158,6 +173,7 @@ public class DocxDocumentParser implements DocumentParser {
     try {
       return imageNormalizer.normalizeUploadedImage(data);
     } catch (Exception e) {
+      PaperFlowLog.error("DOCX_PICTURE_NORMALIZE_FAILED bytes={}", e, data == null ? 0 : data.length);
       return data;
     }
   }

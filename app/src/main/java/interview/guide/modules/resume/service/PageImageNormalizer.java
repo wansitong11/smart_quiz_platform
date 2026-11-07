@@ -28,6 +28,9 @@ import java.util.Iterator;
 public class PageImageNormalizer {
 
   private static final int MAX_EDGE = 2000;
+  private static final int MAX_ASSET_EDGE = 1600;
+  private static final int MIN_VISION_SHORT_EDGE = 240;
+  private static final int MAX_VISION_SCALE = 4;
   private static final float JPEG_QUALITY = 0.85f;
 
   /** 上传图片（JPG/PNG）→ 方向正确、尺寸受控的 JPEG。 */
@@ -52,6 +55,46 @@ public class PageImageNormalizer {
       graphics.dispose();
     }
     return encodeJpeg(rgb);
+  }
+
+  /**
+   * 模型调用前只做过小资源放大，不在这里执行任何裁剪。
+   * 图形 bbox 的安全扩张由 {@link PaperFigureCropResolver} 独立负责。
+   */
+  public byte[] prepareForVision(byte[] original) {
+    BufferedImage image = readImage(original);
+    return toJpeg(upscaleVisionAsset(image));
+  }
+
+  public BufferedImage upscaleVisionAsset(BufferedImage image) {
+    int width = image.getWidth();
+    int height = image.getHeight();
+    int shortEdge = Math.min(width, height);
+    if (shortEdge >= MIN_VISION_SHORT_EDGE) {
+      return image;
+    }
+    double ratio = Math.min(MAX_VISION_SCALE,
+        (double) MIN_VISION_SHORT_EDGE / Math.max(1, shortEdge));
+    if (Math.max(width, height) * ratio > MAX_ASSET_EDGE) {
+      ratio = (double) MAX_ASSET_EDGE / Math.max(width, height);
+    }
+    if (ratio <= 1.0) {
+      return image;
+    }
+    int targetWidth = Math.max(1, (int) Math.round(width * ratio));
+    int targetHeight = Math.max(1, (int) Math.round(height * ratio));
+    BufferedImage scaled = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB);
+    Graphics2D graphics = scaled.createGraphics();
+    try {
+      graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+          RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+      graphics.setRenderingHint(RenderingHints.KEY_RENDERING,
+          RenderingHints.VALUE_RENDER_QUALITY);
+      graphics.drawImage(image, 0, 0, targetWidth, targetHeight, null);
+    } finally {
+      graphics.dispose();
+    }
+    return scaled;
   }
 
   private BufferedImage readImage(byte[] bytes) {

@@ -55,6 +55,35 @@ public record InterviewDetailDTO(
         String feedback,
         String referenceAnswer,
         List<String> keyPoints,
-        LocalDateTime answeredAt
-    ) {}
+        LocalDateTime answeredAt,
+        String scoreStatus,
+        boolean lowConfidence,
+        Integer answerKeyConfidence,
+        String scoreMessage,
+        String analysis
+    ) {
+        public AnswerDetailDTO withFeedback(String feedback) {
+            return new AnswerDetailDTO(
+                questionIndex, question, category, userAnswer, score, feedback,
+                referenceAnswer, keyPoints, answeredAt, scoreStatus, lowConfidence,
+                answerKeyConfidence, scoreMessage, analysis);
+        }
+
+        public AnswerDetailDTO withAnswerKeyMeta(String scoreStatus,
+                                                 boolean lowConfidence,
+                                                 Integer answerKeyConfidence,
+                                                 String scoreMessage) {
+            return new AnswerDetailDTO(
+                questionIndex, question, category, userAnswer, score, feedback,
+                referenceAnswer, keyPoints, answeredAt, scoreStatus, lowConfidence,
+                answerKeyConfidence, scoreMessage, analysis);
+        }
+
+        public AnswerDetailDTO withAnalysis(String analysis) {
+            return new AnswerDetailDTO(
+                questionIndex, question, category, userAnswer, score, feedback,
+                referenceAnswer, keyPoints, answeredAt, scoreStatus, lowConfidence,
+                answerKeyConfidence, scoreMessage, analysis);
+        }
+    }
 }

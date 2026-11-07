@@ -3,6 +3,7 @@ package interview.guide.modules.resume.listener;
 import interview.guide.common.async.AbstractStreamProducer;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
 import interview.guide.infrastructure.redis.RedisService;
+import interview.guide.modules.resume.log.PaperFlowLog;
 import interview.guide.modules.resume.repository.ResumeRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -29,7 +30,10 @@ public class PaperRecognitionStreamProducer
   }
 
   public boolean sendRecognitionTask(Long paperId) {
-    return sendTask(new RecognitionTaskPayload(paperId));
+    PaperFlowLog.event("PAPER_RECOGNITION_PRODUCER_REQUEST paperId={}", paperId);
+    boolean sent = sendTask(new RecognitionTaskPayload(paperId));
+    PaperFlowLog.event("PAPER_RECOGNITION_PRODUCER_RESULT paperId={}, sent={}", paperId, sent);
+    return sent;
   }
 
   @Override
@@ -58,5 +62,10 @@ public class PaperRecognitionStreamProducer
   @Override
   protected void onSendFailed(RecognitionTaskPayload payload, String error) {
     resumeRepository.failRecognitionIfPending(payload.paperId(), truncateError(error), LocalDateTime.now());
+  }
+
+  @Override
+  protected void logSendFailure(RecognitionTaskPayload payload, Exception error) {
+    PaperFlowLog.error("PAPER_RECOGNITION_PRODUCER_FAILED paperId={}", error, payload.paperId());
   }
 }

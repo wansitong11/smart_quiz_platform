@@ -24,6 +24,12 @@ public interface ResumeRepository extends JpaRepository<PracticePaperEntity, Lon
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT r FROM PracticePaperEntity r WHERE r.id = :id")
     Optional<PracticePaperEntity> findByIdForUpdate(@Param("id") Long id);
+
+    /**
+     * 只取归属用户，避免异步任务补上下文时把试卷正文和结构快照整行加载出来。
+     */
+    @Query("SELECT r.ownerId FROM PracticePaperEntity r WHERE r.id = :id")
+    Optional<Long> findOwnerIdById(@Param("id") Long id);
     
     /**
      * 根据文件哈希查找简历（用于去重）
@@ -77,21 +83,25 @@ public interface ResumeRepository extends JpaRepository<PracticePaperEntity, Lon
     int completeAnalyzeIfProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
                                     @Param("now") LocalDateTime now);
 
-    /** 当前执行代次 PROCESSING → FAILED。 */
+    /** 当前执行代次 PROCESSING → FAILED；已确认的识图卷同步恢复到 READY。 */
     @Transactional
     @Modifying
     @Query("UPDATE PracticePaperEntity r SET r.analysisStatus = 'FAILED', r.analysisError = :error, "
-        + "r.analysisAttemptId = null, r.analysisUpdatedAt = :now "
+        + "r.analysisAttemptId = null, r.analysisUpdatedAt = :now, "
+        + "r.recognitionStatus = CASE WHEN r.recognitionStatus = 'EXTRACTING' "
+        + "THEN 'READY' ELSE r.recognitionStatus END "
         + "WHERE r.id = :id AND r.analysisStatus = 'PROCESSING' "
         + "AND r.analysisAttemptId = :attemptId")
     int failAnalyzeIfProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
                                 @Param("error") String error, @Param("now") LocalDateTime now);
 
-    /** 尚未领取的 PENDING → FAILED，用于生产者或恢复补投失败。 */
+    /** 尚未领取的 PENDING → FAILED；已确认的识图卷同步恢复到 READY。 */
     @Transactional
     @Modifying
     @Query("UPDATE PracticePaperEntity r SET r.analysisStatus = 'FAILED', r.analysisError = :error, "
-        + "r.analysisAttemptId = null, r.analysisUpdatedAt = :now "
+        + "r.analysisAttemptId = null, r.analysisUpdatedAt = :now, "
+        + "r.recognitionStatus = CASE WHEN r.recognitionStatus = 'EXTRACTING' "
+        + "THEN 'READY' ELSE r.recognitionStatus END "
         + "WHERE r.id = :id AND r.analysisStatus = 'PENDING'")
     int failAnalyzeIfPending(@Param("id") Long id, @Param("error") String error,
                              @Param("now") LocalDateTime now);
@@ -108,7 +118,9 @@ public interface ResumeRepository extends JpaRepository<PracticePaperEntity, Lon
     /** 恢复补投前原子推进时间（PENDING 且早于阈值） */
     @Transactional
     @Modifying
-    @Query("UPDATE PracticePaperEntity r SET r.analysisUpdatedAt = :now WHERE r.id = :id AND r.analysisStatus = 'PENDING' AND r.analysisUpdatedAt < :threshold")
+    @Query("UPDATE PracticePaperEntity r SET r.analysisUpdatedAt = :now WHERE r.id = :id AND r.analysisStatus = 'PENDING' AND r.analysisUpdatedAt < :threshold "
+        + "AND r.resumeText IS NOT NULL AND TRIM(r.resumeText) <> '' "
+        + "AND r.recognitionStatus IN ('NONE','EXTRACTING')")
     int touchQueuedAnalyzeForRecovery(@Param("id") Long id, @Param("threshold") LocalDateTime threshold, @Param("now") LocalDateTime now);
 
     /** PROCESSING 无进展超阈值 → PENDING */
@@ -116,7 +128,9 @@ public interface ResumeRepository extends JpaRepository<PracticePaperEntity, Lon
     @Modifying
     @Query("UPDATE PracticePaperEntity r SET r.analysisStatus = 'PENDING', r.analysisAttemptId = null, "
         + "r.analysisUpdatedAt = :now WHERE r.id = :id AND r.analysisStatus = 'PROCESSING' "
-        + "AND r.analysisUpdatedAt < :threshold")
+        + "AND r.analysisUpdatedAt < :threshold "
+        + "AND r.resumeText IS NOT NULL AND TRIM(r.resumeText) <> '' "
+        + "AND r.recognitionStatus IN ('NONE','EXTRACTING')")
     int resetStaleAnalyzeProcessing(@Param("id") Long id, @Param("threshold") LocalDateTime threshold, @Param("now") LocalDateTime now);
 
     /** 恢复计数 +1 */
@@ -131,9 +145,30 @@ public interface ResumeRepository extends JpaRepository<PracticePaperEntity, Lon
     @Query("UPDATE PracticePaperEntity r SET r.analysisRecoveryCount = 0 WHERE r.id = :id")
     int resetAnalysisRecoveryCount(@Param("id") Long id);
 
+    /** 原子推进试卷内容代次；多个页面并行完成时不能使用 Java 读后写。 */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE PracticePaperEntity r SET r.contentRevision = r.contentRevision + 1, "
+        + "r.analysisUpdatedAt = :now WHERE r.id = :paperId")
+    int incrementContentRevision(@Param("paperId") Long paperId,
+                                 @Param("now") LocalDateTime now);
+
     /** 卡住任务扫描（带每轮上限） */
     @Query("SELECT r FROM PracticePaperEntity r WHERE r.analysisStatus = :status AND r.analysisUpdatedAt < :threshold ORDER BY r.analysisUpdatedAt ASC")
     List<PracticePaperEntity> findStaleByAnalysisStatus(@Param("status") interview.guide.common.model.AsyncTaskStatus status,
+                                                @Param("threshold") LocalDateTime threshold,
+                                                Pageable pageable);
+
+    /**
+     * 切题卡住任务扫描：只返回「正文就绪」且识别状态为纯文字（NONE）或已确认切题（EXTRACTING）的记录。
+     * 未确认识别卷的 analysisStatus 也可能是 PENDING，必须在这里排除。
+     */
+    @Query("SELECT r FROM PracticePaperEntity r WHERE r.analysisStatus = :status "
+        + "AND r.resumeText IS NOT NULL AND TRIM(r.resumeText) <> '' "
+        + "AND r.recognitionStatus IN ('NONE','EXTRACTING') "
+        + "AND r.analysisUpdatedAt < :threshold ORDER BY r.analysisUpdatedAt ASC")
+    List<PracticePaperEntity> findStaleExtractableByAnalysisStatus(
+                                                @Param("status") interview.guide.common.model.AsyncTaskStatus status,
                                                 @Param("threshold") LocalDateTime threshold,
                                                 Pageable pageable);
 
@@ -221,6 +256,90 @@ public interface ResumeRepository extends JpaRepository<PracticePaperEntity, Lon
         + "AND r.recognitionUpdatedAt < :threshold ORDER BY r.recognitionUpdatedAt ASC")
     List<PracticePaperEntity> findStaleByRecognitionStatus(
         @Param("status") interview.guide.modules.resume.model.RecognitionStatus status,
+        @Param("threshold") LocalDateTime threshold,
+        Pageable pageable);
+
+    // ========== 输入处理（E 阶段）：与切题 / 识别同构的条件状态更新 ==========
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputStatus = 'PROCESSING', "
+        + "r.inputAttemptId = :attemptId, r.inputUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.inputStatus = 'PENDING'")
+    int tryMarkInputProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
+                               @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.inputStatus = 'PROCESSING' "
+        + "AND r.inputAttemptId = :attemptId")
+    int heartbeatInputProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
+                                 @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputStatus = 'COMPLETED', r.inputError = null, "
+        + "r.inputAttemptId = null, r.inputUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.inputStatus = 'PROCESSING' "
+        + "AND r.inputAttemptId = :attemptId")
+    int completeInputIfProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
+                                  @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputStatus = 'FAILED', r.inputError = :error, "
+        + "r.inputAttemptId = null, r.inputUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.inputStatus = 'PROCESSING' "
+        + "AND r.inputAttemptId = :attemptId")
+    int failInputIfProcessing(@Param("id") Long id, @Param("attemptId") String attemptId,
+                              @Param("error") String error, @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputStatus = 'FAILED', r.inputError = :error, "
+        + "r.inputAttemptId = null, r.inputUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.inputStatus = 'PENDING'")
+    int failInputIfPending(@Param("id") Long id, @Param("error") String error,
+                           @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputStatus = 'PENDING', r.inputAttemptId = null, "
+        + "r.inputUpdatedAt = :now WHERE r.id = :id AND r.inputStatus = 'PROCESSING' "
+        + "AND r.inputAttemptId = :attemptId")
+    int resetInputToPending(@Param("id") Long id, @Param("attemptId") String attemptId,
+                            @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputStatus = 'PENDING', r.inputError = null, "
+        + "r.inputAttemptId = null, r.inputUpdatedAt = :now "
+        + "WHERE r.id = :id AND r.inputStatus = 'FAILED'")
+    int retryInputFromFailed(@Param("id") Long id, @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputUpdatedAt = :now WHERE r.id = :id "
+        + "AND r.inputStatus = 'PENDING' AND r.inputUpdatedAt < :threshold")
+    int touchQueuedInputForRecovery(@Param("id") Long id,
+                                    @Param("threshold") LocalDateTime threshold,
+                                    @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputRecoveryCount = r.inputRecoveryCount + 1 WHERE r.id = :id")
+    int incrementInputRecoveryCount(@Param("id") Long id);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE PracticePaperEntity r SET r.inputRecoveryCount = 0 WHERE r.id = :id")
+    int resetInputRecoveryCount(@Param("id") Long id);
+
+    @Query("SELECT r FROM PracticePaperEntity r WHERE r.inputStatus = :status "
+        + "AND r.inputUpdatedAt < :threshold ORDER BY r.inputUpdatedAt ASC")
+    List<PracticePaperEntity> findStaleByInputStatus(
+        @Param("status") interview.guide.common.model.AsyncTaskStatus status,
         @Param("threshold") LocalDateTime threshold,
         Pageable pageable);
 }

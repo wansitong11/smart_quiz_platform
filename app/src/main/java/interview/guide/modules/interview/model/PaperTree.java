@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.UnaryOperator;
 
 /**
  * 试卷层级树：存储层唯一的题目数据源。
@@ -26,7 +27,7 @@ public record PaperTree(int version, PaperNode root) {
      */
     public static PaperTree parse(ObjectMapper objectMapper, String json) {
         if (json == null || json.isBlank()) {
-            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND, "试卷结构为空");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "试卷结构为空");
         }
         try {
             PaperTree tree = objectMapper.readValue(json, PaperTree.class);
@@ -96,7 +97,9 @@ public record PaperTree(int version, PaperNode root) {
         PaperNode.PaperMeta meta = new PaperNode.PaperMeta(totalScore, totalQuestions,
             node.meta() != null ? node.meta().durationMinutes() : null,
             node.meta() != null && node.meta().assetIds() != null
-                ? node.meta().assetIds() : List.of());
+                ? node.meta().assetIds() : List.of(),
+            node.meta() != null ? node.meta().startLine() : null,
+            node.meta() != null ? node.meta().endLine() : null);
         return new PaperNode(node.id(), node.type(), isRoot ? 0 : node.order(), depth, leaf,
             node.title(), node.subtitle(), node.content(), meta, node.questionIndex(),
             node.question(), children);
@@ -128,6 +131,34 @@ public record PaperTree(int version, PaperNode root) {
         return new PaperTree(version, replaceQuestions(root, byIndex));
     }
 
+    /**
+     * 学生端视图：移除树中全部答案键信息。
+     */
+    public PaperTree forAttemptView() {
+        return new PaperTree(version, sanitizeQuestions(root, InterviewQuestionDTO::forAttemptView));
+    }
+
+    /**
+     * 试卷概览视图：移除答案、解析、考点摘要与历史作答痕迹，仅保留题目展示内容。
+     */
+    public PaperTree forOverviewView() {
+        return new PaperTree(version, sanitizeQuestions(root, InterviewQuestionDTO::forOverviewView));
+    }
+
+    private static PaperNode sanitizeQuestions(
+        PaperNode node,
+        UnaryOperator<InterviewQuestionDTO> sanitizer
+    ) {
+        InterviewQuestionDTO question = node.question() == null
+            ? null : sanitizer.apply(node.question());
+        List<PaperNode> children = node.safeChildren().stream()
+            .map(child -> sanitizeQuestions(child, sanitizer))
+            .toList();
+        return new PaperNode(node.id(), node.type(), node.order(), node.depth(), node.leaf(),
+            node.title(), node.subtitle(), node.content(), node.meta(), node.questionIndex(),
+            question, children);
+    }
+
     private static PaperNode replaceQuestions(PaperNode node,
                                               java.util.Map<Integer, InterviewQuestionDTO> byIndex) {
         InterviewQuestionDTO question = node.question();
@@ -141,7 +172,9 @@ public record PaperTree(int version, PaperNode root) {
                         : (meta != null ? meta.fullScore() : null),
                     meta != null ? meta.questionCount() : 1,
                     meta != null ? meta.durationMinutes() : null,
-                    meta != null && meta.assetIds() != null ? meta.assetIds() : List.of()
+                    meta != null && meta.assetIds() != null ? meta.assetIds() : List.of(),
+                    meta != null ? meta.startLine() : null,
+                    meta != null ? meta.endLine() : null
                 );
             }
         }

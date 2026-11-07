@@ -33,4 +33,6 @@ public interface InterviewAnswerRepository extends JpaRepository<PracticeAnswerE
      * 根据会话 sessionId 和问题索引查找单条答案（用于 upsert）
      */
     Optional<PracticeAnswerEntity> findBySession_SessionIdAndQuestionIndex(String sessionId, Integer questionIndex);
+
+    boolean existsBySession_SessionId(String sessionId);
 }

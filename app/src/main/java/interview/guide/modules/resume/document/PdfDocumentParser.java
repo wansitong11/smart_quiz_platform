@@ -3,6 +3,7 @@ package interview.guide.modules.resume.document;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.resume.model.PageSource;
+import interview.guide.modules.resume.log.PaperFlowLog;
 import interview.guide.modules.resume.service.PageImageNormalizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +47,8 @@ public class PdfDocumentParser implements DocumentParser {
 
   @Override
   public ParsedDocument parse(byte[] bytes, String filename, String contentType) {
+    PaperFlowLog.event("PDF_PARSE_BEGIN filename={}, contentType={}, bytes={}",
+        filename, contentType, bytes == null ? 0 : bytes.length);
     List<ParsedPage> pages = new ArrayList<>();
     List<String> warnings = new ArrayList<>();
     boolean anyText = false;
@@ -62,10 +65,14 @@ public class PdfDocumentParser implements DocumentParser {
         String rawText = stripper.getText(document);
         List<String> lines = splitLines(rawText);
 
-        List<PlacedImage> images = collectImages(page);
+        List<PlacedImage> images = collectImages(page, pageNo);
         double coverage = imageCoverage(images, page);
         PageSource source = PageSourceDecider.decide(rawText, coverage);
         byte[] pageImage = renderPage(renderer, pageNo);
+        PaperFlowLog.event("PDF_PAGE_PARSED pageNo={}, rawChars={}, lines={}, images={}, "
+                + "imageCoverage={}, source={}, pageBytes={}",
+            pageNo, rawText == null ? 0 : rawText.length(), lines.size(), images.size(),
+            coverage, source, pageImage == null ? 0 : pageImage.length);
 
         List<DocAsset> assets = new ArrayList<>();
         if (source == PageSource.TEXT) {
@@ -83,7 +90,9 @@ public class PdfDocumentParser implements DocumentParser {
         pages.add(new ParsedPage(pageNo, source, lines, assets, pageImage, false, null));
       }
     } catch (IOException e) {
-      throw new BusinessException(ErrorCode.BAD_REQUEST, "无法打开 PDF，请确认文件未损坏");
+      PaperFlowLog.error("PDF_PARSE_FAILED filename={}, bytes={}",
+          e, filename, bytes == null ? 0 : bytes.length);
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "无法打开 PDF，请确认文件未损坏", e);
     }
     String sourceType = anyScan ? "PDF_SCAN" : "PDF_TEXT";
     if (anyText && anyScan) {
@@ -92,6 +101,8 @@ public class PdfDocumentParser implements DocumentParser {
     if (anyScan && anyText) {
       warnings.add("检测到混合 PDF：文字页直接使用文字层，扫描页走视觉识别");
     }
+    PaperFlowLog.event("PDF_PARSE_END filename={}, sourceType={}, pages={}, warnings={}",
+        filename, sourceType, pages.size(), warnings);
     return new ParsedDocument(sourceType, pages, warnings);
   }
 
@@ -118,16 +129,18 @@ public class PdfDocumentParser implements DocumentParser {
         image.flush();
       }
     } catch (IOException e) {
-      throw new BusinessException(ErrorCode.BAD_REQUEST, "PDF 第 " + pageNo + " 页渲染失败");
+      PaperFlowLog.error("PDF_PAGE_RENDER_FAILED pageNo={}", e, pageNo);
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "PDF 第 " + pageNo + " 页渲染失败", e);
     }
   }
 
-  private List<PlacedImage> collectImages(PDPage page) {
+  private List<PlacedImage> collectImages(PDPage page, int pageNo) {
     ImageCollector collector = new ImageCollector();
     try {
       collector.processPage(page);
       return collector.images;
     } catch (IOException e) {
+      PaperFlowLog.error("PDF_IMAGE_COLLECT_FAILED pageNo={}", e, pageNo);
       log.warn("PDF 图片定位失败，按无图处理: {}", e.getMessage());
       return List.of();
     }
@@ -162,25 +175,30 @@ public class PdfDocumentParser implements DocumentParser {
           + Math.abs(placed.matrix.getScalingFactorY())) / pageHeight;
       double w = Math.abs(placed.matrix.getScalingFactorX()) / pageWidth;
       double h = Math.abs(placed.matrix.getScalingFactorY()) / pageHeight;
-      String anchor = anchorText(lines, y + h / 2);
-      return new DocAsset(key, AssetKind.FIGURE, AssetRole.STEM, jpeg, anchor,
-          null, null, null, new double[] {x, y, w, h}, width, height);
+      Anchor anchor = anchorAt(lines, y + h / 2);
+      return new DocAsset(key, AssetKind.FIGURE, AssetRole.STEM, jpeg, anchor.text(),
+          null, null, null, new double[] {x, y, w, h}, width, height,
+          anchor.lineIndex());
     } catch (IOException e) {
+      PaperFlowLog.error("PDF_ASSET_CONVERT_FAILED key={}", e, key);
       log.warn("PDF 图片转码失败: {}", e.getMessage());
       return null;
     }
   }
 
-  private String anchorText(List<String> lines, double yNormalized) {
+  private Anchor anchorAt(List<String> lines, double yNormalized) {
     if (lines.isEmpty()) {
-      return null;
+      return new Anchor(null, null);
     }
     int index = (int) Math.round(yNormalized * lines.size());
     index = Math.max(0, Math.min(lines.size() - 1, index));
-    return lines.get(index);
+    return new Anchor(lines.get(index), index);
   }
 
   private record PlacedImage(PDImageXObject image, Matrix matrix) {
+  }
+
+  private record Anchor(String text, Integer lineIndex) {
   }
 
   private static final class ImageCollector extends PDFStreamEngine {

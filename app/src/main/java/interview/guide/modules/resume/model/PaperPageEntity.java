@@ -80,8 +80,16 @@ public class PaperPageEntity {
   @Column(length = 500)
   private String error;
 
+  /** 识别失败诊断快照（JSON）；只存结构化字段与锚点摘要，不存模型原始输出。 */
+  @Column(name = "diagnostic_json", columnDefinition = "TEXT")
+  private String diagnosticJson;
+
   @Column(nullable = false)
   private int attempt;
+
+  /** 当前页级识别执行代次；终态写入必须匹配该值。 */
+  @Column(name = "recognition_attempt_id", length = 36)
+  private String recognitionAttemptId;
 
   @Column(name = "updated_at", nullable = false)
   private LocalDateTime updatedAt;

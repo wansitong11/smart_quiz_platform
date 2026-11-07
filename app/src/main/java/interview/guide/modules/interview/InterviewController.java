@@ -1,5 +1,11 @@
 package interview.guide.modules.interview;
 
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiCost;
+import interview.guide.common.ai.AiCostControl;
+import interview.guide.common.ai.AiCostEstimateInput;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.result.Result;
@@ -7,7 +13,6 @@ import interview.guide.modules.interview.model.BatchSubmitAnswerRequest;
 import interview.guide.modules.interview.model.BatchSubmitAnswerResponse;
 import interview.guide.modules.interview.model.CreateInterviewRequest;
 import interview.guide.modules.interview.model.InterviewDetailDTO;
-import interview.guide.modules.interview.model.InterviewReportDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.model.SessionListItemDTO;
 import interview.guide.modules.interview.model.SubmitAnswerRequest;
@@ -52,6 +57,7 @@ public class InterviewController {
     private final InterviewHistoryService historyService;
     private final InterviewPersistenceService persistenceService;
     private final PaperAttemptService paperAttemptService;
+    private final AiCostControl aiCostControl;
     
     /**
      * 列出所有面试会话（用于面试记录页）
@@ -86,12 +92,22 @@ public class InterviewController {
      * 创建面试会话
      */
     @PostMapping("/api/interview/sessions")
+    @AiCost(feature = AiFeature.INTERVIEW_QUESTION_GEN, operation = "create")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 5)
     @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
     public Result<InterviewSessionDTO> createSession(@RequestBody CreateInterviewRequest request) {
         log.info("创建面试会话，题目数量: {}", request.questionCount());
         InterviewSessionDTO session = sessionService.createSession(request);
         return Result.success(session);
+    }
+
+    /**
+     * 重新出题（仅异步出题失败后允许）
+     */
+    @PostMapping("/api/interview/sessions/{sessionId}/questions/retry")
+    @AiCost(feature = AiFeature.INTERVIEW_QUESTION_GEN, operation = "retry")
+    public Result<InterviewSessionDTO> retryQuestionGeneration(@PathVariable String sessionId) {
+        return Result.success(sessionService.retryQuestionGeneration(sessionId));
     }
     
     /**
@@ -115,6 +131,7 @@ public class InterviewController {
      * 提交答案
      */
     @PostMapping("/api/interview/sessions/{sessionId}/answers")
+    @AiCost(feature = AiFeature.ANSWER_EVALUATE, operation = "submit")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
     public Result<SubmitAnswerResponse> submitAnswer(
             @PathVariable String sessionId,
@@ -123,8 +140,17 @@ public class InterviewController {
         String answer = (String) body.get("answer");
         log.info("提交答案: 会话{}, 问题{}", sessionId, questionIndex);
         SubmitAnswerRequest request = new SubmitAnswerRequest(sessionId, questionIndex, answer);
-        SubmitAnswerResponse response = sessionService.submitAnswer(request);
-        return Result.success(response);
+        reserveAnswerEvaluation(1);
+        try {
+            SubmitAnswerResponse response = sessionService.submitAnswer(request);
+            if (response.hasNextQuestion()) {
+                finalizeCurrentAiOperation();
+            }
+            return Result.success(response);
+        } catch (RuntimeException e) {
+            finalizeCurrentAiOperation();
+            throw e;
+        }
     }
     
     /**
@@ -135,24 +161,20 @@ public class InterviewController {
      * </p>
      */
     @PostMapping("/api/interview/sessions/{sessionId}/answers/batch")
+    @AiCost(feature = AiFeature.ANSWER_EVALUATE, operation = "submit")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
     @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
     public Result<BatchSubmitAnswerResponse> submitWholePaper(
             @PathVariable String sessionId,
             @Valid @RequestBody BatchSubmitAnswerRequest request) {
         log.info("整卷交卷: 会话{}, 提交{}题", sessionId, request.answers().size());
-        BatchSubmitAnswerResponse response = sessionService.submitWholePaper(sessionId, request.answers());
-        return Result.success(response);
-    }
-
-    /**
-     * 生成面试报告
-     */
-    @GetMapping("/api/interview/sessions/{sessionId}/report")
-    public Result<InterviewReportDTO> getReport(@PathVariable String sessionId) {
-        log.info("生成面试报告: {}", sessionId);
-        InterviewReportDTO report = sessionService.generateReport(sessionId);
-        return Result.success(report);
+        reserveAnswerEvaluation(request.answers().size());
+        try {
+            return Result.success(sessionService.submitWholePaper(sessionId, request.answers()));
+        } catch (RuntimeException e) {
+            finalizeCurrentAiOperation();
+            throw e;
+        }
     }
 
     /**
@@ -163,9 +185,20 @@ public class InterviewController {
      * </p>
      */
     @PostMapping("/api/interview/sessions/{sessionId}/attempts")
+    @AiCost(feature = AiFeature.PAPER_EXTRACTION, operation = "startAttemptFromSession")
     public Result<InterviewSessionDTO> startAttempt(@PathVariable String sessionId) {
         log.info("再练一遍: 会话{}", sessionId);
-        return Result.success(paperAttemptService.startAttemptFromSession(sessionId));
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.PAPER_EXTRACTION,
+            new AiCostEstimateInput(1L, null, null, null, null));
+        try {
+            return Result.success(paperAttemptService.startAttemptFromSession(sessionId));
+        } finally {
+            finalizeOperation(context);
+        }
     }
     
     /**
@@ -196,10 +229,39 @@ public class InterviewController {
      * 提前交卷
      */
     @PostMapping("/api/interview/sessions/{sessionId}/complete")
+    @AiCost(feature = AiFeature.ANSWER_EVALUATE, operation = "complete")
     public Result<Void> completeInterview(@PathVariable String sessionId) {
         log.info("提前交卷: {}", sessionId);
-        sessionService.completeInterview(sessionId);
-        return Result.success(null);
+        reserveAnswerEvaluation(1);
+        try {
+            sessionService.completeInterview(sessionId);
+            return Result.success(null);
+        } catch (RuntimeException e) {
+            finalizeCurrentAiOperation();
+            throw e;
+        }
+    }
+
+    private void reserveAnswerEvaluation(long questionCount) {
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.ANSWER_EVALUATE,
+            new AiCostEstimateInput(null, questionCount, null, null, null));
+    }
+
+    private void finalizeCurrentAiOperation() {
+        AiCallContext context = AiCallContextHolder.get();
+        if (context != null && context.operationId() != null) {
+            aiCostControl.finalize(context.operationId());
+        }
+    }
+
+    private void finalizeOperation(AiCallContext context) {
+        if (context != null && context.operationId() != null) {
+            aiCostControl.finalize(context.operationId());
+        }
     }
     
     /**

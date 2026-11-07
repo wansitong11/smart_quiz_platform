@@ -1,10 +1,11 @@
 package interview.guide.modules.interview.service;
 
-import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.common.ai.AiCostControl;
 import interview.guide.infrastructure.redis.InterviewSessionCache;
 import interview.guide.infrastructure.redis.InterviewSessionCache.CachedSession;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.interview.listener.EvaluateStreamProducer;
+import interview.guide.modules.interview.listener.InterviewQuestionGenStreamProducer;
 import interview.guide.modules.interview.model.CreateInterviewRequest;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
@@ -38,17 +39,17 @@ class InterviewSessionIdempotencyTest {
   @Mock
   private InterviewQuestionService questionService;
   @Mock
-  private AnswerEvaluationService evaluationService;
-  @Mock
   private InterviewPersistenceService persistenceService;
   @Mock
   private InterviewSessionCache sessionCache;
   @Mock
   private EvaluateStreamProducer evaluateStreamProducer;
   @Mock
-  private LlmProviderRegistry llmProviderRegistry;
+  private InterviewQuestionGenStreamProducer questionGenStreamProducer;
   @Mock
   private RedisService redisService;
+  @Mock
+  private AiCostControl aiCostControl;
 
   private ObjectMapper objectMapper;
   private InterviewSessionService service;
@@ -58,13 +59,13 @@ class InterviewSessionIdempotencyTest {
     objectMapper = new ObjectMapper();
     service = new InterviewSessionService(
         questionService,
-        evaluationService,
         persistenceService,
         sessionCache,
         objectMapper,
         evaluateStreamProducer,
-        llmProviderRegistry,
-        redisService
+        questionGenStreamProducer,
+        redisService,
+        aiCostControl
     );
     when(redisService.executeWithLock(anyString(), anyLong(), anyLong(), any(), any()))
         .thenAnswer(invocation -> {

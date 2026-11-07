@@ -30,19 +30,21 @@ class ObjectiveAnswerGraderTest {
                                       String analysis) {
     return new InterviewQuestionDTO(0, "题干", questionType, "集合、不等式与向量", null, userAnswer,
         null, null, false, null, reference, List.of("集合的补集运算"), "选对得分", null, 5, questionType,
-        OPTIONS, analysis, null, null);
+        OPTIONS, analysis, null, null, null, null, null, false);
   }
 
   private InterviewQuestionDTO fillBlank(String reference, String userAnswer) {
     return new InterviewQuestionDTO(0, "补写句子", InterviewQuestionDTO.TYPE_FILL_BLANK, "名篇名句", null,
         userAnswer, null, null, false, null, reference, List.of(), "写对得分", null, 3,
-        InterviewQuestionDTO.TYPE_FILL_BLANK, null, null, null, null);
+        InterviewQuestionDTO.TYPE_FILL_BLANK, null, null, null, null,
+        null, null, null, false);
   }
 
   private InterviewQuestionDTO subjective(String userAnswer) {
     return new InterviewQuestionDTO(0, "请分析表达效果", InterviewQuestionDTO.TYPE_SHORT_ANSWER, "现代文阅读",
         null, userAnswer, null, null, false, null, "参考答案要点", List.of("要点一"), "踩点给分", null, 6,
-        InterviewQuestionDTO.TYPE_SHORT_ANSWER, null, null, null, null);
+        InterviewQuestionDTO.TYPE_SHORT_ANSWER, null, null, null, null,
+        null, null, null, false);
   }
 
   @Nested
@@ -102,15 +104,16 @@ class ObjectiveAnswerGraderTest {
     }
 
     @Test
-    @DisplayName("评语带解析与考点，没有解析时退回考点与评分标准")
-    void shouldAppendAnalysisAndKnowledgePoints() {
+    @DisplayName("评语只补充考点，不重复题目解析")
+    void shouldAppendKnowledgePointsWithoutDuplicatingAnalysis() {
       ObjectiveAnswerGrader.Grade graded = grader.grade(choice("SINGLE_CHOICE", "C", "B",
           "A 的补集与 B 无交集，故选 C；B 项忽略了开闭区间。")).orElseThrow();
 
       assertThat(graded.feedback())
           .contains("选择错误：你选了 B，正确答案 C。")
-          .contains("解析：A 的补集与 B 无交集")
-          .contains("考点：集合的补集运算");
+          .contains("考点：集合的补集运算")
+          .doesNotContain("解析：")
+          .doesNotContain("A 的补集与 B 无交集");
 
       // 没有解析时，评语里至少还有考点，避免只剩一句对错
       assertThat(grader.grade(choice("SINGLE_CHOICE", "C", "B")).orElseThrow().feedback())
@@ -157,6 +160,34 @@ class ObjectiveAnswerGraderTest {
     void shouldSkipSubjective() {
       assertThat(grader.grade(subjective("运用比喻……"))).isEmpty();
       assertThat(grader.grade(subjective(""))).isEmpty();
+    }
+  }
+
+  @Nested
+  @DisplayName("判断题")
+  class TrueFalseTests {
+
+    private final List<QuestionOption> TRUE_FALSE_OPTIONS = List.of(
+        new QuestionOption("A", "正确"), new QuestionOption("B", "错误"));
+
+    private InterviewQuestionDTO trueFalse(String reference, String userAnswer) {
+      return new InterviewQuestionDTO(0, "增值税一般纳税人取得的进项税额均可抵扣",
+          InterviewQuestionDTO.TYPE_TRUE_FALSE, "增值税", null, userAnswer, null, null, false, null,
+          reference, List.of("进项税额抵扣"), "判断正确得分", null, 1,
+          InterviewQuestionDTO.TYPE_TRUE_FALSE, TRUE_FALSE_OPTIONS, null, null, null,
+          null, null, null, false);
+    }
+
+    @Test
+    @DisplayName("判断题按单选同路径本地判分")
+    void shouldGradeTrueFalseAsSingleChoice() {
+      assertThat(grader.grade(trueFalse("B", "B")).orElseThrow().scoreRate()).isEqualTo(100);
+
+      ObjectiveAnswerGrader.Grade wrong = grader.grade(trueFalse("B", "A")).orElseThrow();
+      assertThat(wrong.scoreRate()).isZero();
+      assertThat(wrong.feedback()).contains("正确答案 B");
+
+      assertThat(grader.grade(trueFalse("B", "")).orElseThrow().scoreRate()).isZero();
     }
   }
 }

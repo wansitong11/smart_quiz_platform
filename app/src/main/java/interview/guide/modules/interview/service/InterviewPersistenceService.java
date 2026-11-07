@@ -85,6 +85,55 @@ public class InterviewPersistenceService {
             skillId, difficulty, "NORMAL", null, null, requestId);
     }
 
+    /**
+     * 建「无题目的壳会话」：题目由异步出题 worker 后续写入。
+     * 与 saveSessionInternal 的差异只有 questionStatus / questionGenRequestJson / 空树。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public PracticeSessionEntity saveQuestionShell(String sessionId, Long resumeId, String requestId,
+                                                   String llmProvider, String skillId,
+                                                   String difficulty,
+                                                   String questionGenRequestJson) {
+        try {
+            PracticeSessionEntity session = new PracticeSessionEntity();
+            session.setSessionId(sessionId);
+
+            Optional<PracticePaperEntity> paperOpt = resumeId != null
+                ? resumeRepository.findById(resumeId)
+                : Optional.empty();
+            Long ownerId = ownerScope.optionalOwnerId();
+            if (ownerId == null) {
+                ownerId = paperOpt.map(PracticePaperEntity::getOwnerId).orElse(null);
+            }
+            session.setOwnerId(ownerId);
+            session.setRequestId(requestId);
+            session.setTotalQuestions(0);
+            session.setCurrentQuestionIndex(0);
+            session.setStatus(PracticeSessionEntity.SessionStatus.CREATED);
+            session.setPaperJson(PaperTree.fromFlatQuestions(
+                List.of(), skillId != null ? skillId : InterviewDefaults.SKILL_ID)
+                .toJson(objectMapper));
+            session.setLlmProvider(llmProvider != null ? llmProvider : "default");
+            session.setSkillId(skillId != null ? skillId : InterviewDefaults.SKILL_ID);
+            session.setDifficulty(difficulty != null ? difficulty : InterviewDefaults.DIFFICULTY);
+            session.setSourceType("NORMAL");
+            session.setQuestionStatus(AsyncTaskStatus.PENDING);
+            session.setQuestionGenRequestJson(questionGenRequestJson);
+            session.setQuestionUpdatedAt(LocalDateTime.now());
+            session.setPaperContentRevision(
+                paperOpt.map(PracticePaperEntity::getContentRevision).orElse(null));
+            paperOpt.ifPresent(session::setResume);
+
+            PracticeSessionEntity saved = sessionRepository.save(session);
+            log.info("面试壳会话已保存: sessionId={}, skillId={}, resumeId={}, requestId={}",
+                sessionId, skillId, resumeId, requestId);
+            return saved;
+        } catch (JacksonException e) {
+            log.error("序列化空试卷结构失败: {}", e.getMessage(), e);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "保存会话失败");
+        }
+    }
+
     private PracticeSessionEntity saveSessionInternal(String sessionId, Long resumeId,
                                                        int totalQuestions,
                                                        PaperTree paperTree,
@@ -120,6 +169,8 @@ public class InterviewPersistenceService {
             session.setSourceType(sourceType != null ? sourceType : "NORMAL");
             session.setKnowledgeBaseId(knowledgeBaseId);
             session.setSubjectCategory(subjectCategory);
+            session.setPaperContentRevision(
+                paperOpt.map(PracticePaperEntity::getContentRevision).orElse(null));
 
             // 简历可选：有 resumeId 则关联简历
             paperOpt.ifPresent(session::setResume);
@@ -169,6 +220,14 @@ public class InterviewPersistenceService {
             sessionRepository.save(session);
             log.debug("评估状态已更新: sessionId={}, status={}", sessionId, status);
         }
+    }
+
+    /**
+     * 仅当批改任务处于空闲/失败/待处理状态时才允许重新入队，避免重复投递。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean tryMarkEvaluatePendingIfIdle(String sessionId) {
+        return sessionRepository.tryMarkEvaluatePendingIfIdle(sessionId) == 1;
     }
     
     /**
@@ -356,14 +415,23 @@ public class InterviewPersistenceService {
                 // 更新评分和反馈
                 answer.setScore(eval.score());
                 answer.setFeedback(eval.feedback());
+                answer.setScoreStatus(eval.scoreStatus() == null ? null : eval.scoreStatus().name());
+                answer.setLowConfidence(eval.lowConfidence());
+                answer.setAnswerKeyConfidence(eval.answerKeyConfidence());
+                answer.setScoreMessage(eval.scoreMessage());
 
-                // 设置参考答案和关键点
+                // 设置参考答案和关键点；缺失时显式清空，避免旧值残留
                 InterviewReportDTO.ReferenceAnswer refAns = refAnswerMap.get(eval.questionIndex());
                 if (refAns != null) {
                     answer.setReferenceAnswer(refAns.referenceAnswer());
                     if (refAns.keyPoints() != null && !refAns.keyPoints().isEmpty()) {
                         answer.setKeyPointsJson(objectMapper.writeValueAsString(refAns.keyPoints()));
+                    } else {
+                        answer.setKeyPointsJson(null);
                     }
+                } else {
+                    answer.setReferenceAnswer(null);
+                    answer.setKeyPointsJson(null);
                 }
 
                 answersToSave.add(answer);
@@ -375,6 +443,8 @@ public class InterviewPersistenceService {
 
         } catch (JacksonException e) {
             log.error("序列化报告失败: {}", e.getMessage(), e);
+            throw new BusinessException(ErrorCode.INTERVIEW_EVALUATION_FAILED,
+                "报告序列化失败", e);
         }
     }
     
@@ -384,6 +454,26 @@ public class InterviewPersistenceService {
     public Optional<PracticeSessionEntity> findBySessionId(String sessionId) {
         // 异步消费者/调度器没有请求上下文，effectiveOwnerId() 返回 null → 不过滤，行为与改造前一致
         return sessionRepository.findBySessionIdScoped(sessionId, ownerScope.effectiveOwnerId());
+    }
+
+    /**
+     * 手动重新出题：仅 FAILED → PENDING，并清零恢复计数。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean retryQuestionGeneration(String sessionId) {
+        int updated = sessionRepository.retryQuestionGenFromFailed(sessionId, LocalDateTime.now());
+        if (updated == 1) {
+            sessionRepository.resetQuestionGenRecoveryCount(sessionId);
+        }
+        return updated == 1;
+    }
+
+    /**
+     * 按 sessionId 加排他锁，供批改回写等幂等任务串行处理同一场会话。
+     * 这里不做请求态过滤，因为调用方已在异步任务中按会话归属落库。
+     */
+    public Optional<PracticeSessionEntity> findBySessionIdForUpdate(String sessionId) {
+        return sessionRepository.findBySessionIdForUpdate(sessionId);
     }
 
     /**
@@ -410,6 +500,13 @@ public class InterviewPersistenceService {
      */
     public List<PracticeSessionEntity> findAll() {
         return sessionRepository.findAllScoped(ownerScope.effectiveOwnerId());
+    }
+
+    /**
+     * 按显式 owner 读取会话，供错题本回填使用（异步/后台任务没有登录上下文）。
+     */
+    public List<PracticeSessionEntity> findSessionsByOwnerId(Long ownerId) {
+        return sessionRepository.findAllScoped(ownerId);
     }
     
     /**

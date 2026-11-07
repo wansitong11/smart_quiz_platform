@@ -110,6 +110,13 @@ public class PracticeSessionEntity {
     @Column(length = 500)
     private String evaluateError;
 
+    // 批改执行代次与心跳，用于识别崩溃后永久 PROCESSING
+    @Column(name = "evaluate_attempt_id", length = 36)
+    private String evaluateAttemptId;
+
+    @Column(name = "evaluate_heartbeat_at")
+    private LocalDateTime evaluateHeartbeatAt;
+
     // LLM提供商
     @Column(length = 50)
     private String llmProvider = "dashscope";
@@ -121,6 +128,12 @@ public class PracticeSessionEntity {
     // 出题来源资料库 ID
     private Long knowledgeBaseId;
 
+    /**
+     * 试卷来源会话开始作答时冻结的内容代次。
+     */
+    @Column(name = "paper_content_revision")
+    private Long paperContentRevision;
+
     // 知识板块（来自题库 category，普通练习为 null）
     @Column(length = 64)
     private String subjectCategory;
@@ -128,6 +141,28 @@ public class PracticeSessionEntity {
     // 模拟测验的组卷参数快照（学科/知识点/难度/题量），用于「再测一次」
     @Column(name = "quiz_config_json", columnDefinition = "TEXT")
     private String quizConfigJson;
+
+    // ========== 会话出题异步任务（D 阶段） ==========
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "question_status", length = 20)
+    private AsyncTaskStatus questionStatus = AsyncTaskStatus.COMPLETED;
+
+    @Column(name = "question_error", length = 500)
+    private String questionError;
+
+    @Column(name = "question_attempt_id", length = 36)
+    private String questionAttemptId;
+
+    @Column(name = "question_updated_at")
+    private LocalDateTime questionUpdatedAt;
+
+    @Column(name = "question_recovery_count", nullable = false)
+    private int questionRecoveryCount = 0;
+
+    // 出题请求快照：异步 worker 没有请求上下文，必须从壳会话恢复出题入参
+    @Column(name = "question_gen_request_json", columnDefinition = "TEXT")
+    private String questionGenRequestJson;
     
     public enum SessionStatus {
         CREATED,      // 会话已创建

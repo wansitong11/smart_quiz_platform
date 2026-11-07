@@ -7,6 +7,7 @@ public record PaperUploadResult(
     Long paperId,
     int pageCount,
     RecognitionStatus recognitionStatus,
+    ProcessingPath processingPath,
     boolean duplicate,
     String message
 ) {

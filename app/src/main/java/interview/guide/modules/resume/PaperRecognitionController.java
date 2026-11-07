@@ -1,9 +1,16 @@
 package interview.guide.modules.resume;
 
 import interview.guide.common.annotation.RateLimit;
+import interview.guide.common.ai.AiCost;
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiCostControl;
+import interview.guide.common.ai.AiCostEstimateInput;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.result.Result;
 import interview.guide.modules.resume.model.PaperRecognitionDTO;
 import interview.guide.modules.resume.model.PaperUploadResult;
+import interview.guide.modules.resume.model.RecognitionStatus;
 import interview.guide.modules.resume.model.StructurePreviewDTO;
 import interview.guide.modules.resume.service.PaperRecognitionService;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,6 +41,7 @@ import java.util.List;
 public class PaperRecognitionController {
 
   private final PaperRecognitionService recognitionService;
+  private final AiCostControl aiCostControl;
 
   public record UpdatePageTextRequest(String text) {
   }
@@ -48,10 +56,28 @@ public class PaperRecognitionController {
    * 上传 1~10 个 PDF / JPG / PNG，按顺序合并为同一份试卷。
    */
   @PostMapping(value = "/api/papers/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  @AiCost(feature = AiFeature.PAPER_IMPORT, operation = "upload")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
   @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
   public Result<PaperUploadResult> upload(@RequestParam("files") List<MultipartFile> files) {
-    return Result.success(recognitionService.upload(files));
+    AiCallContext context = AiCallContextHolder.get();
+    aiCostControl.reserveOrThrow(
+        context == null ? null : context.operationId(),
+        context == null ? null : context.userId(),
+        AiFeature.PAPER_IMPORT,
+        new AiCostEstimateInput((long) Math.max(1, files.size()), null, null, null, null));
+    try {
+      PaperUploadResult result = recognitionService.upload(files);
+      if (result.duplicate() || result.recognitionStatus() == RecognitionStatus.FAILED) {
+        finalizeOperation(context);
+      }
+      return Result.success(result);
+    } catch (RuntimeException e) {
+      if (context != null) {
+        aiCostControl.finalize(context.operationId());
+      }
+      throw e;
+    }
   }
 
   @GetMapping("/api/papers/{id}/recognition")
@@ -70,11 +96,23 @@ public class PaperRecognitionController {
    * 重试单页；forceVision=true 表示即使有文字层也强制用识图重做。
    */
   @PostMapping("/api/papers/{id}/pages/{pageNo}/retry")
+  @AiCost(feature = AiFeature.PAPER_RECOGNIZE, operation = "retryPage")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
   public Result<Void> retryPage(@PathVariable Long id, @PathVariable int pageNo,
                                 @RequestParam(defaultValue = "false") boolean forceVision) {
-    recognitionService.retryPage(id, pageNo, forceVision);
-    return Result.success();
+    AiCallContext context = AiCallContextHolder.get();
+    aiCostControl.reserveOrThrow(
+        context == null ? null : context.operationId(),
+        context == null ? null : context.userId(),
+        AiFeature.PAPER_RECOGNIZE,
+        new AiCostEstimateInput(1L, null, null, null, null));
+    try {
+      recognitionService.retryPage(id, pageNo, forceVision);
+      return Result.success();
+    } catch (RuntimeException e) {
+      finalizeOperation(context);
+      throw e;
+    }
   }
 
   @DeleteMapping("/api/papers/{id}/pages/{pageNo}")
@@ -100,27 +138,75 @@ public class PaperRecognitionController {
 
   /** 结构预览：确认切题前先看层级与材料挂载。 */
   @PostMapping("/api/papers/{id}/structure/preview")
+  @AiCost(feature = AiFeature.PAPER_EXTRACTION, operation = "previewStructure")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 5)
   public Result<StructurePreviewDTO> previewStructure(@PathVariable Long id) {
-    return Result.success(recognitionService.previewStructure(id));
+    AiCallContext context = AiCallContextHolder.get();
+    aiCostControl.reserveOrThrow(
+        context == null ? null : context.operationId(),
+        context == null ? null : context.userId(),
+        AiFeature.PAPER_EXTRACTION,
+        new AiCostEstimateInput(1L, null, null, null, null));
+    try {
+      return Result.success(recognitionService.previewStructure(id));
+    } finally {
+      finalizeOperation(context);
+    }
   }
 
   /**
    * 确认并切题：合并各页文本后投递现有切题任务。
    */
   @PostMapping("/api/papers/{id}/recognition/confirm")
+  @AiCost(feature = AiFeature.PAPER_EXTRACTION, operation = "confirm")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 5)
   public Result<Void> confirm(@PathVariable Long id,
-                              @RequestBody(required = false) ConfirmRecognitionRequest request) {
-    recognitionService.confirm(id, request != null && request.ignoreFailed());
-    return Result.success();
+                              @RequestBody(required = false) ConfirmRecognitionRequest request,
+                              @RequestParam(defaultValue = "false") boolean force) {
+    AiCallContext context = AiCallContextHolder.get();
+    aiCostControl.reserveOrThrow(
+        context == null ? null : context.operationId(),
+        context == null ? null : context.userId(),
+        AiFeature.PAPER_EXTRACTION,
+        new AiCostEstimateInput(1L, null, null, null, null));
+    try {
+      boolean enqueued = recognitionService.confirm(
+          id, request != null && request.ignoreFailed(), force);
+      if (!enqueued) {
+        finalizeOperation(context);
+      }
+      return Result.success();
+    } catch (RuntimeException e) {
+      if (context != null) {
+        aiCostControl.finalize(context.operationId());
+      }
+      throw e;
+    }
   }
 
   @PostMapping("/api/papers/{id}/recognition/retry")
+  @AiCost(feature = AiFeature.PAPER_RECOGNIZE, operation = "retryRecognition")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 5)
   public Result<Void> retryRecognition(@PathVariable Long id,
                                        @RequestBody(required = false) RetryRecognitionRequest request) {
-    recognitionService.retryRecognition(id, request != null && request.all());
-    return Result.success();
+    AiCallContext context = AiCallContextHolder.get();
+    aiCostControl.reserveOrThrow(
+        context == null ? null : context.operationId(),
+        context == null ? null : context.userId(),
+        AiFeature.PAPER_RECOGNIZE,
+        new AiCostEstimateInput(1L, null, null, null, null));
+    try {
+      recognitionService.retryRecognition(id, request != null && request.all());
+      return Result.success();
+    } catch (RuntimeException e) {
+      finalizeOperation(context);
+      throw e;
+    }
+  }
+
+  private void finalizeOperation(AiCallContext context) {
+    if (context != null && context.operationId() != null) {
+      aiCostControl.finalize(context.operationId());
+    }
   }
 }

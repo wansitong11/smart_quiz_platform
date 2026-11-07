@@ -1,7 +1,10 @@
 package interview.guide.modules.interview.listener;
 
 import interview.guide.common.async.AbstractStreamConsumer;
+import interview.guide.common.async.StreamWorkerRegistry;
 import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
 import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.infrastructure.redis.RedisService;
@@ -13,6 +16,8 @@ import interview.guide.modules.interview.model.PracticeSessionEntity;
 import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import interview.guide.modules.interview.service.AnswerEvaluationService;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
+import interview.guide.modules.quiz.service.WrongQuestionBookService;
+import interview.guide.modules.resume.model.PracticePaperEntity;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.stream.StreamMessageId;
 import org.springframework.ai.chat.client.ChatClient;
@@ -20,9 +25,13 @@ import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
+import java.util.UUID;
 
 /**
  * 面试评估 Stream 消费者
@@ -37,24 +46,32 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
     private final InterviewPersistenceService persistenceService;
     private final ObjectMapper objectMapper;
     private final LlmProviderRegistry llmProviderRegistry;
+    private final WrongQuestionBookService wrongQuestionBookService;
 
     public EvaluateStreamConsumer(
         RedisService redisService,
+        StreamWorkerRegistry workerRegistry,
         InterviewSessionRepository sessionRepository,
         AnswerEvaluationService evaluationService,
         InterviewPersistenceService persistenceService,
         ObjectMapper objectMapper,
-        LlmProviderRegistry llmProviderRegistry
+        LlmProviderRegistry llmProviderRegistry,
+        WrongQuestionBookService wrongQuestionBookService
     ) {
-        super(redisService);
+        super(redisService, workerRegistry);
         this.sessionRepository = sessionRepository;
         this.evaluationService = evaluationService;
         this.persistenceService = persistenceService;
         this.objectMapper = objectMapper;
         this.llmProviderRegistry = llmProviderRegistry;
+        this.wrongQuestionBookService = wrongQuestionBookService;
     }
 
-    record EvaluatePayload(String sessionId) {}
+    record EvaluatePayload(String sessionId, String attemptId) {
+        EvaluatePayload(String sessionId) {
+            this(sessionId, UUID.randomUUID().toString());
+        }
+    }
 
     @Override
     protected String taskDisplayName() {
@@ -77,6 +94,11 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
     }
 
     @Override
+    protected String consumerKey() {
+        return "interview-evaluate";
+    }
+
+    @Override
     protected String threadName() {
         return "evaluate-consumer";
     }
@@ -88,7 +110,7 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
             log.warn("消息格式错误，跳过: messageId={}", messageId);
             return null;
         }
-        return new EvaluatePayload(sessionId);
+        return new EvaluatePayload(sessionId, UUID.randomUUID().toString());
     }
 
     @Override
@@ -105,12 +127,19 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
 
     @Override
     protected void markProcessing(EvaluatePayload payload) {
-        updateEvaluateStatus(payload.sessionId(), AsyncTaskStatus.PROCESSING, null);
+        // 条件领取由 tryMarkProcessing 完成。
+    }
+
+    @Override
+    protected boolean tryMarkProcessing(EvaluatePayload payload) {
+        return sessionRepository.tryMarkEvaluateProcessing(
+            payload.sessionId(), payload.attemptId(), LocalDateTime.now()) == 1;
     }
 
     @Override
     protected void processBusiness(EvaluatePayload payload) {
         String sessionId = payload.sessionId();
+        heartbeat(payload);
         Optional<PracticeSessionEntity> sessionOpt = sessionRepository.findBySessionIdWithResume(sessionId);
         if (sessionOpt.isEmpty()) {
             log.warn("会话已被删除，跳过评估任务: sessionId={}", sessionId);
@@ -118,6 +147,7 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
         }
 
         PracticeSessionEntity session = sessionOpt.get();
+        assertPaperContentRevision(session);
         List<InterviewQuestionDTO> questions = PaperTree.parse(objectMapper, session.getPaperJson())
             .flattenQuestions();
 
@@ -137,26 +167,53 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
         String resumeText = session.getResume() != null ? session.getResume().getResumeText() : "";
         InterviewReportDTO report = evaluationService.evaluateInterview(chatClient, sessionId, resumeText, questions);
         persistenceService.saveReport(sessionId, report);
+        heartbeat(payload);
+        wrongQuestionBookService.recordAttemptResults(sessionId);
     }
+
+    private void heartbeat(EvaluatePayload payload) {
+        sessionRepository.heartbeatEvaluateProcessing(
+            payload.sessionId(), payload.attemptId(), LocalDateTime.now());
+    }
+
+  static void assertPaperContentRevision(PracticeSessionEntity session) {
+    PracticePaperEntity paper = session.getResume();
+    if ("PAPER".equals(session.getSourceType())
+        && paper != null
+        && session.getPaperContentRevision() != null
+        && !Objects.equals(session.getPaperContentRevision(), paper.getContentRevision())) {
+      throw new BusinessException(
+          ErrorCode.PAPER_CONTENT_CHANGED,
+          "试卷内容已更新，无法继续自动批改，请基于最新内容重新开始作答"
+      );
+    }
+  }
 
     @Override
     protected void markCompleted(EvaluatePayload payload) {
-        updateEvaluateStatus(payload.sessionId(), AsyncTaskStatus.COMPLETED, null);
+        sessionRepository.completeEvaluateIfProcessing(payload.sessionId());
     }
 
     @Override
     protected void markFailed(EvaluatePayload payload, String error) {
-        updateEvaluateStatus(payload.sessionId(), AsyncTaskStatus.FAILED, error);
+        sessionRepository.failEvaluateIfProcessing(
+            payload.sessionId(), truncateError(error));
     }
 
     @Override
     protected void retryMessage(EvaluatePayload payload, int retryCount) {
         String sessionId = payload.sessionId();
+        int reset = sessionRepository.resetEvaluateToPending(sessionId);
+        if (reset != 1) {
+            log.warn("评估重试重置失败，ACK 丢弃: sessionId={}, retryCount={}",
+                sessionId, retryCount);
+            return;
+        }
         try {
-            Map<String, String> message = Map.of(
-                AsyncTaskStreamConstants.FIELD_SESSION_ID, sessionId,
-                AsyncTaskStreamConstants.FIELD_RETRY_COUNT, String.valueOf(retryCount)
-            );
+            Map<String, String> message = new LinkedHashMap<>();
+            message.put(AsyncTaskStreamConstants.FIELD_SESSION_ID, sessionId);
+            message.put(AsyncTaskStreamConstants.FIELD_RETRY_COUNT, String.valueOf(retryCount));
+            message.putAll(aiContextMessageFields());
 
             redisService().streamAdd(
                 AsyncTaskStreamConstants.INTERVIEW_EVALUATE_STREAM_KEY,
@@ -167,23 +224,8 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
 
         } catch (Exception e) {
             log.error("重试入队失败: sessionId={}, error={}", sessionId, e.getMessage(), e);
-            updateEvaluateStatus(sessionId, AsyncTaskStatus.FAILED, truncateError("重试入队失败: " + e.getMessage()));
-        }
-    }
-
-    /**
-     * 更新评估状态
-     */
-    private void updateEvaluateStatus(String sessionId, AsyncTaskStatus status, String error) {
-        try {
-            sessionRepository.findBySessionId(sessionId).ifPresent(session -> {
-                session.setEvaluateStatus(status);
-                session.setEvaluateError(error);
-                sessionRepository.save(session);
-                log.debug("评估状态已更新: sessionId={}, status={}", sessionId, status);
-            });
-        } catch (Exception e) {
-            log.error("更新评估状态失败: sessionId={}, status={}, error={}", sessionId, status, e.getMessage(), e);
+            sessionRepository.failEvaluateIfPending(
+                sessionId, truncateError("重试入队失败: " + e.getMessage()));
         }
     }
 

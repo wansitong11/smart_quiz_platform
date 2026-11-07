@@ -1,5 +1,8 @@
 package interview.guide.modules.interview.listener;
 
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.async.AbstractStreamProducer;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
 import interview.guide.common.model.AsyncTaskStatus;
@@ -9,6 +12,7 @@ import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -53,10 +57,23 @@ public class EvaluateStreamProducer extends AbstractStreamProducer<String> {
 
     @Override
     protected Map<String, String> buildMessage(String sessionId) {
-        return Map.of(
-            AsyncTaskStreamConstants.FIELD_SESSION_ID, sessionId,
-            AsyncTaskStreamConstants.FIELD_RETRY_COUNT, "0"
-        );
+        Map<String, String> message = new LinkedHashMap<>();
+        message.put(AsyncTaskStreamConstants.FIELD_SESSION_ID, sessionId);
+        message.put(AsyncTaskStreamConstants.FIELD_RETRY_COUNT, "0");
+
+        AiCallContext context = AiCallContextHolder.get();
+        if (context == null || context.feature() == null) {
+            message.put(AsyncTaskStreamConstants.FIELD_AI_FEATURE,
+                AiFeature.ANSWER_EVALUATE.name());
+        }
+        if (context == null || context.userId() == null) {
+            sessionRepository.findBySessionId(sessionId)
+                .map(session -> session.getOwnerId())
+                .filter(ownerId -> ownerId != null)
+                .ifPresent(ownerId -> message.put(
+                    AsyncTaskStreamConstants.FIELD_OWNER_ID, ownerId.toString()));
+        }
+        return message;
     }
 
     @Override

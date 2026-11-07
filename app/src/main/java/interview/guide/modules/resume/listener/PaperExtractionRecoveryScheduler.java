@@ -1,5 +1,8 @@
 package interview.guide.modules.resume.listener;
 
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.async.recovery.ResumeAnalysisRecoveryProperties;
 import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.modules.resume.model.PracticePaperEntity;
@@ -38,13 +41,13 @@ public class PaperExtractionRecoveryScheduler {
       return;
     }
     LocalDateTime now = LocalDateTime.now();
-    List<PracticePaperEntity> stalePending = resumeRepository.findStaleByAnalysisStatus(
+    List<PracticePaperEntity> stalePending = resumeRepository.findStaleExtractableByAnalysisStatus(
         AsyncTaskStatus.PENDING, now.minus(properties.getPendingThreshold()),
         PageRequest.of(0, properties.getBatchSize()));
     for (PracticePaperEntity paper : stalePending) {
       recover(paper.getId(), true);
     }
-    List<PracticePaperEntity> staleProcessing = resumeRepository.findStaleByAnalysisStatus(
+    List<PracticePaperEntity> staleProcessing = resumeRepository.findStaleExtractableByAnalysisStatus(
         AsyncTaskStatus.PROCESSING, now.minus(properties.getProcessingThreshold()),
         PageRequest.of(0, properties.getBatchSize()));
     for (PracticePaperEntity paper : staleProcessing) {
@@ -77,8 +80,23 @@ public class PaperExtractionRecoveryScheduler {
           paperId, paper.getAnalysisRecoveryCount());
       return;
     }
-    boolean sent = producer.sendExtractTask(paperId);
+    boolean sent = sendWithContext(paper);
     log.info("试卷切题卡住任务已补投: paperId={}, sent={}, recoveryCount={}",
         paperId, sent, paper.getAnalysisRecoveryCount());
+  }
+
+  private boolean sendWithContext(PracticePaperEntity paper) {
+    AiCallContext previous = AiCallContextHolder.get();
+    AiCallContextHolder.set(new AiCallContext(
+        paper.getOwnerId(), AiFeature.PAPER_EXTRACTION, "recover", null, null, "RECOVERY"));
+    try {
+      return producer.sendExtractTask(paper.getId());
+    } finally {
+      if (previous == null) {
+        AiCallContextHolder.clear();
+      } else {
+        AiCallContextHolder.set(previous);
+      }
+    }
   }
 }

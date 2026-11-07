@@ -55,7 +55,7 @@ public class ObjectiveAnswerGrader {
         if (question.isChoiceQuestion()) {
             if (blank) {
                 return Optional.of(new Grade(0,
-                    withAnalysis(question, "未作答。正确答案：" + question.referenceAnswer())));
+                    withGradingContext(question, "未作答。正确答案：" + question.referenceAnswer())));
             }
             return gradeChoice(question);
         }
@@ -74,11 +74,11 @@ public class ObjectiveAnswerGrader {
         }
         if (student.isEmpty()) {
             return Optional.of(new Grade(0,
-                withAnalysis(question, "未作答。正确答案：" + String.join("", expected))));
+                withGradingContext(question, "未作答。正确答案：" + String.join("", expected))));
         }
         if (student.equals(expected)) {
             return Optional.of(new Grade(100,
-                withAnalysis(question, "选择正确。正确答案：" + String.join("", expected))));
+                withGradingContext(question, "选择正确。正确答案：" + String.join("", expected))));
         }
         boolean isMulti = InterviewQuestionDTO.TYPE_MULTI_CHOICE.equals(question.questionType())
             || expected.size() > 1;
@@ -86,15 +86,15 @@ public class ObjectiveAnswerGrader {
             boolean subset = expected.containsAll(student);
             if (subset && properties.isMultiChoicePartialCredit()) {
                 int rate = Math.max(0, Math.min(100, properties.getMultiChoicePartialCreditRate()));
-                return Optional.of(new Grade(rate, withAnalysis(question,
+                return Optional.of(new Grade(rate, withGradingContext(question,
                     "漏选：" + String.join("", student) + " 未选全，正确答案 "
                         + String.join("", expected) + "，按漏选给 " + rate + "% 分。")));
             }
-            return Optional.of(new Grade(0, withAnalysis(question,
+            return Optional.of(new Grade(0, withGradingContext(question,
                 "选择错误：你的选择了 " + String.join("", student)
                     + "，正确答案 " + String.join("", expected) + "。多选题错选不得分。")));
         }
-        return Optional.of(new Grade(0, withAnalysis(question,
+        return Optional.of(new Grade(0, withGradingContext(question,
             "选择错误：你选了 " + String.join("", student)
                 + "，正确答案 " + String.join("", expected) + "。")));
     }
@@ -105,14 +105,14 @@ public class ObjectiveAnswerGrader {
             return Optional.empty();
         }
         if (blank) {
-            return Optional.of(new Grade(0, withAnalysis(question, "未作答。正确答案：" + expected)));
+            return Optional.of(new Grade(0, withGradingContext(question, "未作答。正确答案：" + expected)));
         }
         if (normalizeBlank(question.userAnswer()).equals(normalizeBlank(expected))) {
-            return Optional.of(new Grade(100, withAnalysis(question, "填写正确。")));
+            return Optional.of(new Grade(100, withGradingContext(question, "填写正确。")));
         }
         // 纯数字/字母答案（如 1/2、0.5、AB）没有等价改写空间，直接判错；其余交模型判断等价性
         if (isPlainAnswer(expected)) {
-            return Optional.of(new Grade(0, withAnalysis(question,
+            return Optional.of(new Grade(0, withGradingContext(question,
                 "填写错误：你的答案「" + question.userAnswer().trim()
                     + "」，正确答案「" + expected.trim() + "」。")));
         }
@@ -120,19 +120,13 @@ public class ObjectiveAnswerGrader {
     }
 
     /**
-     * 在判分结论后补上题目解析与考点，让客观题评语也能讲清「为什么」。
+     * 在判分结论后补上考点或评分标准，让客观题评语也能讲清判分依据。
      * <p>
-     * 解析来自切题阶段抽取的 analysis；没有解析时退回考点与评分标准，
-     * 三者都没有则只保留判分结论。
+     * 题目解析由报告详情单独展示，这里不再拼进评语，避免学生看到两遍同一段解析。
      * </p>
      */
-    private String withAnalysis(InterviewQuestionDTO question, String conclusion) {
+    private String withGradingContext(InterviewQuestionDTO question, String conclusion) {
         StringBuilder sb = new StringBuilder(conclusion);
-        String analysis = question.analysis();
-        boolean hasAnalysis = analysis != null && !analysis.isBlank();
-        if (hasAnalysis) {
-            sb.append("\n解析：").append(analysis.trim());
-        }
         List<String> keyPoints = question.keyPoints();
         if (keyPoints != null && !keyPoints.isEmpty()) {
             String points = String.join("、", keyPoints.stream()
@@ -143,8 +137,7 @@ public class ObjectiveAnswerGrader {
             }
         }
         String rubric = question.scoringRubric();
-        if (!hasAnalysis && (keyPoints == null || keyPoints.isEmpty())
-            && rubric != null && !rubric.isBlank()) {
+        if ((keyPoints == null || keyPoints.isEmpty()) && rubric != null && !rubric.isBlank()) {
             sb.append("\n评分标准：").append(rubric.trim());
         }
         return sb.toString();

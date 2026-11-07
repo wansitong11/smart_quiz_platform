@@ -38,8 +38,19 @@ public record InterviewReportDTO(
         int score,             // 该题得分率 (0-100)
         String feedback,
         Integer fullScore,     // 该题分值（试卷场景；自动出题为 null）
-        Integer questionScore  // 该题卷面得分（得分率 × 分值折算）
+        Integer questionScore, // 该题卷面得分（得分率 × 分值折算）
+        ScoreStatus scoreStatus,
+        boolean lowConfidence,
+        Integer answerKeyConfidence,
+        String scoreMessage
     ) {}
+
+    public enum ScoreStatus {
+        AUTO,
+        TEXT_MODEL,
+        VISION_MODEL,
+        MANUAL_REVIEW
+    }
     
     /**
      * 参考答案

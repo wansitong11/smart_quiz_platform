@@ -4,6 +4,7 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.ai.StructuredOutputInvoker;
+import interview.guide.common.async.BoundedExecutor;
 import interview.guide.common.constant.CommonConstants.InterviewDefaults;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
@@ -19,10 +20,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.converter.BeanOutputConverter;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
-
-import jakarta.annotation.PreDestroy;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -32,8 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -81,7 +79,7 @@ public class InterviewQuestionService {
     private final InterviewSkillService skillService;
     private final LlmProviderRegistry llmProviderRegistry;
     private final PromptSanitizer promptSanitizer;
-    private final ExecutorService questionExecutor;
+    private final BoundedExecutor questionExecutor;
     private final int followUpCount;
 
     private record QuestionListDTO(List<QuestionDTO> questions) {}
@@ -95,12 +93,13 @@ public class InterviewQuestionService {
             InterviewQuestionProperties properties,
             ResourceLoader resourceLoader,
             LlmProviderRegistry llmProviderRegistry,
-            PromptSanitizer promptSanitizer) throws IOException {
+            PromptSanitizer promptSanitizer,
+            @Qualifier("questionInnerExecutor") BoundedExecutor questionExecutor) throws IOException {
         this.structuredOutputInvoker = structuredOutputInvoker;
         this.skillService = skillService;
         this.llmProviderRegistry = llmProviderRegistry;
         this.promptSanitizer = promptSanitizer;
-        this.questionExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        this.questionExecutor = questionExecutor;
         this.skillSystemPromptTemplate = loadTemplate(resourceLoader, properties.getQuestionSystemPromptPath());
         this.skillUserPromptTemplate = loadTemplate(resourceLoader, properties.getQuestionUserPromptPath());
         this.resumeSystemPromptTemplate = loadTemplate(resourceLoader, properties.getResumeQuestionSystemPromptPath());
@@ -111,11 +110,6 @@ public class InterviewQuestionService {
 
     private static PromptTemplate loadTemplate(ResourceLoader loader, String location) throws IOException {
         return new PromptTemplate(loader.getResource(location).getContentAsString(StandardCharsets.UTF_8));
-    }
-
-    @PreDestroy
-    void destroy() {
-        questionExecutor.shutdownNow();
     }
 
     public List<InterviewQuestionDTO> generateQuestionsBySkill(

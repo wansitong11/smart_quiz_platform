@@ -5,6 +5,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.common.evaluation.StudentFacingFeedbackSanitizer;
 import interview.guide.infrastructure.export.PdfExportService;
 import interview.guide.infrastructure.mapper.InterviewMapper;
 import interview.guide.modules.interview.model.PracticeAnswerEntity;
@@ -104,6 +105,9 @@ public class InterviewHistoryService {
             int fullScore = questionNode.meta() != null && questionNode.meta().fullScore() != null
                 ? questionNode.meta().fullScore() : 0;
             PracticeAnswerEntity answer = answerByIndex.get(questionNode.questionIndex());
+            if (answer != null && "MANUAL_REVIEW".equals(answer.getScoreStatus())) {
+                continue;
+            }
             int rate = answer != null && answer.getScore() != null ? answer.getScore() : 0;
             int score = fullScore > 0 ? (int) Math.round(rate * fullScore / 100.0) : 0;
 
@@ -157,24 +161,95 @@ public class InterviewHistoryService {
             .map(question -> {
                 PracticeAnswerEntity answer = answerMap.get(question.questionIndex());
                 if (answer != null) {
-                    // 用户已回答，使用答案数据
-                    return interviewMapper.toAnswerDetailDTO(answer, extractKeyPoints(answer));
+                    return withAnswerKeyMeta(
+                        interviewMapper.toAnswerDetailDTO(answer, extractKeyPoints(answer)),
+                        question);
                 } else {
-                    // 用户未回答，构建空答案
-                    return new InterviewDetailDTO.AnswerDetailDTO(
+                    return withAnswerKeyMeta(new InterviewDetailDTO.AnswerDetailDTO(
                         question.questionIndex(),
                         question.question(),
                         question.category(),
                         null,  // userAnswer
                         question.score() != null ? question.score() : 0,  // score
                         question.feedback(),  // feedback
-                        null,  // referenceAnswer
-                        null,  // keyPoints
-                        null   // answeredAt
-                    );
+                        question.referenceAnswer(),  // referenceAnswer
+                        question.keyPoints() == null ? List.of() : question.keyPoints(),  // keyPoints
+                        null,  // answeredAt
+                        "MANUAL_REVIEW",  // scoreStatus
+                        question.hasLowConfidenceAnswerKey(),
+                        question.answerKeyConfidence(),
+                        null,
+                        question.analysis()
+                    ), question);
                 }
             })
             .toList();
+    }
+
+    private InterviewDetailDTO.AnswerDetailDTO withAnswerKeyMeta(
+        InterviewDetailDTO.AnswerDetailDTO answer,
+        InterviewQuestionDTO question
+    ) {
+        boolean low = question.hasLowConfidenceAnswerKey();
+        String message = low
+            ? "本题答案依据由 AI 生成，置信度较低（" + question.answerKeyConfidence()
+                + "%），当前判分仅供参考，建议结合原题自行复核。"
+            : null;
+        String sanitizedFeedback = StudentFacingFeedbackSanitizer.sanitize(answer.feedback());
+        String sanitizedAnalysis = StudentFacingFeedbackSanitizer.sanitize(question.analysis());
+        return answer
+            .withFeedback(removeDuplicatedAnalysis(sanitizedFeedback, sanitizedAnalysis))
+            .withAnalysis(sanitizedAnalysis)
+            .withAnswerKeyMeta(answer.scoreStatus(), low, question.answerKeyConfidence(), message);
+    }
+
+    /**
+     * 兼容旧数据：历史批改曾把题目解析拼进 feedback，详情页又单独展示 analysis。
+     * 读取时去掉 feedback 里重复的「解析：...」段，保留判分结论和考点。
+     */
+    private String removeDuplicatedAnalysis(String feedback, String analysis) {
+        if (feedback == null || feedback.isBlank() || analysis == null || analysis.isBlank()) {
+            return feedback;
+        }
+        int marker = analysisMarkerIndex(feedback);
+        if (marker < 0) {
+            return feedback;
+        }
+        int tail = nextContextMarkerIndex(feedback, marker + 1);
+        String analysisSegment = feedback.substring(marker, tail < 0 ? feedback.length() : tail);
+        String segmentContent = analysisSegment.replaceFirst("^解析[：:]", "").trim();
+        String compactSegment = compact(segmentContent);
+        String compactAnalysis = compact(analysis);
+        if (compactSegment.length() < 4 || compactAnalysis.isEmpty()
+            || (!compactSegment.contains(compactAnalysis)
+                && !compactAnalysis.contains(compactSegment))) {
+            return feedback;
+        }
+        String rebuilt = feedback.substring(0, marker)
+            + (tail < 0 ? "" : feedback.substring(tail));
+        return rebuilt.replaceAll("\\s+", " ").trim();
+    }
+
+    private int analysisMarkerIndex(String feedback) {
+        int fullWidth = feedback.indexOf("解析：");
+        int ascii = feedback.indexOf("解析:");
+        if (fullWidth < 0) {
+            return ascii;
+        }
+        return ascii < 0 ? fullWidth : Math.min(fullWidth, ascii);
+    }
+
+    private int nextContextMarkerIndex(String feedback, int fromIndex) {
+        int keyPoints = feedback.indexOf("考点：", fromIndex);
+        int rubric = feedback.indexOf("评分标准：", fromIndex);
+        if (keyPoints < 0) {
+            return rubric;
+        }
+        return rubric < 0 ? keyPoints : Math.min(keyPoints, rubric);
+    }
+
+    private String compact(String value) {
+        return value == null ? "" : value.replaceAll("\\s+", "");
     }
 
     /**

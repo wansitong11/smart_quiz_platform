@@ -29,6 +29,7 @@ public record PaperNode(
 
     public static final String TYPE_PAPER = "PAPER";
     public static final String TYPE_SECTION = "SECTION";
+    public static final String TYPE_QUESTION_GROUP = "QUESTION_GROUP";
     public static final String TYPE_MATERIAL = "MATERIAL";
     public static final String TYPE_QUESTION = "QUESTION";
     public static final String TYPE_INSTRUCTION = "INSTRUCTION";
@@ -40,11 +41,18 @@ public record PaperNode(
         Integer fullScore,
         Integer questionCount,
         Integer durationMinutes,
-        List<String> assetIds
+        List<String> assetIds,
+        Integer startLine,
+        Integer endLine
     ) {
 
         public PaperMeta(Integer fullScore, Integer questionCount, Integer durationMinutes) {
-            this(fullScore, questionCount, durationMinutes, List.of());
+            this(fullScore, questionCount, durationMinutes, List.of(), null, null);
+        }
+
+        public PaperMeta(Integer fullScore, Integer questionCount, Integer durationMinutes,
+                         List<String> assetIds) {
+            this(fullScore, questionCount, durationMinutes, assetIds, null, null);
         }
     }
 
@@ -85,6 +93,12 @@ public record PaperNode(
     public static PaperNode instruction(String id, int order, String content) {
         return new PaperNode(id, TYPE_INSTRUCTION, order, 0, true, null, null, content,
             null, null, null, List.of());
+    }
+
+    public static PaperNode questionGroup(String id, int order, String title,
+                                          List<PaperNode> children) {
+        return new PaperNode(id, TYPE_QUESTION_GROUP, order, 0, false, title, null, null,
+            new PaperMeta(null, null, null), null, null, children);
     }
 
     public static PaperNode ofQuestion(int order, InterviewQuestionDTO question) {

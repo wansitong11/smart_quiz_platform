@@ -39,6 +39,9 @@ public class PaperAssetEntity {
   @Column(name = "asset_key", nullable = false, length = 64)
   private String assetKey;
 
+  @Column(name = "source_attempt_id", length = 36)
+  private String sourceAttemptId;
+
   @Column(name = "parent_key", length = 64)
   private String parentKey;
 

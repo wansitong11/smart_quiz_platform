@@ -1,12 +1,20 @@
 package interview.guide.modules.resume;
 
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiCost;
+import interview.guide.common.ai.AiCostControl;
+import interview.guide.common.ai.AiCostEstimateInput;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.result.Result;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
+import interview.guide.modules.resume.model.PaperOverviewDTO;
 import interview.guide.modules.resume.model.ResumeDetailDTO;
 import interview.guide.modules.resume.model.ResumeListItemDTO;
 import interview.guide.modules.resume.service.PaperAttemptService;
+import interview.guide.modules.resume.service.PaperOverviewService;
 import interview.guide.modules.resume.service.ResumeDeleteService;
 import interview.guide.modules.resume.service.ResumeHistoryService;
 import interview.guide.modules.resume.service.ResumeUploadService;
@@ -43,6 +51,8 @@ public class ResumeController {
     private final ResumeDeleteService deleteService;
     private final ResumeHistoryService historyService;
     private final PaperAttemptService attemptService;
+    private final PaperOverviewService overviewService;
+    private final AiCostControl aiCostControl;
 
     /**
      * 上传简历并获取分析结果
@@ -51,15 +61,31 @@ public class ResumeController {
      * @return 简历分析结果，包含评分和建议
      */
     @PostMapping(value = "/api/resumes/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @AiCost(feature = AiFeature.PAPER_IMPORT, operation = "upload")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 5)
     @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
     public Result<Map<String, Object>> uploadAndAnalyze(@RequestParam("file") MultipartFile file) {
-        Map<String, Object> result = uploadService.uploadAndAnalyze(file);
-        boolean isDuplicate = (Boolean) result.get("duplicate");
-        if (isDuplicate) {
-            return Result.success("检测到相同简历，已返回历史分析结果", result);
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.PAPER_IMPORT,
+            new AiCostEstimateInput(1L, null, null, null, null));
+        try {
+            Map<String, Object> result = uploadService.uploadAndAnalyze(file);
+            boolean isDuplicate = Boolean.TRUE.equals(result.get("duplicate"));
+            boolean enqueueAccepted = Boolean.TRUE.equals(result.get("enqueueAccepted"));
+            if (isDuplicate || !enqueueAccepted) {
+                finalizeOperation(context);
+            }
+            if (isDuplicate) {
+                return Result.success("检测到相同简历，已返回历史分析结果", result);
+            }
+            return Result.success(result);
+        } catch (RuntimeException e) {
+            finalizeOperation(context);
+            throw e;
         }
-        return Result.success(result);
     }
 
     /**
@@ -78,6 +104,14 @@ public class ResumeController {
     public Result<ResumeDetailDTO> getResumeDetail(@PathVariable Long id) {
         ResumeDetailDTO detail = historyService.getResumeDetail(id);
         return Result.success(detail);
+    }
+
+    /**
+     * 获取试卷概览：只读展示已切题试卷的题目与材料，不创建作答会话。
+     */
+    @GetMapping("/api/resumes/{id}/overview")
+    public Result<PaperOverviewDTO> getOverview(@PathVariable Long id) {
+        return Result.success(overviewService.overview(id));
     }
 
     /**
@@ -123,11 +157,23 @@ public class ResumeController {
      * @return 结果
      */
     @PostMapping("/api/resumes/{id}/reanalyze")
+    @AiCost(feature = AiFeature.PAPER_EXTRACTION, operation = "reanalyze")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 2)
     @RateLimit(dimension = RateLimit.Dimension.IP, count = 2)
     public Result<Void> reanalyze(@PathVariable Long id) {
-        uploadService.reanalyze(id);
-        return Result.success(null);
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.PAPER_EXTRACTION,
+            new AiCostEstimateInput(1L, null, null, null, null));
+        try {
+            uploadService.reanalyze(id);
+            return Result.success(null);
+        } catch (RuntimeException e) {
+            finalizeOperation(context);
+            throw e;
+        }
     }
 
     /**
@@ -141,8 +187,19 @@ public class ResumeController {
      * @return 本次作答的练习会话
      */
     @PostMapping("/api/resumes/{id}/attempts")
+    @AiCost(feature = AiFeature.PAPER_EXTRACTION, operation = "startAttempt")
     public Result<InterviewSessionDTO> startAttempt(@PathVariable Long id) {
-        return Result.success(attemptService.startAttempt(id));
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.PAPER_EXTRACTION,
+            new AiCostEstimateInput(1L, null, null, null, null));
+        try {
+            return Result.success(attemptService.startAttempt(id));
+        } finally {
+            finalizeOperation(context);
+        }
     }
 
     /**
@@ -154,6 +211,16 @@ public class ResumeController {
             "status", "UP",
             "service", "AI Interview Platform - Resume Service"
         ));
+    }
+
+    private void finalizeOperation(AiCallContext context) {
+        if (context != null && context.operationId() != null) {
+            aiCostControl.finalize(context.operationId());
+        }
+    }
+
+    private void finalizeCurrentAiOperation() {
+        finalizeOperation(AiCallContextHolder.get());
     }
 
 }

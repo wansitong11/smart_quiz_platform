@@ -44,6 +44,7 @@ public class ResumeUploadService {
     private final PaperRecognitionService recognitionService;
     private final ResumeRepository resumeRepository;
     private final TransactionalExecutor transactionalExecutor;
+    private final PaperContentGuard paperContentGuard;
 
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
@@ -256,9 +257,25 @@ public class ResumeUploadService {
      * @param resumeId 简历ID
      */
     public void reanalyze(Long resumeId) {
+        paperContentGuard.withPaperLock(resumeId, () -> reanalyzeLocked(resumeId));
+    }
+
+    private void reanalyzeLocked(Long resumeId) {
+        paperContentGuard.prepareForContentChange(resumeId);
         // 归属校验：别人的试卷既不能重切、也不能触发重新投递
-        resumeRepository.findByIdScoped(resumeId, ownerScope.effectiveOwnerId())
+        PracticePaperEntity paper = resumeRepository
+            .findByIdScoped(resumeId, ownerScope.effectiveOwnerId())
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "试卷不存在或无权访问"));
+
+        if (paper.getInputStatus() == AsyncTaskStatus.FAILED) {
+            recognitionService.retryInputProcessing(resumeId);
+            log.info("重新解析试卷原始文件已投递: resumeId={}", resumeId);
+            return;
+        }
+        if (paper.getInputStatus() != null
+            && paper.getInputStatus() != AsyncTaskStatus.COMPLETED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "文件正在解析，请稍后");
+        }
 
         log.info("开始重新分析简历: resumeId={}", resumeId);
 
@@ -269,8 +286,10 @@ public class ResumeUploadService {
             resume.setAnalysisStatus(AsyncTaskStatus.PENDING);
             resume.setAnalysisError(null);
             resume.setAnalysisAttemptId(null);
-            resume.setAnalysisUpdatedAt(java.time.LocalDateTime.now());
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            resume.setAnalysisUpdatedAt(now);
             resumeRepository.save(resume);
+            resumeRepository.incrementContentRevision(resumeId, now);
         });
         // 手动重试清零自动恢复计数
         resumeRepository.resetAnalysisRecoveryCount(resumeId);

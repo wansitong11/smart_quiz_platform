@@ -22,6 +22,8 @@ public record ResumeDetailDTO(
     String analysisError,
     RecognitionStatus recognitionStatus,
     String recognitionError,
+    AsyncTaskStatus inputStatus,
+    String inputError,
     Integer pageCount,
     List<AnalysisHistoryDTO> analyses,
     List<InterviewHistoryItemDTO> interviews

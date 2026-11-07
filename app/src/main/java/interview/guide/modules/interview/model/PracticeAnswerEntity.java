@@ -55,6 +55,19 @@ public class PracticeAnswerEntity {
     // 反馈
     @Column(columnDefinition = "TEXT")
     private String feedback;
+
+    /** AUTO / TEXT_MODEL / VISION_MODEL / MANUAL_REVIEW */
+    @Column(name = "score_status", length = 20)
+    private String scoreStatus;
+
+    @Column(name = "low_confidence", nullable = false)
+    private boolean lowConfidence = false;
+
+    @Column(name = "answer_key_confidence")
+    private Integer answerKeyConfidence;
+
+    @Column(name = "score_message", columnDefinition = "TEXT")
+    private String scoreMessage;
     
     // 参考答案
     @Column(columnDefinition = "TEXT")
@@ -152,6 +165,38 @@ public class PracticeAnswerEntity {
     
     public void setFeedback(String feedback) {
         this.feedback = feedback;
+    }
+
+    public String getScoreStatus() {
+        return scoreStatus;
+    }
+
+    public void setScoreStatus(String scoreStatus) {
+        this.scoreStatus = scoreStatus;
+    }
+
+    public boolean isLowConfidence() {
+        return lowConfidence;
+    }
+
+    public void setLowConfidence(boolean lowConfidence) {
+        this.lowConfidence = lowConfidence;
+    }
+
+    public Integer getAnswerKeyConfidence() {
+        return answerKeyConfidence;
+    }
+
+    public void setAnswerKeyConfidence(Integer answerKeyConfidence) {
+        this.answerKeyConfidence = answerKeyConfidence;
+    }
+
+    public String getScoreMessage() {
+        return scoreMessage;
+    }
+
+    public void setScoreMessage(String scoreMessage) {
+        this.scoreMessage = scoreMessage;
     }
     
     public String getReferenceAnswer() {

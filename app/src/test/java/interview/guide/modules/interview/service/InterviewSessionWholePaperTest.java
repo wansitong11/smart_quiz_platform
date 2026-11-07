@@ -1,6 +1,6 @@
 package interview.guide.modules.interview.service;
 
-import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.common.ai.AiCostControl;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
@@ -8,6 +8,7 @@ import interview.guide.infrastructure.redis.InterviewSessionCache;
 import interview.guide.infrastructure.redis.InterviewSessionCache.CachedSession;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.interview.listener.EvaluateStreamProducer;
+import interview.guide.modules.interview.listener.InterviewQuestionGenStreamProducer;
 import interview.guide.modules.interview.model.BatchSubmitAnswerRequest;
 import interview.guide.modules.interview.model.BatchSubmitAnswerResponse;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
@@ -26,10 +27,12 @@ import tools.jackson.databind.ObjectMapper;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -45,17 +48,17 @@ class InterviewSessionWholePaperTest {
   @Mock
   private InterviewQuestionService questionService;
   @Mock
-  private AnswerEvaluationService evaluationService;
-  @Mock
   private InterviewPersistenceService persistenceService;
   @Mock
   private InterviewSessionCache sessionCache;
   @Mock
   private EvaluateStreamProducer evaluateStreamProducer;
   @Mock
-  private LlmProviderRegistry llmProviderRegistry;
+  private InterviewQuestionGenStreamProducer questionGenStreamProducer;
   @Mock
   private RedisService redisService;
+  @Mock
+  private AiCostControl aiCostControl;
 
   private ObjectMapper objectMapper;
   private InterviewSessionService service;
@@ -65,14 +68,19 @@ class InterviewSessionWholePaperTest {
     objectMapper = new ObjectMapper();
     service = new InterviewSessionService(
         questionService,
-        evaluationService,
         persistenceService,
         sessionCache,
         objectMapper,
         evaluateStreamProducer,
-        llmProviderRegistry,
-        redisService
+        questionGenStreamProducer,
+        redisService,
+        aiCostControl
     );
+    when(redisService.executeWithLock(anyString(), anyLong(), any(TimeUnit.class), any()))
+        .thenAnswer(invocation -> {
+          RedisService.LockedOperation<?> operation = invocation.getArgument(3);
+          return operation.execute();
+        });
   }
 
   private void givenCachedSession(SessionStatus status, int questionCount) {
@@ -94,6 +102,7 @@ class InterviewSessionWholePaperTest {
     @DisplayName("整卷提交后批量落库、置为 COMPLETED 并投递批改任务")
     void shouldSubmitWholePaper() {
       givenCachedSession(SessionStatus.CREATED, 3);
+      when(persistenceService.tryMarkEvaluatePendingIfIdle(SESSION_ID)).thenReturn(true);
       List<BatchSubmitAnswerRequest.AnswerItem> items = List.of(
           new BatchSubmitAnswerRequest.AnswerItem(0, null, null, "A"),
           new BatchSubmitAnswerRequest.AnswerItem(2, null, null, "解答过程：……")
@@ -116,14 +125,17 @@ class InterviewSessionWholePaperTest {
 
       verify(sessionCache).updateSessionStatus(SESSION_ID, SessionStatus.COMPLETED);
       verify(sessionCache).updateCurrentIndex(SESSION_ID, 3);
-      verify(persistenceService).updateEvaluateStatus(SESSION_ID, AsyncTaskStatus.PENDING, null);
+      verify(persistenceService).tryMarkEvaluatePendingIfIdle(SESSION_ID);
       verify(evaluateStreamProducer).sendEvaluateTask(SESSION_ID);
+      verify(redisService).executeWithLock(
+          eq("interview:session:write:" + SESSION_ID), eq(3L), eq(TimeUnit.SECONDS), any());
     }
 
     @Test
     @DisplayName("跳题（空答案）允许提交，并计入空答案数量")
     void shouldAllowBlankAnswers() {
       givenCachedSession(SessionStatus.CREATED, 3);
+      when(persistenceService.tryMarkEvaluatePendingIfIdle(SESSION_ID)).thenReturn(true);
       List<BatchSubmitAnswerRequest.AnswerItem> items = List.of(
           new BatchSubmitAnswerRequest.AnswerItem(0, null, null, "A"),
           new BatchSubmitAnswerRequest.AnswerItem(1, null, null, "   ")
@@ -134,6 +146,19 @@ class InterviewSessionWholePaperTest {
       assertThat(response.answeredCount()).isEqualTo(2);
       assertThat(response.blankCount()).isEqualTo(1);
       verify(evaluateStreamProducer).sendEvaluateTask(SESSION_ID);
+    }
+
+    @Test
+    @DisplayName("批改已在处理中时不重复投递批改任务")
+    void shouldSkipEnqueueWhenEvaluationAlreadyActive() {
+      givenCachedSession(SessionStatus.CREATED, 2);
+      when(persistenceService.tryMarkEvaluatePendingIfIdle(SESSION_ID)).thenReturn(false);
+
+      service.submitWholePaper(SESSION_ID,
+          List.of(new BatchSubmitAnswerRequest.AnswerItem(0, null, null, "A")));
+
+      verify(persistenceService, never()).updateEvaluateStatus(anyString(), any(), any());
+      verify(evaluateStreamProducer, never()).sendEvaluateTask(anyString());
     }
   }
 

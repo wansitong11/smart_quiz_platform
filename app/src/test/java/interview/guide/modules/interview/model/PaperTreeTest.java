@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,7 +21,7 @@ class PaperTreeTest {
         index, question, "SINGLE_CHOICE", "现代文阅读", null, null, null, null, false, null,
         "A", List.of("要点一"), "选对得满分", null, fullScore, InterviewQuestionDTO.TYPE_SINGLE_CHOICE,
         List.of(new QuestionOption("A", "选项甲"), new QuestionOption("B", "选项乙")),
-        "甲项与材料一致。", null, null
+        "甲项与材料一致。", null, null, null, null, null, false
     );
   }
 
@@ -109,6 +110,24 @@ class PaperTreeTest {
     }
 
     @Test
+    @DisplayName("题组内的多段材料全部进入批改上下文")
+    void collectsAllMaterialsInsideQuestionGroup() {
+      PaperNode group = PaperNode.questionGroup("g1", 1, "材料题组", List.of(
+          PaperNode.material("m1", 1, "材料一", "第一段材料"),
+          PaperNode.material("m2", 2, "材料二", "第二段材料"),
+          PaperNode.ofQuestion(3, choiceQuestion(0, "第 1 题", 3))
+      ));
+      PaperNode section = PaperNode.section("n1", 1, "一、阅读", null, List.of(group));
+      PaperTree tree = PaperTree.recalculate(new PaperTree(PaperTree.CURRENT_VERSION,
+          PaperNode.paper("n0", "语文模拟卷", null, List.of(section))));
+
+      assertThat(tree.flattenQuestions()).hasSize(1);
+      assertThat(tree.materialsOf(0)).extracting(PaperNode::title)
+          .containsExactly("材料一", "材料二");
+      assertThat(tree.contextOf(0)).contains("第一段材料").contains("第二段材料");
+    }
+
+    @Test
     @DisplayName("题目之后出现的材料不算作该题上下文")
     void ignoresMaterialPlacedAfterQuestion() {
       PaperNode section = PaperNode.section("n1", 1, "一、现代文阅读", null, List.of(
@@ -123,6 +142,25 @@ class PaperTreeTest {
     }
 
     @Test
+    @DisplayName("题目位于后续材料节点时，继承同节前置材料")
+    void includesPreviousSiblingMaterialsForNestedQuestions() {
+      PaperNode section = PaperNode.section("n1", 1, "非连续性文本阅读", null, List.of(
+          PaperNode.material("m1", 1, "名片一", "刑天……"),
+          PaperNode.material("m2", 2, "名片二", "羿……"),
+          PaperNode.material("m3", 3, "名片三", "愚公……").withChildren(List.of(
+              PaperNode.ofQuestion(1, choiceQuestion(0, "三张名片中错误的一项是", 2))
+          ))
+      ));
+      PaperTree tree = PaperTree.recalculate(new PaperTree(PaperTree.CURRENT_VERSION,
+          PaperNode.paper("n0", "语文模拟卷", null, List.of(section))));
+
+      assertThat(tree.materialsOf(0)).extracting(PaperNode::title)
+          .containsExactly("名片一", "名片二", "名片三");
+      assertThat(tree.contextOf(0))
+          .contains("刑天").contains("羿").contains("愚公");
+    }
+
+    @Test
     @DisplayName("序列化后重新解析保持结构一致（存储只存树）")
     void roundTripsThroughJson() {
       PaperTree tree = sampleTree();
@@ -134,6 +172,25 @@ class PaperTreeTest {
           .containsExactlyElementsOf(tree.flattenQuestions().stream()
               .map(InterviewQuestionDTO::questionIndex).toList());
       assertThat(parsed.questionNode(0).orElseThrow().question().question()).isEqualTo("第 1 题");
+    }
+
+    @Test
+    @DisplayName("学生端视图移除答案键，内部树保持不变")
+    void attemptViewRemovesAnswerKeys() {
+      InterviewQuestionDTO question = choiceQuestion(0, "图示题", 3)
+          .withAnswerKey(new AnswerKeyDTO(
+              0, "A", Map.of("A", true, "B", false), "看图判断。",
+              List.of("图像特征"), "选对得分", "A 为正确展开图", false, 55,
+              AnswerKeyDTO.SOURCE_VISION));
+      PaperTree tree = PaperTree.fromFlatQuestions(List.of(question), "数学");
+
+      PaperTree publicTree = tree.forAttemptView();
+
+      assertThat(publicTree.flattenQuestions().get(0).referenceAnswer()).isNull();
+      assertThat(publicTree.flattenQuestions().get(0).analysis()).isNull();
+      assertThat(publicTree.flattenQuestions().get(0).answerKeyConfidence()).isNull();
+      assertThat(tree.flattenQuestions().get(0).referenceAnswer()).isEqualTo("A");
+      assertThat(tree.flattenQuestions().get(0).answerKeyConfidence()).isEqualTo(55);
     }
   }
 }

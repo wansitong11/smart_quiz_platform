@@ -121,6 +121,30 @@ public class PracticePaperEntity {
 
     @Column(name = "recognition_recovery_count", nullable = false)
     private int recognitionRecoveryCount = 0;
+
+    // ========== 输入处理异步任务（E 阶段） ==========
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "input_status", nullable = false, length = 20)
+    private AsyncTaskStatus inputStatus = AsyncTaskStatus.COMPLETED;
+
+    @Column(name = "input_error", length = 500)
+    private String inputError;
+
+    @Column(name = "input_attempt_id", length = 36)
+    private String inputAttemptId;
+
+    @Column(name = "input_updated_at")
+    private java.time.LocalDateTime inputUpdatedAt;
+
+    @Column(name = "input_recovery_count", nullable = false)
+    private int inputRecoveryCount = 0;
+
+    /**
+     * 当前题目树和页资源的内容代次。任何会改变题面或资源的成功操作都必须原子推进。
+     */
+    @Column(name = "content_revision", nullable = false)
+    private long contentRevision;
     
     @PrePersist
     protected void onCreate() {

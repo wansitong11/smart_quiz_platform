@@ -1,5 +1,7 @@
 package interview.guide.modules.resume.model;
 
+import interview.guide.common.model.AsyncTaskStatus;
+
 import java.util.List;
 
 /**
@@ -13,7 +15,11 @@ public record PaperRecognitionDTO(
     List<PaperPageDTO> pages,
     List<Integer> questionNos,
     List<String> warnings,
-    List<PaperAssetDTO> assets
+    List<PaperAssetDTO> assets,
+    List<Integer> geometryMissingPages,
+    AsyncTaskStatus inputStatus,
+    String inputError,
+    boolean hasActiveAttempt
 ) {
 
   public record PaperPageDTO(
@@ -24,7 +30,9 @@ public record PaperRecognitionDTO(
       boolean hasFigure,
       String notes,
       String error,
-      String imageUrl
+      String imageUrl,
+      String geometryStatus,
+      int assetCount
   ) {
   }
 

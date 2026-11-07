@@ -14,6 +14,12 @@ public interface PaperAssetRepository extends JpaRepository<PaperAssetEntity, Lo
 
   Optional<PaperAssetEntity> findByPaperIdAndAssetKey(Long paperId, String assetKey);
 
+  List<PaperAssetEntity> findByPaperIdAndParentKeyAndKindOrderByIdAsc(
+      Long paperId, String parentKey, String kind);
+
+  List<PaperAssetEntity> findByPaperIdAndSourceAttemptIdOrderByIdAsc(
+      Long paperId, String sourceAttemptId);
+
   @Transactional
   @Modifying
   void deleteByPaperId(Long paperId);

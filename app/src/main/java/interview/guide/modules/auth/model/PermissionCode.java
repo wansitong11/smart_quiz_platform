@@ -22,7 +22,8 @@ public enum PermissionCode {
   VOICE_USE("voice:use", "口语练习"),
   SCHEDULE_USE("schedule:use", "练习安排"),
   PROVIDER_MANAGE("provider:manage", "模型 Provider 管理"),
-  USER_MANAGE("user:manage", "用户与角色管理");
+  USER_MANAGE("user:manage", "用户与角色管理"),
+  AI_COST_VIEW("ai:cost:view", "AI 调用与成本");
 
   private final String code;
   private final String name;
@@ -45,6 +46,7 @@ public enum PermissionCode {
     Set<PermissionCode> codes = new LinkedHashSet<>(Arrays.asList(values()));
     codes.remove(USER_MANAGE);
     codes.remove(PROVIDER_MANAGE);
+    codes.remove(AI_COST_VIEW);
     return codes;
   }
 }

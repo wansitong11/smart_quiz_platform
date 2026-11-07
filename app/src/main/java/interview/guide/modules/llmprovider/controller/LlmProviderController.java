@@ -15,6 +15,7 @@ import interview.guide.modules.llmprovider.service.LlmProviderConfigService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,6 +29,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/llm-provider")
+@PreAuthorize("hasAuthority('provider:manage')")
 @RequiredArgsConstructor
 @Slf4j
 public class LlmProviderController {
@@ -35,12 +37,14 @@ public class LlmProviderController {
   private final LlmProviderConfigService configService;
 
   @GetMapping("/list")
+  @PreAuthorize("isAuthenticated()")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
   public Result<List<ProviderDTO>> listProviders() {
     return Result.success(configService.listProviders());
   }
 
   @GetMapping("/{id}")
+  @PreAuthorize("isAuthenticated()")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
   public Result<ProviderDTO> getProvider(@PathVariable String id) {
     return Result.success(configService.getProvider(id));
@@ -82,6 +86,7 @@ public class LlmProviderController {
   }
 
   @GetMapping("/default-provider")
+  @PreAuthorize("isAuthenticated()")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
   public Result<DefaultProviderDTO> getDefaultProvider() {
     return Result.success(configService.getDefaultProvider());
@@ -111,6 +116,7 @@ public class LlmProviderController {
   // ===== Voice ASR/TTS Config =====
 
   @GetMapping("/voice/asr")
+  @PreAuthorize("isAuthenticated()")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
   public Result<AsrConfigDTO> getAsrConfig() {
     return Result.success(configService.getAsrConfig());
@@ -124,6 +130,7 @@ public class LlmProviderController {
   }
 
   @GetMapping("/voice/tts")
+  @PreAuthorize("isAuthenticated()")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
   public Result<TtsConfigDTO> getTtsConfig() {
     return Result.success(configService.getTtsConfig());

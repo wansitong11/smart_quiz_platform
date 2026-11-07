@@ -19,7 +19,6 @@ public enum ErrorCode {
     INTERNAL_ERROR(500, "服务器内部错误"),
     
     // ========== 简历模块错误 2xxx ==========
-    RESUME_NOT_FOUND(2001, "简历不存在"),
     RESUME_PARSE_FAILED(2002, "简历解析失败"),
     RESUME_UPLOAD_FAILED(2003, "简历上传失败"),
     RESUME_DUPLICATE(2004, "简历已存在"),
@@ -34,9 +33,10 @@ public enum ErrorCode {
     PAPER_EXTRACTION_NOT_FOUND(2013, "试卷解析结果不存在"),
     PAPER_NO_QUESTION_FOUND(2014, "未从材料中识别到题目"),
     PAPER_RECOGNITION_FAILED(2015, "试卷图片识别失败"),
+    PAPER_CONTENT_LOCKED(2016, "试卷有进行中的作答或批改"),
+    PAPER_CONTENT_CHANGED(2017, "试卷内容已更新"),
     
     // ========== 面试模块错误 3xxx ==========
-    INTERVIEW_SESSION_NOT_FOUND(3001, "面试会话不存在"),
     INTERVIEW_SESSION_EXPIRED(3002, "面试会话已过期"),
     INTERVIEW_QUESTION_NOT_FOUND(3003, "面试问题不存在"),
     INTERVIEW_ALREADY_COMPLETED(3004, "面试已完成"),
@@ -45,6 +45,7 @@ public enum ErrorCode {
     INTERVIEW_NOT_COMPLETED(3007, "面试尚未完成"),
     INTERVIEW_ANSWER_SAVE_FAILED(3008, "面试答案保存失败"),
     INTERVIEW_QUESTION_INSUFFICIENT(3009, "符合条件的面试问题不足"),
+    SYSTEM_BUSY(3010, "系统繁忙，请稍后重试"),
     
     // ========== 存储模块错误 4xxx ==========
     STORAGE_UPLOAD_FAILED(4001, "文件上传失败"),
@@ -55,7 +56,6 @@ public enum ErrorCode {
     EXPORT_PDF_FAILED(5001, "PDF导出失败"),
     
     // ========== 知识库模块错误 6xxx ==========
-    KNOWLEDGE_BASE_NOT_FOUND(6001, "知识库不存在"),
     KNOWLEDGE_BASE_PARSE_FAILED(6002, "知识库文件解析失败"),
     KNOWLEDGE_BASE_QUERY_FAILED(6004, "知识库查询失败"),
     KNOWLEDGE_BASE_DELETE_FAILED(6005, "知识库删除失败"),
@@ -67,6 +67,8 @@ public enum ErrorCode {
     AI_SERVICE_ERROR(7003, "AI服务调用失败"),
     AI_API_KEY_INVALID(7004, "AI服务密钥无效"),
     AI_RATE_LIMIT_EXCEEDED(7005, "AI服务调用频率超限"),
+    AI_BUDGET_EXCEEDED(7006, "本月 AI 额度已用尽"),
+    AI_PRICE_CONFIG_INVALID(7007, "模型价格配置无效"),
 
     // ========== 限流模块错误 8xxx ==========
     RATE_LIMIT_EXCEEDED(8001, "请求过于频繁，请稍后再试"),

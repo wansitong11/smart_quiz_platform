@@ -16,4 +16,11 @@ public class StructuredOutputProperties {
     private int structuredErrorMessageMaxLength = 200;
     private boolean structuredMetricsEnabled = true;
     private boolean structuredSchemaValidationEnabled = true;
+    private int structuredRetryBackoffBaseMs = 1000;
+    private int structuredRetryBackoffMaxMs = 5000;
+    private int structuredRetryBackoffJitterMs = 500;
+    private int structuredRateLimitBackoffBaseMs = 5000;
+    private int structuredRateLimitBackoffMaxMs = 20000;
+    private int structuredRateLimitBackoffJitterMs = 1000;
+    private int structuredRateLimitMaxWaitMs = 30000;
 }

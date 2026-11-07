@@ -13,8 +13,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.model.tool.ToolCallingManager;
 
+import java.lang.reflect.Field;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -112,6 +116,78 @@ class LlmProviderRegistryTest {
         assertNotSame(defaultClient, plainClient, "Default and plain clients should keep advisor recipes isolated");
         assertNotSame(defaultClient, voiceClient, "Default and voice clients should keep advisor recipes isolated");
         verify(properties, times(1)).getProviders();
+    }
+
+    @Test
+    @DisplayName("答案求解客户端与普通 plain 客户端分开缓存")
+    void answerSolverClientIsSeparateFromPlainClient() {
+        String providerId = "dashscope";
+        ProviderConfig config = new ProviderConfig();
+        config.setBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1");
+        config.setApiKey("test-key");
+        config.setModel("qwen3.8-flash");
+        when(properties.getDefaultProvider()).thenReturn(providerId);
+        when(properties.getProviders()).thenReturn(Map.of(providerId, config));
+        when(properties.extraBodyFor(providerId)).thenReturn(Map.of("enable_thinking", false));
+
+        ChatClient plain = registry.getPlainChatClient();
+        ChatClient solver = registry.getPlainReasoningChatClient();
+
+        assertNotNull(solver);
+        assertNotSame(plain, solver);
+    }
+
+    @Test
+    @DisplayName("GLM reasoning 客户端显式重新打开 thinking")
+    void glmReasoningClientEnablesThinking() throws Exception {
+        String providerId = "glm-free";
+        ProviderConfig config = new ProviderConfig();
+        config.setBaseUrl("https://open.bigmodel.cn/api/paas/v4");
+        config.setApiKey("test-key");
+        config.setModel("glm-4.7-flash");
+        when(properties.getDefaultProvider()).thenReturn(providerId);
+        when(properties.getProviders()).thenReturn(Map.of(providerId, config));
+        when(properties.getChatRequestTimeout()).thenReturn(Duration.ofMinutes(5));
+        when(properties.extraBodyFor(providerId))
+            .thenReturn(Map.of("thinking", Map.of("type", "disabled")));
+
+        registry.getPlainReasoningChatClient();
+
+        Field cacheField = LlmProviderRegistry.class.getDeclaredField("reasoningChatModelCache");
+        cacheField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, OpenAiChatModel> cache =
+            (Map<String, OpenAiChatModel>) cacheField.get(registry);
+        OpenAiChatOptions options =
+            (OpenAiChatOptions) cache.get(providerId).getDefaultOptions();
+        assertEquals(Map.of("type", "enabled"), options.getExtraBody().get("thinking"));
+    }
+
+    @Test
+    @DisplayName("视觉 Provider 使用配置的请求超时，而不是 Spring AI 的 60 秒默认值")
+    void visionChatModelUsesConfiguredRequestTimeout() throws Exception {
+        String providerId = "dashscope-vl";
+        ProviderConfig config = new ProviderConfig();
+        config.setBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1");
+        config.setApiKey("test-key");
+        config.setModel("qwen3.8-flash");
+        config.setSupportsVision(true);
+
+        when(properties.getProviders()).thenReturn(Map.of(providerId, config));
+        when(properties.getVisionRequestTimeout()).thenReturn(Duration.ofMinutes(2));
+        when(properties.extraBodyFor(providerId)).thenReturn(Map.of("enable_thinking", false));
+
+        registry.getChatClient(providerId);
+
+        Field cacheField = LlmProviderRegistry.class.getDeclaredField("chatModelCache");
+        cacheField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, OpenAiChatModel> cache =
+            (Map<String, OpenAiChatModel>) cacheField.get(registry);
+
+        OpenAiChatOptions options =
+            (OpenAiChatOptions) cache.get(providerId).getDefaultOptions();
+        assertEquals(Duration.ofMinutes(2), options.getTimeout());
     }
 
     @Test
@@ -235,6 +311,16 @@ class LlmProviderRegistryTest {
             assertNotNull(client);
             assertSame(client, registry.getChatClient("dashscope"));
         }
+    }
+
+    @Test
+    @DisplayName("BGE 系列固定维度，不发送 dimensions 参数")
+    void embeddingDimensionOverrideOnlyForConfigurableModels() {
+        assertFalse(LlmProviderRegistry.supportsEmbeddingDimensionOverride("BAAI/bge-m3"));
+        assertFalse(LlmProviderRegistry.supportsEmbeddingDimensionOverride("BAAI/bge-large-zh-v1.5"));
+        assertFalse(LlmProviderRegistry.supportsEmbeddingDimensionOverride("netease-youdao/bce-embedding-base_v1"));
+        assertTrue(LlmProviderRegistry.supportsEmbeddingDimensionOverride("text-embedding-v3"));
+        assertTrue(LlmProviderRegistry.supportsEmbeddingDimensionOverride("Qwen/Qwen3-Embedding-8B"));
     }
 
     @Test

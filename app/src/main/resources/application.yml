@@ -7,7 +7,7 @@ logging:
     file: UTF-8
 
 server:
-  port: 8080
+  port: 8085
   # 明确指定HTTP响应编码
   servlet:
     encoding:
@@ -133,14 +133,85 @@ app:
     register-max-global-per-day: ${APP_AUTH_REGISTER_MAX_GLOBAL_PER_DAY:5}
 
   ai:
-    default-provider: dashscope
-    default-embedding-provider: dashscope
+    # 这里是“无 Key 时的安全默认值”。系统任务、管理员与授权用户使用这组默认模型；
+    # 免费档用户由下方 tier 配置强制路由到 3.7，不会自动改写全局默认。
+    default-provider: ${APP_AI_DEFAULT_PROVIDER:dashscope}
+    default-embedding-provider: ${APP_AI_DEFAULT_EMBEDDING_PROVIDER:dashscope}
     # 识图默认 Provider，必须独立于文本默认：文本模型不接收图片
     default-vision-provider: ${APP_AI_DEFAULT_VISION_PROVIDER:dashscope-vl}
     embedding-dimensions: ${APP_AI_EMBEDDING_DIMENSIONS:1024}
+    # 旧零价格模型组合的 Provider 标识。现在只用于“零价格模型”并发闸门判定，
+    # 不再参与用户档位路由，也不会在启动时自动改写全局默认模型。
+    free-models:
+      # 免费文本用 Qwen3-8B（实测 8 并发可用）；免费识图用 GLM-4.6V-Flash（免费档约 1 并发）。
+      # 这两个指针只决定“免费档默认 Provider”，不是付费档兜底；Key 不存在时不会切换。
+      text-provider: ${APP_AI_FREE_TEXT_PROVIDER:siliconflow-free}
+      vision-provider: ${APP_AI_FREE_VISION_PROVIDER:glm-vl-free}
+      embedding-provider: ${APP_AI_FREE_EMBEDDING_PROVIDER:siliconflow-free}
+      # 语音模型没有独立的可切换 Provider 时留空；设置后 ASR/TTS 也按免费闸门限流。
+      audio-provider: ${APP_AI_FREE_AUDIO_PROVIDER:}
+    # 用户档位路由：免费用户固定走 3.7，管理员/授权用户与系统任务走全局默认（3.8）。
+    tier:
+      free-text-provider: ${APP_AI_TIER_FREE_TEXT_PROVIDER:dashscope-3.7}
+      free-vision-provider: ${APP_AI_TIER_FREE_VISION_PROVIDER:dashscope-3.7-vl}
     # 单次模型调用的整体超时；不设时 HTTP/2 卡住会一直等
     chat-request-timeout: ${APP_AI_CHAT_REQUEST_TIMEOUT:5m}
-    vision-request-timeout: ${APP_AI_VISION_REQUEST_TIMEOUT:2m}
+    vision-request-timeout: ${APP_AI_VISION_REQUEST_TIMEOUT:3m}
+    # AI 调用成本观测与控制：账本 / 预算 / 估算 / 价格
+    cost:
+      enabled: ${APP_AI_COST_ENABLED:true}
+      ledger:
+        async: true
+        retention-days: ${APP_AI_COST_LEDGER_RETENTION_DAYS:90}
+        queue-capacity: 10000
+        flush-batch-size: 200
+        cleanup-cron: "0 10 3 * * ?"
+      budget:
+        default:
+          rpm: ${APP_AI_BUDGET_RPM:10}
+          tpm: ${APP_AI_BUDGET_TPM:200000}
+          concurrency: ${APP_AI_BUDGET_CONCURRENCY:4}
+        features:
+          PAPER_IMPORT:
+            # 与 paper.recognition.pool-size 对齐，且不得超过 vision-guard.max-in-flight
+            concurrency: ${APP_AI_BUDGET_PAPER_IMPORT_CONCURRENCY:3}
+            reserve: true
+          PAPER_RECOGNIZE:
+            concurrency: 2
+          PAPER_EXTRACTION:
+            reserve: true
+          QUIZ_GENERATE:
+            rpm: 5
+            reserve: true
+          ANSWER_EVALUATE:
+            reserve: true
+          KB_QA:
+            reserve: true
+        reconciliation-cron: "0 */15 * * * ?"
+        stale-reserved-hours: 2
+      quota:
+        monthly-total-cny: ${APP_AI_QUOTA_MONTHLY_TOTAL_CNY:100}
+      estimator:
+        default-operation-cny: 0.01
+        paper-tokens-per-page: 2000
+        quiz-tokens-per-question: 1200
+        qa-context-tokens: 4000
+        qa-output-tokens: 800
+        vectorize-tokens-per-chunk: 800
+      prices:
+        seed-on-startup: true
+        sync-url: ${APP_AI_COST_PRICE_SYNC_URL:}
+        local-path: ${APP_AI_COST_PRICE_LOCAL_PATH:}
+        sync-cron: ${APP_AI_COST_PRICE_SYNC_CRON:0 20 4 * * ?}
+        sync-zone: Asia/Shanghai
+    # 单 vision provider 的并发隔离与轻量熔断
+    vision-guard:
+      max-in-flight: ${APP_AI_VISION_MAX_IN_FLIGHT:4}
+      max-queue: ${APP_AI_VISION_MAX_QUEUE:10}
+      acquire-timeout: ${APP_AI_VISION_ACQUIRE_TIMEOUT:30s}
+      circuit-failure-threshold: ${APP_AI_VISION_CIRCUIT_FAILURE_THRESHOLD:5}
+      circuit-open-duration: ${APP_AI_VISION_CIRCUIT_OPEN_DURATION:30s}
+      circuit-half-open-probes: ${APP_AI_VISION_CIRCUIT_HALF_OPEN_PROBES:1}
     security:
       api-key-encryption-key: ${APP_AI_CONFIG_ENCRYPTION_KEY:}
       require-encryption-key: ${APP_AI_CONFIG_REQUIRE_ENCRYPTION_KEY:true}
@@ -155,7 +226,7 @@ app:
       dashscope:
         base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
         api-key: ${AI_BAILIAN_API_KEY}
-        model: ${AI_MODEL:qwen3.5-122b-a10b}
+        model: ${AI_MODEL:qwen3.8-flash}
         embedding-model: text-embedding-v3
         embedding-dimensions: 1024
         supports-embedding: true
@@ -168,6 +239,66 @@ app:
         model: ${AI_VISION_MODEL:qwen3.8-flash}
         supports-embedding: false
         supports-vision: true
+      # 免费用户档位：文本走 3.7，识图同样走 3.7（同名模型支持图片输入）。
+      dashscope-3.7:
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api-key: ${AI_BAILIAN_API_KEY}
+        model: ${AI_FREE_TEXT_MODEL:qwen3.7-flash}
+        supports-embedding: false
+        supports-vision: false
+      dashscope-3.7-vl:
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api-key: ${AI_BAILIAN_API_KEY}
+        model: ${AI_FREE_VISION_MODEL:qwen3.7-flash}
+        supports-embedding: false
+        supports-vision: true
+      # ===== 免费模型组合（2026-11-03 启用）=====
+      # 智谱 GLM：文本先用 GLM-4.7-Flash，识图用 GLM-4.6V-Flash。
+      # 两个 Provider 共用同一个 Key；分开建行是因为模型名和能力标记不同。
+      glm-free:
+        base-url: ${PROVIDER_GLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+        api-key: ${PROVIDER_GLM_API_KEY:}
+        model: ${PROVIDER_GLM_FREE_MODEL:glm-4.7-flash}
+        supports-embedding: false
+        supports-vision: false
+      glm-vl-free:
+        base-url: ${PROVIDER_GLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+        api-key: ${PROVIDER_GLM_API_KEY:}
+        model: ${PROVIDER_GLM_VISION_FREE_MODEL:glm-4.6v-flash}
+        supports-embedding: false
+        supports-vision: true
+      # 硅基流动：免费文本 Qwen3-8B + Embedding BGE-M3（1024 维）。
+      # 同一个 Provider 行同时承担文本和 Embedding，模型能力互不干扰。
+      siliconflow-free:
+        base-url: ${PROVIDER_SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
+        api-key: ${PROVIDER_SILICONFLOW_API_KEY:}
+        model: ${PROVIDER_SILICONFLOW_CHAT_MODEL:Qwen/Qwen3-8B}
+        embedding-model: ${PROVIDER_SILICONFLOW_EMBEDDING_MODEL:BAAI/bge-m3}
+        embedding-dimensions: 1024
+        supports-embedding: true
+        supports-vision: false
+      # 硅基流动 DeepSeek V4 Flash：作为备选文本 Provider 保留，供管理员给用户绑定。
+      # 与 siliconflow-free 共用同一个 Key / baseUrl，分开建行是因为模型与能力不同。
+      siliconflow:
+        base-url: ${PROVIDER_SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
+        api-key: ${PROVIDER_SILICONFLOW_API_KEY:}
+        model: ${PROVIDER_SILICONFLOW_TEXT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
+        supports-embedding: false
+        supports-vision: false
+      # 更便宜的低成本文本档：Qwen3-14B 输入价约为 DeepSeek V4 Flash 的一半、输出同价，
+      # 131K 上下文覆盖切题 / 结构化识别 / 批改 / 问答；作为普通用户默认文本档。
+      siliconflow-cheap:
+        base-url: ${PROVIDER_SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
+        api-key: ${PROVIDER_SILICONFLOW_API_KEY:}
+        model: ${PROVIDER_SILICONFLOW_CHEAP_TEXT_MODEL:Qwen/Qwen3-14B}
+        supports-embedding: false
+        supports-vision: false
+      siliconflow-vl:
+        base-url: ${PROVIDER_SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
+        api-key: ${PROVIDER_SILICONFLOW_API_KEY:}
+        model: ${PROVIDER_SILICONFLOW_VISION_MODEL:Qwen/Qwen3-VL-8B-Instruct}
+        supports-embedding: false
+        supports-vision: true
     # 按 Provider 追加请求体参数（不受数据库 Provider 配置影响，一定会生效）
     provider-extra-body:
       dashscope:
@@ -175,6 +306,27 @@ app:
         # （实测单批 completion 3694 tokens 中 2177 是 reasoning）。
         # 切题、批改、问答这类任务不需要思考链，关掉后单批耗时 64s → 29s、token 省 58%，
         # 也避免单次调用超过 60 秒触发底层 HTTP 客户端的流重置。
+        enable_thinking: false
+      dashscope-vl:
+        # 视觉答案键属于结构化抽取任务，关闭思考链，避免整行图形题响应超过 60 秒。
+        enable_thinking: false
+      dashscope-3.7:
+        enable_thinking: false
+      dashscope-3.7-vl:
+        enable_thinking: false
+      # 智谱 GLM 的思考链开关；结构化抽取 / OCR 不需要深度思考，关闭后更快、输出更干净。
+      # 如果后续换成不支持该字段的模型，删掉对应 provider 的这一段即可。
+      glm-free:
+        thinking:
+          type: disabled
+      glm-vl-free:
+        thinking:
+          type: disabled
+      # Qwen3-14B 默认开启思考模式；结构化抽取 / 批改不需要思考链，关闭后更快、输出更省。
+      siliconflow-cheap:
+        enable_thinking: false
+      # Qwen3-8B 同样关闭思考链；免费文本档要承担切题 / 解析 / 批改等高频结构化调用。
+      siliconflow-free:
         enable_thinking: false
       lmstudio:
         base-url: http://localhost:1234
@@ -224,6 +376,54 @@ app:
     structured-metrics-enabled: ${APP_AI_STRUCTURED_METRICS_ENABLED:true}
     # 是否启用 Spring AI 2.0 entity schema validation retry（失败时仍受 structured-max-attempts 外层控制）
     structured-schema-validation-enabled: ${APP_AI_STRUCTURED_SCHEMA_VALIDATION_ENABLED:true}
+    # 可重试失败（限流、超时、连接中断）的退避基础时长
+    structured-retry-backoff-base-ms: ${APP_AI_STRUCTURED_RETRY_BACKOFF_BASE_MS:1000}
+    # 退避时长上限，避免重试等待无限增长
+    structured-retry-backoff-max-ms: ${APP_AI_STRUCTURED_RETRY_BACKOFF_MAX_MS:5000}
+    # 退避随机抖动上限，避免多个 worker 同时重试
+    structured-retry-backoff-jitter-ms: ${APP_AI_STRUCTURED_RETRY_BACKOFF_JITTER_MS:500}
+    # 上游 429 的默认退避；如果响应带 Retry-After，会优先使用响应头
+    structured-rate-limit-backoff-base-ms: ${APP_AI_STRUCTURED_RATE_LIMIT_BACKOFF_BASE_MS:5000}
+    structured-rate-limit-backoff-max-ms: ${APP_AI_STRUCTURED_RATE_LIMIT_BACKOFF_MAX_MS:20000}
+    structured-rate-limit-backoff-jitter-ms: ${APP_AI_STRUCTURED_RATE_LIMIT_BACKOFF_JITTER_MS:1000}
+    # 单次 429 等待上限，避免 Stream worker 长时间占住
+    structured-rate-limit-max-wait-ms: ${APP_AI_STRUCTURED_RATE_LIMIT_MAX_WAIT_MS:30000}
+    # 免费模型统一并发闸门：按实际 Provider 价格判断是否免费，所有用户共享全局许可。
+    # 文本 / 识图 / Embedding / 音频分别限流；付费模型不等待。
+    free-model-concurrency:
+      enabled: ${APP_AI_FREE_MODEL_CONCURRENCY_ENABLED:true}
+      text-permits: ${APP_AI_FREE_MODEL_TEXT_PERMITS:1}
+      vision-permits: ${APP_AI_FREE_MODEL_VISION_PERMITS:1}
+      embedding-permits: ${APP_AI_FREE_MODEL_EMBEDDING_PERMITS:1}
+      audio-permits: ${APP_AI_FREE_MODEL_AUDIO_PERMITS:1}
+      # 免费文本模型下解析批大小；仅影响试卷解析，不改变其它调用
+      analysis-batch-size: ${APP_AI_FREE_MODEL_ANALYSIS_BATCH_SIZE:4}
+      # Provider 级覆盖；未列出的 Provider 使用上面的模态默认值。
+      provider-permits:
+        siliconflow-free:
+          # Qwen3-8B 实测 8 并发仍能返回完整结构化结果
+          text-permits: ${APP_AI_FREE_MODEL_SILICONFLOW_TEXT_PERMITS:8}
+          embedding-permits: ${APP_AI_FREE_MODEL_SILICONFLOW_EMBEDDING_PERMITS:1}
+        glm-free:
+          text-permits: ${APP_AI_FREE_MODEL_GLM_TEXT_PERMITS:1}
+        glm-vl-free:
+          # GLM-4.6V-Flash 免费档实测约 1 并发
+          vision-permits: ${APP_AI_FREE_MODEL_GLM_VISION_PERMITS:1}
+    # 付费 Provider 的独立并发保护；未列出的 Provider 不受影响。
+    # 免费模型已经由上面的零价格闸门限制，这里主要用于付费识图的厂商侧配额。
+    provider-concurrency:
+      enabled: ${APP_AI_PROVIDER_CONCURRENCY_ENABLED:true}
+      providers:
+        siliconflow-vl:
+          # 纸卷页任务默认 3 并发；该模型在 3 并发下实测会连续返回 429。
+          # 先串行到 1，页任务仍可并行准备图片 / 等待许可，不再同时打上游。
+          vision-permits: ${APP_AI_PROVIDER_SILICONFLOW_VL_PERMITS:1}
+    # 免费模型或 Provider 级限流配置命中时的上游 429 进程内共享冷却
+    rate-limit-throttle:
+      enabled: ${APP_AI_RATE_LIMIT_THROTTLE_ENABLED:true}
+      fallback-base-ms: ${APP_AI_RATE_LIMIT_THROTTLE_BASE_MS:10000}
+      fallback-jitter-ms: ${APP_AI_RATE_LIMIT_THROTTLE_JITTER_MS:2000}
+      max-wait-ms: ${APP_AI_RATE_LIMIT_THROTTLE_MAX_WAIT_MS:30000}
     rag:
       # RAG 业务指标（app.rag.*）开关
       metrics-enabled: ${APP_AI_RAG_METRICS_ENABLED:true}
@@ -248,6 +448,11 @@ app:
         keep-separator: ${APP_AI_RAG_VECTORIZATION_KEEP_SEPARATOR:true}
         punctuation-marks: ${APP_AI_RAG_VECTORIZATION_PUNCTUATION_MARKS:.,?,!,\\n,。,？,！,；}
         strategy-version: ${APP_AI_RAG_VECTORIZATION_STRATEGY_VERSION:token-v1}
+      # 知识库识图：图片 / 扫描 PDF / DOCX 内嵌图
+      ocr:
+        enabled: ${APP_AI_RAG_OCR_ENABLED:true}
+        max-pages: ${APP_AI_RAG_OCR_MAX_PAGES:10}
+        max-docx-images: ${APP_AI_RAG_OCR_MAX_DOCX_IMAGES:40}
 
   interview:
     follow-up-count: ${APP_INTERVIEW_FOLLOW_UP_COUNT:1}
@@ -257,6 +462,11 @@ app:
       fallback-split-enabled: ${APP_INTERVIEW_EVALUATION_FALLBACK_SPLIT_ENABLED:true}
       fallback-max-extra-calls: ${APP_INTERVIEW_EVALUATION_FALLBACK_MAX_EXTRA_CALLS:6}
       fallback-min-groups: ${APP_INTERVIEW_EVALUATION_FALLBACK_MIN_GROUPS:2}
+    question-inner:
+      executor:
+        pool-size: ${APP_INTERVIEW_QUESTION_INNER_POOL_SIZE:4}
+        queue-capacity: ${APP_INTERVIEW_QUESTION_INNER_QUEUE_CAPACITY:20}
+        rejection-policy: ${APP_INTERVIEW_QUESTION_INNER_REJECTION_POLICY:abort}
   # 模拟测验组卷约束（详见 docs/design/模拟测验模块改造方案.md）
   # 这些上限不只是体验问题：单次模型调用越大越慢，越容易撞上
   # 底层 HTTP 客户端「60 秒无响应即重置流」的问题
@@ -265,9 +475,14 @@ app:
     min-questions: ${APP_QUIZ_MIN_QUESTIONS:3}
     max-questions-per-section: ${APP_QUIZ_MAX_QUESTIONS_PER_SECTION:6}
     max-material-chars-per-material: ${APP_QUIZ_MAX_MATERIAL_CHARS:1200}
-    max-total-material-chars: ${APP_QUIZ_MAX_TOTAL_MATERIAL_CHARS:3600}
+    max-reading-material-chars-per-material: ${APP_QUIZ_MAX_READING_MATERIAL_CHARS:4000}
+    max-total-material-chars: ${APP_QUIZ_MAX_TOTAL_MATERIAL_CHARS:6000}
+    max-long-reading-sections-per-paper: ${APP_QUIZ_MAX_LONG_READING_SECTIONS:1}
     max-question-stem-chars: ${APP_QUIZ_MAX_STEM_CHARS:600}
     max-option-chars: ${APP_QUIZ_MAX_OPTION_CHARS:200}
+    wrong-book-subjective-correct-threshold: ${APP_QUIZ_WRONG_BOOK_SUBJECTIVE_CORRECT_THRESHOLD:80}
+    wrong-book-random-retry-count: ${APP_QUIZ_WRONG_BOOK_RANDOM_RETRY_COUNT:10}
+    wrong-book-max-retry-questions: ${APP_QUIZ_WRONG_BOOK_MAX_RETRY_QUESTIONS:20}
   resume:
     upload-dir: ${java.io.tmpdir}/smart-quiz-platform/resumes
     allowed-types:
@@ -278,14 +493,54 @@ app:
 
   # 试卷 / 练习材料结构化切题
   paper:
-    extraction:
-      # 单批送模型的材料字符上限，超出后按题号切块分批处理
-      batch-char-limit: ${APP_PAPER_EXTRACTION_BATCH_CHAR_LIMIT:3000}
-      # 材料整体字符上限，超出部分截断
-      max-paper-chars: ${APP_PAPER_EXTRACTION_MAX_PAPER_CHARS:30000}
-      # 单份材料允许抽取的最大题目数
-      max-questions: ${APP_PAPER_EXTRACTION_MAX_QUESTIONS:80}
-
+    upload:
+      # 单份试卷允许的视觉识别物理页上限（图片 / 扫描页）
+      max-vision-pages: ${APP_PAPER_UPLOAD_MAX_VISION_PAGES:10}
+      # 纯文字材料合并后的字符上限，超出拒绝（防止极端输入打爆切题上下文）
+      max-text-chars: ${APP_PAPER_UPLOAD_MAX_TEXT_CHARS:30000}
+    recognition:
+      # 单卷内图片页并行；上限必须与 app.ai.vision-guard.max-in-flight 对齐
+      pool-size: ${APP_PAPER_RECOGNITION_POOL_SIZE:3}
+      queue-capacity: ${APP_PAPER_RECOGNITION_QUEUE_CAPACITY:20}
+      rejection-policy: ${APP_PAPER_RECOGNITION_REJECTION_POLICY:abort}
+      propagate-security-context: ${APP_PAPER_RECOGNITION_PROPAGATE_SECURITY_CONTEXT:true}
+      propagate-ai-call-context: ${APP_PAPER_RECOGNITION_PROPAGATE_AI_CALL_CONTEXT:true}
+      heartbeat-interval: ${APP_PAPER_RECOGNITION_HEARTBEAT_INTERVAL:30s}
+      page-stale-threshold: ${APP_PAPER_RECOGNITION_PAGE_STALE_THRESHOLD:10m}
+      max-vision-calls-per-page: ${APP_PAPER_RECOGNITION_MAX_VISION_CALLS_PER_PAGE:3}
+      output-truncated-retry-max-count: ${APP_PAPER_RECOGNITION_OUTPUT_TRUNCATED_RETRY_MAX_COUNT:1}
+      two-stage-recognition-enabled: ${APP_PAPER_RECOGNITION_TWO_STAGE_ENABLED:false}
+      invalid-output-retry-threshold: ${APP_PAPER_RECOGNITION_INVALID_OUTPUT_RETRY_THRESHOLD:2}
+      invalid-output-fallback-enabled: ${APP_PAPER_RECOGNITION_INVALID_OUTPUT_FALLBACK_ENABLED:true}
+      invalid-output-fallback-max-calls: ${APP_PAPER_RECOGNITION_INVALID_OUTPUT_FALLBACK_MAX_CALLS:2}
+      transport-retry-enabled: ${APP_PAPER_RECOGNITION_TRANSPORT_RETRY_ENABLED:true}
+      transport-retry-max-count: ${APP_PAPER_RECOGNITION_TRANSPORT_RETRY_MAX_COUNT:1}
+      transport-retry-backoff-base: ${APP_PAPER_RECOGNITION_TRANSPORT_RETRY_BACKOFF_BASE:1s}
+      feedback-max-chars: ${APP_PAPER_RECOGNITION_FEEDBACK_MAX_CHARS:200}
+    structure:
+      # 结构切题分块并行；池大小是唯一并发旋钮
+      pool-size: ${APP_PAPER_STRUCTURE_POOL_SIZE:2}
+      queue-capacity: ${APP_PAPER_STRUCTURE_QUEUE_CAPACITY:20}
+      rejection-policy: ${APP_PAPER_STRUCTURE_REJECTION_POLICY:abort}
+      propagate-security-context: ${APP_PAPER_STRUCTURE_PROPAGATE_SECURITY_CONTEXT:true}
+      propagate-ai-call-context: ${APP_PAPER_STRUCTURE_PROPAGATE_AI_CALL_CONTEXT:true}
+    answer:
+      # 答案键批次统一并行；池大小是唯一并发旋钮，设 1 即完全串行
+      pool-size: ${APP_PAPER_ANSWER_POOL_SIZE:2}
+      queue-capacity: ${APP_PAPER_ANSWER_QUEUE_CAPACITY:20}
+      rejection-policy: ${APP_PAPER_ANSWER_REJECTION_POLICY:abort}
+      propagate-security-context: ${APP_PAPER_ANSWER_PROPAGATE_SECURITY_CONTEXT:true}
+      propagate-ai-call-context: ${APP_PAPER_ANSWER_PROPAGATE_AI_CALL_CONTEXT:true}
+      # 解析每批题数；过小会增加 RPM 压力，过大会增加长 JSON 截断风险
+      analysis-batch-size: ${APP_PAPER_ANALYSIS_BATCH_SIZE:3}
+      # 当前分钟 RPM 已满时最多等待多久再继续；默认覆盖完整窗口
+      analysis-rate-limit-max-wait: ${APP_PAPER_ANALYSIS_RATE_LIMIT_MAX_WAIT:65s}
+      # 免费模型每批解析前的短冷却，降低连续批次触发上游 429 的概率
+      # 默认不再强制每批等待 1 秒；429 由 Provider 共享冷却和重试处理
+      analysis-free-model-cooldown: ${APP_PAPER_ANALYSIS_FREE_MODEL_COOLDOWN:0s}
+      # 仍缺解析时只对缺失题补跑；补跑按单题顺序执行，计入同一限流闸门
+      analysis-recovery-max-calls: ${APP_PAPER_ANALYSIS_RECOVERY_MAX_CALLS:4}
+      analysis-recovery-max-wait: ${APP_PAPER_ANALYSIS_RECOVERY_MAX_WAIT:60s}
   # RustFS (S3兼容) 存储配置
   storage:
     endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9000}
@@ -301,9 +556,51 @@ app:
     timeout: ${APP_DOCUMENT_PARSE_TIMEOUT:2m}
     pool-size: ${APP_DOCUMENT_PARSE_POOL_SIZE:2}
     queue-capacity: ${APP_DOCUMENT_PARSE_QUEUE_CAPACITY:20}
+    rejection-policy: ${APP_DOCUMENT_PARSE_REJECTION_POLICY:abort}
+    propagate-security-context: ${APP_DOCUMENT_PARSE_PROPAGATE_SECURITY_CONTEXT:true}
   
-  # 卡住任务恢复调度（P1-07）：pending 阈值必须大于正常排队时间（消费者单线程）
+  # 卡住任务恢复调度（P1-07）：pending 阈值必须大于正常排队时间
   async:
+    stream:
+      pending-metrics-interval-ms: ${APP_STREAM_PENDING_METRICS_INTERVAL_MS:30000}
+      defaults:
+        worker-threads: ${APP_STREAM_DEFAULT_WORKER_THREADS:2}
+        queue-capacity: ${APP_STREAM_DEFAULT_QUEUE_CAPACITY:20}
+        drain-timeout: ${APP_STREAM_DEFAULT_DRAIN_TIMEOUT:10s}
+        propagate-security-context: ${APP_STREAM_DEFAULT_PROPAGATE_SECURITY_CONTEXT:true}
+      consumers:
+        interview-question-gen:
+          worker-threads: ${APP_STREAM_INTERVIEW_QUESTION_GEN_WORKERS:2}
+          queue-capacity: ${APP_STREAM_INTERVIEW_QUESTION_GEN_QUEUE:20}
+          drain-timeout: ${APP_STREAM_INTERVIEW_QUESTION_GEN_DRAIN:10s}
+        interview-evaluate:
+          worker-threads: ${APP_STREAM_INTERVIEW_EVALUATE_WORKERS:2}
+          queue-capacity: ${APP_STREAM_INTERVIEW_EVALUATE_QUEUE:20}
+          drain-timeout: ${APP_STREAM_INTERVIEW_EVALUATE_DRAIN:10s}
+        paper-input:
+          worker-threads: ${APP_STREAM_PAPER_INPUT_WORKERS:2}
+          queue-capacity: ${APP_STREAM_PAPER_INPUT_QUEUE:10}
+          drain-timeout: ${APP_STREAM_PAPER_INPUT_DRAIN:10s}
+        paper-extract:
+          worker-threads: ${APP_STREAM_PAPER_EXTRACT_WORKERS:2}
+          queue-capacity: ${APP_STREAM_PAPER_EXTRACT_QUEUE:10}
+          drain-timeout: ${APP_STREAM_PAPER_EXTRACT_DRAIN:10s}
+        paper-recognition:
+          worker-threads: ${APP_STREAM_PAPER_RECOGNITION_WORKERS:1}
+          queue-capacity: ${APP_STREAM_PAPER_RECOGNITION_QUEUE:2}
+          drain-timeout: ${APP_STREAM_PAPER_RECOGNITION_DRAIN:30s}
+        knowledgebase-question-gen:
+          worker-threads: ${APP_STREAM_KB_QUESTION_GEN_WORKERS:2}
+          queue-capacity: ${APP_STREAM_KB_QUESTION_GEN_QUEUE:20}
+          drain-timeout: ${APP_STREAM_KB_QUESTION_GEN_DRAIN:10s}
+        knowledgebase-vectorize:
+          worker-threads: ${APP_STREAM_KB_VECTORIZE_WORKERS:4}
+          queue-capacity: ${APP_STREAM_KB_VECTORIZE_QUEUE:20}
+          drain-timeout: ${APP_STREAM_KB_VECTORIZE_DRAIN:10s}
+        voice-evaluate:
+          worker-threads: ${APP_STREAM_VOICE_EVALUATE_WORKERS:1}
+          queue-capacity: ${APP_STREAM_VOICE_EVALUATE_QUEUE:5}
+          drain-timeout: ${APP_STREAM_VOICE_EVALUATE_DRAIN:10s}
     recovery:
       vectorize:
         enabled: ${APP_ASYNC_RECOVERY_VECTORIZE_ENABLED:true}
@@ -321,6 +618,28 @@ app:
         interval-ms: ${APP_ASYNC_RECOVERY_RESUME_INTERVAL_MS:60000}
         batch-size: ${APP_ASYNC_RECOVERY_RESUME_BATCH_SIZE:10}
         max-recovery-count: ${APP_ASYNC_RECOVERY_RESUME_MAX_RECOVERY_COUNT:3}
+      question-gen:
+        enabled: ${APP_ASYNC_RECOVERY_QUESTION_GEN_ENABLED:true}
+        pending-threshold: ${APP_ASYNC_RECOVERY_QUESTION_GEN_PENDING_THRESHOLD:10m}
+        processing-threshold: ${APP_ASYNC_RECOVERY_QUESTION_GEN_PROCESSING_THRESHOLD:15m}
+        heartbeat-throttle: ${APP_ASYNC_RECOVERY_QUESTION_GEN_HEARTBEAT_THROTTLE:30s}
+        interval-ms: ${APP_ASYNC_RECOVERY_QUESTION_GEN_INTERVAL_MS:60000}
+        batch-size: ${APP_ASYNC_RECOVERY_QUESTION_GEN_BATCH_SIZE:10}
+        max-recovery-count: ${APP_ASYNC_RECOVERY_QUESTION_GEN_MAX_RECOVERY_COUNT:3}
+      paper-input:
+        enabled: ${APP_ASYNC_RECOVERY_PAPER_INPUT_ENABLED:true}
+        pending-threshold: ${APP_ASYNC_RECOVERY_PAPER_INPUT_PENDING_THRESHOLD:10m}
+        processing-threshold: ${APP_ASYNC_RECOVERY_PAPER_INPUT_PROCESSING_THRESHOLD:15m}
+        heartbeat-throttle: ${APP_ASYNC_RECOVERY_PAPER_INPUT_HEARTBEAT_THROTTLE:30s}
+        interval-ms: ${APP_ASYNC_RECOVERY_PAPER_INPUT_INTERVAL_MS:60000}
+        batch-size: ${APP_ASYNC_RECOVERY_PAPER_INPUT_BATCH_SIZE:10}
+        max-recovery-count: ${APP_ASYNC_RECOVERY_PAPER_INPUT_MAX_RECOVERY_COUNT:3}
+      interview-evaluate:
+        enabled: ${APP_ASYNC_RECOVERY_INTERVIEW_EVALUATE_ENABLED:true}
+        processing-threshold: ${APP_ASYNC_RECOVERY_INTERVIEW_EVALUATE_PROCESSING_THRESHOLD:15m}
+        heartbeat-throttle: ${APP_ASYNC_RECOVERY_INTERVIEW_EVALUATE_HEARTBEAT_THROTTLE:30s}
+        interval-ms: ${APP_ASYNC_RECOVERY_INTERVIEW_EVALUATE_INTERVAL_MS:60000}
+        batch-size: ${APP_ASYNC_RECOVERY_INTERVIEW_EVALUATE_BATCH_SIZE:20}
 
   # CORS配置 - React前端
   cors:
@@ -373,6 +692,8 @@ app:
 
     # Qwen3 Realtime ASR Configuration
     qwen:
+      # 音频调用在价格表中的 Provider 标识，默认与 DashScope 配置一致
+      provider: ${APP_VOICE_QWEN_PROVIDER:dashscope}
       asr:
         url: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
         model: qwen3-asr-flash-realtime

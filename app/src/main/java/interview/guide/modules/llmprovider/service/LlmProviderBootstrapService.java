@@ -7,7 +7,9 @@ import interview.guide.modules.llmprovider.model.LlmProviderEntity;
 import interview.guide.modules.llmprovider.repository.LlmGlobalSettingRepository;
 import interview.guide.modules.llmprovider.repository.LlmProviderRepository;
 import jakarta.annotation.PostConstruct;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,6 +31,7 @@ public class LlmProviderBootstrapService {
     // 只补 yml 中缺失的 Provider，已存在的行不覆盖（数据库仍是权威来源）。
     // 这条是"新增视觉 Provider 后旧库无需手工建行"的落地方式。
     seedProviders();
+    fillBlankApiKeysFromConfig();
     warnIfConfiguredModelDiffers();
     ensureGlobalSetting();
   }
@@ -132,6 +135,43 @@ public class LlmProviderBootstrapService {
         .build());
     log.info("Initialized LLM global setting: chatProvider={}, embeddingProvider={}",
         defaultChatProvider, defaultEmbeddingProvider);
+  }
+
+  /**
+   * 数据库仍是权威来源，但空 API Key 表示"尚未配置"，不是用户的有效选择。
+   * 配置里补了 Key、库里还是空值时，用配置补全；非空 Key 永不覆盖。
+   */
+  private void fillBlankApiKeysFromConfig() {
+    Map<String, ProviderConfig> providers = properties.getProviders();
+    if (providers == null || providers.isEmpty()) {
+      return;
+    }
+    providers.forEach((id, config) -> {
+      if (isBlank(id) || config == null || isBlank(config.getApiKey())) {
+        return;
+      }
+      providerRepository.findById(id).ifPresent(entity -> {
+        String existingKey = decryptApiKeyQuietly(entity);
+        if (!isBlank(existingKey)) {
+          return;
+        }
+        ApiKeyEncryptionService.EncryptedValue encrypted =
+            encryptionService.encrypt(config.getApiKey());
+        entity.setApiKeyNonce(encrypted.nonce());
+        entity.setApiKeyCiphertext(encrypted.ciphertext());
+        providerRepository.save(entity);
+        log.info("Provider '{}' 的 API Key 为空，已用配置补全", id);
+      });
+    });
+  }
+
+  private String decryptApiKeyQuietly(LlmProviderEntity entity) {
+    try {
+      return encryptionService.decrypt(entity.getApiKeyNonce(), entity.getApiKeyCiphertext());
+    } catch (RuntimeException e) {
+      log.warn("Provider '{}' 的 API Key 解密失败，跳过自动补全/激活", entity.getId(), e);
+      return null;
+    }
   }
 
   private String resolveExistingProvider(String preferredProvider, String fallbackProvider) {

@@ -1,0 +1,84 @@
+prices:
+  # 免费模型组合：价格记 0，成本页显示 ¥0.00，不会触发付费预算。
+  - provider: glm-free
+    model: glm-4.7-flash
+    modality: TEXT
+    input-price-per-1m: 0
+    output-price-per-1m: 0
+  - provider: glm-vl-free
+    model: glm-4.6v-flash
+    modality: VISION
+    input-price-per-1m: 0
+    output-price-per-1m: 0
+  - provider: siliconflow-free
+    model: BAAI/bge-m3
+    modality: EMBEDDING
+    input-price-per-1m: 0
+  # 免费文本档：SiliconFlow Qwen3-8B，实测可支撑 8 并发结构化调用。
+  - provider: siliconflow-free
+    model: Qwen/Qwen3-8B
+    modality: TEXT
+    input-price-per-1m: 0
+    output-price-per-1m: 0
+  # 硅基流动低成本默认档（普通用户）。价格来自调研文档（元/百万 Token），
+  # 币种口径与官方价需在正式启用前统一核对（见 docs/待优化事项.md）。
+  - provider: siliconflow
+    model: deepseek-ai/DeepSeek-V4-Flash
+    modality: TEXT
+    input-price-per-1m: 1.00
+    output-price-per-1m: 2.00
+  - provider: siliconflow-cheap
+    model: Qwen/Qwen3-14B
+    modality: TEXT
+    input-price-per-1m: 0.50
+    output-price-per-1m: 2.00
+  - provider: siliconflow-vl
+    model: Qwen/Qwen3-VL-8B-Instruct
+    modality: VISION
+    input-price-per-1m: 0.50
+    output-price-per-1m: 2.00
+  - provider: dashscope
+    model: qwen3.5-122b-a10b
+    modality: TEXT
+    input-price-per-1m: 0.40
+    output-price-per-1m: 1.20
+  - provider: dashscope
+    model: qwen3.8-flash
+    modality: TEXT
+    input-price-per-1m: 0.80
+    output-price-per-1m: 2.70
+  - provider: dashscope-vl
+    model: qwen3.8-flash
+    modality: VISION
+    input-price-per-1m: 0.80
+    output-price-per-1m: 2.70
+  # 免费档（普通用户）：Qwen3.7-Flash，元/百万 Token。
+  - provider: dashscope-3.7
+    model: qwen3.7-flash
+    modality: TEXT
+    input-price-per-1m: 0.20
+    output-price-per-1m: 0.80
+  - provider: dashscope-3.7-vl
+    model: qwen3.7-flash
+    modality: VISION
+    input-price-per-1m: 0.20
+    output-price-per-1m: 0.80
+  - provider: dashscope
+    model: text-embedding-v3
+    modality: EMBEDDING
+    input-price-per-1m: 0.05
+  - provider: deepseek
+    model: deepseek-v4-flash
+    modality: TEXT
+    input-price-per-1m: 0.14
+    output-price-per-1m: 0.28
+  - provider: glm
+    model: glm-5
+    modality: TEXT
+    input-price-per-1m: 0.28
+    output-price-per-1m: 0.84
+  - provider: kimi
+    model: kimi-latest
+    modality: TEXT
+    input-price-per-1m: 0.60
+    output-price-per-1m: 2.40

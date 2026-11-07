@@ -38,6 +38,14 @@ public class LlmProviderProperties {
      */
     private Map<String, Map<String, Object>> providerExtraBody = new HashMap<>();
     private AdvisorConfig advisors = new AdvisorConfig();
+    /** 零价格模型 Provider 标识，供免费模型并发闸门判定；不再自动修改全局默认。 */
+    private FreeModels freeModels = new FreeModels();
+
+    /**
+     * 档位路由：免费档用户固定走这里指定的 Provider；授权用户与系统任务走全局默认。
+     * 真正的档位判定由 common 的 {@code AiUserTierResolver} 提供，这里只保存目标 Provider。
+     */
+    private TierRouting tier = new TierRouting();
 
     /** 取某个 Provider 需要附加的请求体参数，没有则返回空 Map */
     public Map<String, Object> extraBodyFor(String providerId) {
@@ -95,5 +103,22 @@ public class LlmProviderProperties {
 
         // PromptSanitizer
         private boolean promptSanitizerEnabled = true;
+    }
+
+    @Data
+    public static class FreeModels {
+        private String textProvider = "siliconflow-free";
+        private String visionProvider = "glm-vl-free";
+        private String embeddingProvider = "siliconflow-free";
+        /** 语音 ASR/TTS 的免费 Provider；为空表示只按价格表判断音频是否免费。 */
+        private String audioProvider = "";
+    }
+
+    @Data
+    public static class TierRouting {
+        /** 免费档文本 Provider；不存在/不可用时回退全局默认。 */
+        private String freeTextProvider = "dashscope-3.7";
+        /** 免费档识图 Provider；不存在/不可用时回退全局默认。 */
+        private String freeVisionProvider = "dashscope-3.7-vl";
     }
 }

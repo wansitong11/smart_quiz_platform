@@ -48,6 +48,11 @@ public class UserEntity {
   @Column(nullable = false, length = 20)
   private UserStatus status = UserStatus.ACTIVE;
 
+  /** 用户档位：FREE=免费（占月度总量池）；AUTHORIZED=管理员授权（豁免、不占池）。 */
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 16)
+  private UserTier tier = UserTier.FREE;
+
   /** 踢人下线用：自增后该用户已签发的 Access Token 全部失效 */
   @Column(name = "token_version", nullable = false)
   private Integer tokenVersion = 0;

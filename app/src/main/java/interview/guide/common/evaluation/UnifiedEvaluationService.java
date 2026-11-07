@@ -392,8 +392,11 @@ public class UnifiedEvaluationService {
                     dto = new QuestionEvalDTO(originalIndex, dto.score(), dto.feedback(),
                         dto.referenceAnswer(), dto.keyPoints());
                 }
-                merged.add(dto != null ? dto : new QuestionEvalDTO(
-                    originalIndex, 0, "该题未成功生成评估结果，系统按 0 分处理。", "", List.of()));
+                // 缺题不补 0 分：交给 ReportAssembler 统一转 MANUAL_REVIEW，
+                // 避免模型漏评被伪装成正常零分。
+                if (dto != null) {
+                    merged.add(dto);
+                }
             }
         }
         return merged;
@@ -488,11 +491,19 @@ public class UnifiedEvaluationService {
             .filter(q -> q.userAnswer() != null && !q.userAnswer().isBlank())
             .count();
 
-        int evalSize = evaluations != null ? evaluations.size() : 0;
+        Map<Integer, QuestionEvalDTO> evaluationByIndex = evaluations == null
+            ? Map.of()
+            : evaluations.stream().collect(Collectors.toMap(
+                QuestionEvalDTO::questionIndex,
+                evaluation -> evaluation,
+                (left, right) -> left));
 
-        for (int i = 0; i < qaRecords.size(); i++) {
-            QaRecord q = qaRecords.get(i);
-            QuestionEvalDTO eval = i < evalSize ? evaluations.get(i) : null;
+        for (QaRecord q : qaRecords) {
+            QuestionEvalDTO eval = evaluationByIndex.get(q.questionIndex());
+            if (eval == null) {
+                // 模型漏评时不伪造 0 分；报告组装器会把缺失题标为人工复核。
+                continue;
+            }
 
             boolean hasAnswer = q.userAnswer() != null && !q.userAnswer().isBlank();
             int score = hasAnswer && eval != null ? eval.score() : 0;

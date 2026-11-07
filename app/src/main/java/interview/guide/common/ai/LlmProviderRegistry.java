@@ -8,8 +8,10 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.llmprovider.model.LlmGlobalSettingEntity;
 import interview.guide.modules.llmprovider.model.LlmProviderEntity;
+import interview.guide.modules.llmprovider.model.UserModelOverrideEntity;
 import interview.guide.modules.llmprovider.repository.LlmGlobalSettingRepository;
 import interview.guide.modules.llmprovider.repository.LlmProviderRepository;
+import interview.guide.modules.llmprovider.repository.UserModelOverrideRepository;
 import interview.guide.modules.llmprovider.service.ApiKeyEncryptionService;
 import io.micrometer.observation.ObservationRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -33,8 +35,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -50,21 +55,27 @@ public class LlmProviderRegistry {
     private final LlmProviderProperties properties;
     private final Map<String, ChatClient> clientCache = new ConcurrentHashMap<>();
     private final Map<String, OpenAiChatModel> chatModelCache = new ConcurrentHashMap<>();
+    private final Map<String, OpenAiChatModel> reasoningChatModelCache = new ConcurrentHashMap<>();
     private final Map<String, EmbeddingModel> embeddingModelCache = new ConcurrentHashMap<>();
     private final LlmProviderRepository providerRepository;
     private final LlmGlobalSettingRepository globalSettingRepository;
+    private final UserModelOverrideRepository userModelOverrideRepository;
     private final ApiKeyEncryptionService encryptionService;
 
     private final ToolCallingManager toolCallingManager;
     private final ObservationRegistry observationRegistry;
     private final ToolCallback interviewSkillsToolCallback;
     private final ChatMemory chatMemory;
+    private final AiCallMeter aiCallMeter;
+    private AiUserTierResolver aiUserTierResolver;
     private static final Map<String, String> RECOMMENDED_EMBEDDING_MODELS = Map.of(
         "dashscope", "text-embedding-v3",
         "glm", "embedding-3",
         "zhipu", "embedding-3",
         "baidu", "Embedding-V1",
-        "minimax", "embo-01"
+        "minimax", "embo-01",
+        "siliconflow", "BAAI/bge-m3",
+        "siliconflow-free", "BAAI/bge-m3"
     );
 
     @Autowired
@@ -72,19 +83,23 @@ public class LlmProviderRegistry {
             LlmProviderProperties properties,
             LlmProviderRepository providerRepository,
             LlmGlobalSettingRepository globalSettingRepository,
+            UserModelOverrideRepository userModelOverrideRepository,
             ApiKeyEncryptionService encryptionService,
             @Autowired(required = false) ToolCallingManager toolCallingManager,
             @Autowired(required = false) ObservationRegistry observationRegistry,
             @Autowired(required = false) @Qualifier("interviewSkillsToolCallback") ToolCallback interviewSkillsToolCallback,
-            @Autowired(required = false) ChatMemory chatMemory) {
+            @Autowired(required = false) ChatMemory chatMemory,
+            @Autowired(required = false) AiCallMeter aiCallMeter) {
         this.properties = properties;
         this.providerRepository = providerRepository;
         this.globalSettingRepository = globalSettingRepository;
+        this.userModelOverrideRepository = userModelOverrideRepository;
         this.encryptionService = encryptionService;
         this.toolCallingManager = toolCallingManager;
         this.observationRegistry = observationRegistry;
         this.interviewSkillsToolCallback = interviewSkillsToolCallback;
         this.chatMemory = chatMemory;
+        this.aiCallMeter = aiCallMeter;
     }
 
     public LlmProviderRegistry(
@@ -92,8 +107,17 @@ public class LlmProviderRegistry {
             ToolCallingManager toolCallingManager,
             ObservationRegistry observationRegistry,
             ToolCallback interviewSkillsToolCallback) {
-        this(properties, null, null, null, toolCallingManager, observationRegistry,
-            interviewSkillsToolCallback, null);
+        this(properties, null, null, null, null, toolCallingManager, observationRegistry,
+            interviewSkillsToolCallback, null, null);
+    }
+
+    /**
+     * 档位路由是可选的：没有该实现时保持原有“用户绑定 > 全局默认”的行为，
+     * 便于单元测试与未启用额度功能的场景。
+     */
+    @Autowired(required = false)
+    public void setAiUserTierResolver(AiUserTierResolver aiUserTierResolver) {
+        this.aiUserTierResolver = aiUserTierResolver;
     }
 
     /**
@@ -117,7 +141,7 @@ public class LlmProviderRegistry {
      * @return The default ChatClient instance
      */
     public ChatClient getDefaultChatClient() {
-        return getChatClient(resolveDefaultChatProviderId());
+        return getChatClient(resolveChatProviderIdForCurrentUser());
     }
 
     /**
@@ -125,7 +149,17 @@ public class LlmProviderRegistry {
      * 与 {@link #getDefaultChatClient()} 的区别在于不挂 Skill 工具与记忆 Advisor，避免无关上下文干扰。
      */
     public ChatClient getPlainChatClient() {
-        return getPlainChatClient(resolveDefaultChatProviderId());
+        return getPlainChatClient(resolveChatProviderIdForCurrentUser());
+    }
+
+    /**
+     * 答案求解客户端：不挂工具和记忆，但允许 Provider 开启思考链。
+     * 学生解析生成仍使用 {@link #getPlainChatClient()}。
+     */
+    public ChatClient getPlainReasoningChatClient() {
+        String id = resolveChatProviderIdForCurrentUser();
+        return clientCache.computeIfAbsent(id + ":plain:reasoning",
+            key -> createPlainReasoningChatClient(id));
     }
 
     /**
@@ -162,6 +196,72 @@ public class LlmProviderRegistry {
         return loadProviderOrThrow(id).model();
     }
 
+    /** 当前文本默认 Provider 的模型名（成本估算 / 排障展示用）。 */
+    public String getDefaultChatModelName() {
+        String id = resolveDefaultChatProviderId();
+        if (isBlank(id)) {
+            return null;
+        }
+        return loadProviderOrThrow(id).model();
+    }
+
+    /** 当前文本默认 Provider 的 id。 */
+    public String getDefaultChatProviderId() {
+        return resolveDefaultChatProviderId();
+    }
+
+    /**
+     * 当前调用上下文实际使用的文本 Provider id（显式指定 &gt; 用户绑定 &gt; 全局默认）。
+     * 供需要按模型档位调整运行参数的服务读取，不改变 Provider 选择逻辑。
+     */
+    public String getCurrentUserChatProviderId() {
+        return resolveChatProviderIdForCurrentUser();
+    }
+
+    /** 当前调用上下文实际使用的文本模型名（用于免费模型判定 / 成本展示）。 */
+    public String getCurrentUserChatModelName() {
+        String id = resolveChatProviderIdForCurrentUser();
+        if (isBlank(id)) {
+            return null;
+        }
+        return loadProviderOrThrow(id).model();
+    }
+
+    /**
+     * 当前调用上下文实际使用的识图 Provider id（用户绑定 &gt; 全局默认识图）。
+     */
+    public String getCurrentUserVisionProviderId() {
+        return resolveVisionProviderIdForCurrentUser();
+    }
+
+    /** 当前调用上下文实际使用的识图模型名（用于日志 / 落库展示 / 免费判定）。 */
+    public String getCurrentUserVisionModelName() {
+        String id = resolveVisionProviderIdForCurrentUser();
+        if (isBlank(id)) {
+            return null;
+        }
+        return loadProviderOrThrow(id).model();
+    }
+
+    /** 当前识图默认 Provider 的 id。 */
+    public String getDefaultVisionProviderId() {
+        return resolveDefaultVisionProviderId();
+    }
+
+    /** 当前 Embedding 默认 Provider 的模型名。 */
+    public String getDefaultEmbeddingModelName() {
+        String id = resolveDefaultEmbeddingProviderId();
+        if (isBlank(id)) {
+            return null;
+        }
+        return loadProviderOrThrow(id).embeddingModel();
+    }
+
+    /** 当前 Embedding 默认 Provider 的 id。 */
+    public String getDefaultEmbeddingProviderId() {
+        return resolveDefaultEmbeddingProviderId();
+    }
+
     /**
      * 视觉任务的独立客户端：单轮、无工具、无记忆、无文本兜底话术。
      * <p>
@@ -172,9 +272,13 @@ public class LlmProviderRegistry {
      * @param providerId 指定 Provider；空或 "default" 时使用视觉默认
      */
     public ChatClient getVisionChatClientOrDefault(String providerId) {
-        String id = providerId == null || providerId.isBlank() || "default".equalsIgnoreCase(providerId.trim())
-            ? resolveDefaultVisionProviderId()
-            : providerId.trim();
+        String id;
+        if (providerId == null || providerId.isBlank()
+            || "default".equalsIgnoreCase(providerId.trim())) {
+            id = resolveVisionProviderIdForCurrentUser();
+        } else {
+            id = resolveVisionProviderIdForCurrentUser(providerId.trim());
+        }
         if (isBlank(id)) {
             throw new BusinessException(ErrorCode.VISION_PROVIDER_NOT_CONFIGURED,
                 "未配置识图模型：请设置 app.ai.default-vision-provider，"
@@ -210,9 +314,11 @@ public class LlmProviderRegistry {
      * 清空缓存，重新加载所有 provider。
      */
     public void reload() {
-        int size = clientCache.size() + chatModelCache.size() + embeddingModelCache.size();
+        int size = clientCache.size() + chatModelCache.size()
+            + reasoningChatModelCache.size() + embeddingModelCache.size();
         clientCache.clear();
         chatModelCache.clear();
+        reasoningChatModelCache.clear();
         embeddingModelCache.clear();
         log.info("[LlmProviderRegistry] Cache cleared ({} entries). Next access will re-create clients.", size);
     }
@@ -241,6 +347,7 @@ public class LlmProviderRegistry {
             log.info("[LlmProviderRegistry] Applied {} advisors for provider {}", advisors.size(), providerId);
         }
 
+        attachAiMeter(builder, providerId, "TEXT");
         return builder.build();
     }
 
@@ -248,7 +355,17 @@ public class LlmProviderRegistry {
         OpenAiChatModel chatModel = getChatModel(providerId);
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         buildSafeGuardAdvisor().ifPresent(advisor -> builder.defaultAdvisors(List.of(advisor)));
+        attachAiMeter(builder, providerId, "TEXT");
         log.info("[LlmProviderRegistry] Created plain ChatClient (no tools) for {}", providerId);
+        return builder.build();
+    }
+
+    private ChatClient createPlainReasoningChatClient(String providerId) {
+        OpenAiChatModel chatModel = getReasoningChatModel(providerId);
+        ChatClient.Builder builder = ChatClient.builder(chatModel);
+        buildSafeGuardAdvisor().ifPresent(advisor -> builder.defaultAdvisors(List.of(advisor)));
+        attachAiMeter(builder, providerId, "TEXT");
+        log.info("[LlmProviderRegistry] Created reasoning ChatClient for answer solving: {}", providerId);
         return builder.build();
     }
 
@@ -262,6 +379,7 @@ public class LlmProviderRegistry {
     private ChatClient createVisionChatClient(String providerId) {
         OpenAiChatModel chatModel = getChatModel(providerId);
         ChatClient.Builder builder = ChatClient.builder(chatModel);
+        attachAiMeter(builder, providerId, "VISION");
         log.info("[LlmProviderRegistry] Created vision ChatClient (no advisors) for {}", providerId);
         return builder.build();
     }
@@ -281,6 +399,7 @@ public class LlmProviderRegistry {
         if (!advisors.isEmpty()) {
             builder.defaultAdvisors(advisors);
         }
+        attachAiMeter(builder, providerId, "TEXT");
         log.info("[LlmProviderRegistry] Created voice ChatClient (SkillsTool + streaming ToolCall) for {}", providerId);
         return builder.build();
     }
@@ -307,6 +426,7 @@ public class LlmProviderRegistry {
         if (!advisors.isEmpty()) {
             builder.defaultAdvisors(advisors);
         }
+        attachAiMeter(builder, providerId, "TEXT");
         log.info("[LlmProviderRegistry] Created agent ChatClient (streaming tools + chat memory) for {}", providerId);
         return builder.build();
     }
@@ -342,28 +462,49 @@ public class LlmProviderRegistry {
     private OpenAiChatModel getChatModel(String providerId) {
         return chatModelCache.computeIfAbsent(providerId, id -> {
             log.info("[LlmProviderRegistry] Creating new ChatModel for provider: {}", id);
-            return buildChatModel(id);
+            return buildChatModel(id, false);
         });
     }
 
-    private OpenAiChatModel buildChatModel(String providerId) {
-        ProviderSnapshot config = loadProviderOrThrow(providerId);
-        log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}",
-                 providerId, config.baseUrl(), config.model());
+    private OpenAiChatModel getReasoningChatModel(String providerId) {
+        return reasoningChatModelCache.computeIfAbsent(providerId, id -> {
+            log.info("[LlmProviderRegistry] Creating reasoning ChatModel for provider: {}", id);
+            return buildChatModel(id, true);
+        });
+    }
 
+    private OpenAiChatModel buildChatModel(String providerId, boolean reasoningEnabled) {
+        ProviderSnapshot config = loadProviderOrThrow(providerId);
         long requestTimeout = config.supportsVision()
             ? properties.getVisionRequestTimeout().toMillis()
             : properties.getChatRequestTimeout().toMillis();
+        log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}, "
+                + "Vision: {}, RequestTimeoutMs: {}",
+                 providerId, config.baseUrl(), config.model(), config.supportsVision(), requestTimeout);
+
         OpenAIClient openAiClient = ApiPathResolver.buildOpenAiClient(
             config.baseUrl(), config.apiKey(), 10_000, (int) requestTimeout, (int) requestTimeout);
 
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                 .model(config.model())
                 .temperature(config.temperature() != null ? config.temperature() : 0.2);
+        // Spring AI 的 OpenAiChatOptions 自带 60 秒默认值，并会在每次请求时覆盖
+        // OpenAIClient 上的超时；这里必须显式同步，否则 application.yml 的配置不会生效。
+        optionsBuilder.timeout(Duration.ofMillis(requestTimeout));
 
         // 按 Provider 追加请求体参数：例如关闭 DashScope 的推理模式，
         // 否则 qwen3.7-plus 会把大量时间花在思考链上，单次调用轻易超过 60 秒
-        Map<String, Object> extraBody = properties.extraBodyFor(providerId);
+        Map<String, Object> configuredExtraBody = properties.extraBodyFor(providerId);
+        Map<String, Object> extraBody = configuredExtraBody == null
+            ? new LinkedHashMap<>() : new LinkedHashMap<>(configuredExtraBody);
+        if (reasoningEnabled && providerId.toLowerCase().contains("dashscope")) {
+            extraBody.put("enable_thinking", true);
+        }
+        if (reasoningEnabled && providerId.toLowerCase(Locale.ROOT).startsWith("glm")) {
+            // 普通结构化调用在 provider-extra-body 里关闭思考；
+            // 答案复核用的 reasoning 客户端必须显式打开，否则智谱会沿用 disabled。
+            extraBody.put("thinking", Map.of("type", "enabled"));
+        }
         if (!extraBody.isEmpty()) {
             optionsBuilder.extraBody(extraBody);
             log.info("[LlmProviderRegistry] Provider {} 追加请求参数: {}", providerId, extraBody);
@@ -397,17 +538,33 @@ public class LlmProviderRegistry {
             providerId, config.baseUrl(), config.embeddingModel());
 
         OpenAIClient openAiClient = ApiPathResolver.buildOpenAiClient(config.baseUrl(), config.apiKey());
-        OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
-            .model(config.embeddingModel())
-            .dimensions(resolveEmbeddingDimensions(config.embeddingDimensions()))
-            .build();
+        OpenAiEmbeddingOptions options = supportsEmbeddingDimensionOverride(config.embeddingModel())
+            ? OpenAiEmbeddingOptions.builder()
+                .model(config.embeddingModel())
+                .dimensions(resolveEmbeddingDimensions(config.embeddingDimensions()))
+                .build()
+            : OpenAiEmbeddingOptions.builder()
+                .model(config.embeddingModel())
+                .build();
 
-        return OpenAiEmbeddingModel.builder()
+        EmbeddingModel embeddingModel = OpenAiEmbeddingModel.builder()
             .openAiClient(openAiClient)
             .metadataMode(MetadataMode.EMBED)
             .options(options)
             .observationRegistry(observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP)
             .build();
+        if (aiCallMeter != null) {
+            return aiCallMeter.wrapEmbedding(embeddingModel, providerId, config.embeddingModel());
+        }
+        return embeddingModel;
+    }
+
+    private void attachAiMeter(ChatClient.Builder builder, String providerId, String modality) {
+        if (aiCallMeter == null) {
+            return;
+        }
+        String model = loadProviderOrThrow(providerId).model();
+        builder.defaultAdvisors(aiCallMeter.chatAdvisor(providerId, model, modality));
     }
 
     private List<Advisor> buildDefaultAdvisors(String providerId) {
@@ -466,8 +623,20 @@ public class LlmProviderRegistry {
     }
 
     private String resolveProviderId(String providerId) {
-        if (providerId == null || providerId.isBlank() || "default".equalsIgnoreCase(providerId.trim())) {
+        Long userId = currentUserId();
+        if (userId != null && aiUserTierResolver != null
+            && aiUserTierResolver.isFreeTier(userId)) {
+            String freeProvider = properties.getTier().getFreeTextProvider();
+            if (!isBlank(freeProvider) && isProviderUsable(freeProvider)) {
+                return freeProvider;
+            }
+        }
+        if (userId != null && aiUserTierResolver != null
+            && aiUserTierResolver.isAuthorizedTier(userId)) {
             return resolveDefaultChatProviderId();
+        }
+        if (providerId == null || providerId.isBlank() || "default".equalsIgnoreCase(providerId.trim())) {
+            return resolveChatProviderIdForCurrentUser();
         }
         return providerId;
     }
@@ -511,6 +680,120 @@ public class LlmProviderRegistry {
             }
         }
         return properties.getDefaultVisionProvider();
+    }
+
+    /**
+     * 当前用户的文字 Provider：档位路由优先，之后是用户绑定（TEXT）与全局默认。
+     * 绑定每次现查数据库，改绑定立即生效，不做进程内缓存。
+     */
+    private String resolveChatProviderIdForCurrentUser() {
+        return resolveChatProviderIdForUser(currentUserId());
+    }
+
+    /**
+     * 解析指定用户实际使用的文字 Provider。
+     *
+     * <p>供管理端展示“实际生效模型”使用；路由顺序与当前调用上下文完全一致：
+     * 免费档路由 / 授权档路由优先，之后才是用户绑定和全局默认。</p>
+     */
+    public String resolveChatProviderIdForUser(Long userId) {
+        if (userId != null && aiUserTierResolver != null
+            && aiUserTierResolver.isFreeTier(userId)) {
+            String freeProvider = properties.getTier().getFreeTextProvider();
+            if (!isBlank(freeProvider) && isProviderUsable(freeProvider)) {
+                return freeProvider;
+            }
+        }
+        if (userId != null && aiUserTierResolver != null
+            && aiUserTierResolver.isAuthorizedTier(userId)) {
+            return resolveDefaultChatProviderId();
+        }
+        if (userId != null && userModelOverrideRepository != null) {
+            String override = userModelOverrideRepository
+                .findByUserIdAndModality(userId, UserModelOverrideEntity.TEXT)
+                .map(UserModelOverrideEntity::getProviderId)
+                .filter(id -> !isBlank(id))
+                .orElse(null);
+            if (override != null) {
+                if (isProviderUsable(override)) {
+                    return override;
+                }
+                log.warn("用户 {} 的文字模型绑定 {} 不可用，回退全局默认", userId, override);
+            }
+        }
+        return resolveDefaultChatProviderId();
+    }
+
+    /**
+     * 当前用户的识图 Provider：档位路由优先，之后是用户绑定（VISION）与全局默认识图。
+     */
+    private String resolveVisionProviderIdForCurrentUser() {
+        return resolveVisionProviderIdForUser(currentUserId());
+    }
+
+    private String resolveVisionProviderIdForCurrentUser(String explicitProviderId) {
+        return resolveVisionProviderIdForUser(currentUserId(), explicitProviderId);
+    }
+
+    /** 解析指定用户实际使用的识图 Provider；路由顺序与当前调用上下文一致。 */
+    public String resolveVisionProviderIdForUser(Long userId) {
+        return resolveVisionProviderIdForUser(userId, null);
+    }
+
+    private String resolveVisionProviderIdForUser(Long userId, String explicitProviderId) {
+        if (userId != null && aiUserTierResolver != null
+            && aiUserTierResolver.isFreeTier(userId)) {
+            String freeProvider = properties.getTier().getFreeVisionProvider();
+            if (!isBlank(freeProvider) && isVisionProviderUsable(freeProvider)) {
+                return freeProvider;
+            }
+        }
+        if (userId != null && aiUserTierResolver != null
+            && aiUserTierResolver.isAuthorizedTier(userId)) {
+            return resolveDefaultVisionProviderId();
+        }
+        if (userId != null && userModelOverrideRepository != null) {
+            String override = userModelOverrideRepository
+                .findByUserIdAndModality(userId, UserModelOverrideEntity.VISION)
+                .map(UserModelOverrideEntity::getProviderId)
+                .filter(id -> !isBlank(id))
+                .orElse(null);
+            if (override != null) {
+                if (isVisionProviderUsable(override)) {
+                    return override;
+                }
+                log.warn("用户 {} 的识图模型绑定 {} 不可用，回退全局默认", userId, override);
+            }
+        }
+        if (!isBlank(explicitProviderId) && isVisionProviderUsable(explicitProviderId)) {
+            return explicitProviderId;
+        }
+        return resolveDefaultVisionProviderId();
+    }
+
+    private Long currentUserId() {
+        AiCallContextHolder.AiCallContext context = AiCallContextHolder.get();
+        return context == null ? null : context.userId();
+    }
+
+    private boolean isProviderUsable(String providerId) {
+        if (providerRepository == null) {
+            return properties.getProviders().containsKey(providerId);
+        }
+        return providerRepository.findById(providerId)
+            .map(LlmProviderEntity::isEnabled)
+            .orElse(false);
+    }
+
+    private boolean isVisionProviderUsable(String providerId) {
+        if (providerRepository == null) {
+            ProviderConfig config = properties.getProviders().get(providerId);
+            return config != null && Boolean.TRUE.equals(config.getSupportsVision());
+        }
+        return providerRepository.findById(providerId)
+            .filter(LlmProviderEntity::isEnabled)
+            .map(LlmProviderEntity::isSupportsVision)
+            .orElse(false);
     }
 
     /**
@@ -582,6 +865,17 @@ public class LlmProviderRegistry {
             return configuredDimensions;
         }
         return properties.getEmbeddingDimensions();
+    }
+
+    /**
+     * 硅基流动文档明确 dimensions 仅 Qwen/Qwen3 Embedding 系列支持；
+     * BGE / BCE 这类固定维度模型不能带该参数，否则可能直接 400。
+     */
+    static boolean supportsEmbeddingDimensionOverride(String model) {
+        String normalized = model == null ? "" : model.trim().toLowerCase(Locale.ROOT);
+        return !(normalized.contains("bge-m3")
+            || normalized.contains("bge-large")
+            || normalized.contains("bce-embedding"));
     }
 
     private boolean looksLikeChatModel(String model) {

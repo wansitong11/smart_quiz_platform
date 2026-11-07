@@ -5,8 +5,10 @@ import {historyApi, InterviewDetail, ResumeDetail} from '../api/history';
 import AnalysisPanel from '../components/AnalysisPanel';
 import InterviewPanel from '../components/InterviewPanel';
 import InterviewDetailPanel from '../components/InterviewDetailPanel';
+import PaperRecognitionPanel from '../components/paper-recognition/PaperRecognitionPanel';
+import PaperOverviewPanel from '../components/paper-analysis/PaperOverviewPanel';
 import {formatDateOnly} from '../utils/date';
-import {CheckSquare, ChevronLeft, Clock, Download, MessageSquare} from 'lucide-react';
+import {BookOpen, CheckSquare, ChevronLeft, Clock, Download, MessageSquare, ScanText} from 'lucide-react';
 
 interface ResumeDetailPageProps {
   resumeId: number;
@@ -14,7 +16,7 @@ interface ResumeDetailPageProps {
   onStartPractice?: (sessionId: string) => void;
 }
 
-type TabType = 'analysis' | 'interview';
+type TabType = 'analysis' | 'overview' | 'review' | 'interview';
 type DetailViewType = 'list' | 'interviewDetail';
 
 export default function ResumeDetailPage({
@@ -83,6 +85,12 @@ export default function ResumeDetailPage({
 
   // 重新分析
   const handleReanalyze = async () => {
+    if (resume?.recognitionStatus && resume.recognitionStatus !== 'NONE') {
+      setActiveTab('review');
+      setDetailView('list');
+      setSelectedInterview(null);
+      return;
+    }
     try {
       setReanalyzing(true);
       await historyApi.reanalyze(resumeId);
@@ -204,7 +212,8 @@ export default function ResumeDetailPage({
   };
 
   const handleTabChange = (tab: TabType) => {
-    const newPage = tab === 'analysis' ? 0 : 1;
+    const order: TabType[] = ['analysis', 'overview', 'review', 'interview'];
+    const newPage = order.indexOf(tab);
     setPage([newPage, newPage > page ? 1 : -1]);
     setActiveTab(tab);
     setDetailView('list');
@@ -248,8 +257,17 @@ export default function ResumeDetailPage({
   }
 
   const latestAnalysis = resume.analyses?.[0];
+  const isVisionPaper = !!resume.recognitionStatus && resume.recognitionStatus !== 'NONE';
+  const overviewReady = resume.analysisStatus === 'COMPLETED'
+    && (!resume.recognitionStatus
+      || resume.recognitionStatus === 'NONE'
+      || resume.recognitionStatus === 'READY');
   const tabs = [
-    { id: 'analysis' as const, label: '试卷分析', icon: CheckSquare },
+    { id: 'analysis' as const, label: '试卷', icon: CheckSquare },
+    { id: 'overview' as const, label: '试卷概览', icon: BookOpen },
+    ...(isVisionPaper
+      ? [{ id: 'review' as const, label: '识别审核', icon: ScanText }]
+      : []),
     { id: 'interview' as const, label: '答题记录', icon: MessageSquare, count: resume.interviews?.length || 0 },
   ];
 
@@ -348,20 +366,49 @@ export default function ResumeDetailPage({
               exit="exit"
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
             >
-              {activeTab === 'analysis' ? (
+              {activeTab === 'analysis' && (
                 <AnalysisPanel
                   analysis={latestAnalysis}
                   analysisStatus={resume.analysisStatus}
                   analysisError={resume.analysisError}
+                  recognitionStatus={resume.recognitionStatus}
+                  onReviewRecognition={() => handleTabChange('review')}
                   onExport={handleExportAnalysisPdf}
                   exporting={exporting === 'analysis'}
                   onReanalyze={handleReanalyze}
                   reanalyzing={reanalyzing}
                   onStartPractice={handleStartPractice}
                 />
-              ) : (
-                  <InterviewPanel
-                      interviews={resume.interviews || []}
+              )}
+              {activeTab === 'overview' && (
+                overviewReady ? (
+                  <PaperOverviewPanel paperId={resumeId} />
+                ) : (
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-12 text-center">
+                    <BookOpen className="w-10 h-10 mx-auto mb-4 text-slate-400" />
+                    <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200 mb-2">
+                      切题完成后可预览
+                    </h3>
+                    <p className="text-slate-500 dark:text-slate-400">
+                      当前试卷尚未完成识别或切题，请先完成后再查看试卷概览
+                    </p>
+                  </div>
+                )
+              )}
+              {activeTab === 'review' && (
+                <PaperRecognitionPanel
+                  paperId={resumeId}
+                  mode="management"
+                  hasExistingExtraction={Boolean(resume.analyses?.length)}
+                  onConfirmed={async () => {
+                    await loadResumeDetailSilent();
+                    setActiveTab('analysis');
+                  }}
+                />
+              )}
+              {activeTab === 'interview' && (
+                <InterviewPanel
+                  interviews={resume.interviews || []}
                   onViewInterview={handleViewInterview}
                   onExportInterview={handleExportInterviewPdf}
                   onDeleteInterview={handleDeleteInterview}

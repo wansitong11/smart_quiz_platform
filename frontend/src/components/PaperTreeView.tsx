@@ -15,7 +15,7 @@ interface PaperTreeViewProps {
 }
 
 /**
- * 按层级渲染试卷：SECTION（大题/小节）→ MATERIAL（材料）→ QUESTION（题目）。
+ * 按层级渲染试卷：SECTION（大题/小节）/ QUESTION_GROUP（材料题组）→ MATERIAL / QUESTION。
  * 一级默认展开，二级及更深默认折叠；材料默认展开、可单独折叠。
  */
 export default function PaperTreeView({
@@ -38,7 +38,7 @@ export default function PaperTreeView({
   return (
     <div className="space-y-4">
       {(tree.root.children ?? []).map(node => (
-        <SectionBlock
+        <NodeBlock
           key={node.id}
           node={node}
           answers={answers}
@@ -79,6 +79,33 @@ interface BlockProps {
   onAnswerChange: (questionIndex: number, value: AnswerValue) => void;
 }
 
+/**
+ * 节点渲染入口。材料可以是根节点（例如整篇托福阅读），也可以嵌在 SECTION 中，
+ * 两种位置必须共用同一套渲染逻辑，不能把根级 MATERIAL 当成 SECTION 只渲染标题。
+ */
+function NodeBlock(props: BlockProps) {
+  switch (props.node.type) {
+    case 'MATERIAL':
+      return <MaterialBlock {...props} />;
+    case 'INSTRUCTION':
+      return <InstructionBlock node={props.node} />;
+    case 'QUESTION_GROUP':
+      return <SectionBlock {...props} />;
+    case 'QUESTION':
+      return (
+        <QuestionBlock
+          node={props.node}
+          value={props.answers[props.node.questionIndex ?? -1] ?? EMPTY_ANSWER}
+          disabled={props.disabled}
+          paperId={props.paperId}
+          onAnswerChange={props.onAnswerChange}
+        />
+      );
+    default:
+      return <SectionBlock {...props} />;
+  }
+}
+
 function SectionBlock({
   node,
   answers,
@@ -92,6 +119,7 @@ function SectionBlock({
 }: BlockProps) {
   const stats = useMemo(() => summarize(node), [node]);
   const isTop = node.depth <= 1;
+  const isQuestionGroup = node.type === 'QUESTION_GROUP';
   const isCollapsed = Boolean(collapsed[node.id]);
 
   return (
@@ -123,7 +151,7 @@ function SectionBlock({
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {node.subtitle ? `${node.subtitle} · ` : ''}
-              本${isTop ? '大题' : '小节'}共 {stats.questionCount} 小题
+              本${isTop ? '大题' : isQuestionGroup ? '题组' : '小节'}共 {stats.questionCount} 小题
               {stats.fullScore > 0 ? `，${stats.fullScore} 分` : ''}
             </p>
           </div>
@@ -132,10 +160,76 @@ function SectionBlock({
 
       {!isCollapsed && (
         <div className={isTop ? 'px-5 py-4 space-y-4' : 'py-3 space-y-3'}>
-          {(node.children ?? []).map(child => {
-            if (child.type === 'SECTION') {
-              return (
-                <SectionBlock
+          {(node.children ?? []).map(child => (
+            <NodeBlock
+              key={child.id}
+              node={child}
+              answers={answers}
+              disabled={disabled}
+              paperId={paperId}
+              collapsed={collapsed}
+              materialsOpen={materialsOpen}
+              onToggle={onToggle}
+              onToggleMaterial={onToggleMaterial}
+              onAnswerChange={onAnswerChange}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MaterialBlock({
+  node,
+  answers,
+  disabled,
+  paperId,
+  collapsed,
+  materialsOpen,
+  onToggle,
+  onToggleMaterial,
+  onAnswerChange,
+}: BlockProps) {
+  const open = materialsOpen[node.id] !== false;
+  return (
+    <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 px-4 py-3">
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          <FileText className="w-3.5 h-3.5" />
+          {node.title || '材料'}
+        </span>
+        <button
+          type="button"
+          onClick={() => onToggleMaterial(node.id)}
+          className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+        >
+          {open ? '收起材料' : '展开材料'}
+        </button>
+      </div>
+      {open && (
+        <>
+          <RichPaperText
+            text={node.content}
+            className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed"
+          />
+          {paperId && (node.meta?.assetIds?.length ?? 0) > 0 && (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {(node.meta?.assetIds ?? []).map(assetId => (
+                <AssetImage
+                  key={assetId}
+                  paperId={paperId}
+                  assetId={assetId}
+                  alt={`${node.title || '材料'}图片`}
+                  className="max-h-56 w-full rounded-lg border border-slate-200 object-contain dark:border-slate-700"
+                />
+              ))}
+            </div>
+          )}
+          {(node.children ?? []).length > 0 && (
+            <div className="mt-4 space-y-3">
+              {(node.children ?? []).map(child => (
+                <NodeBlock
                   key={child.id}
                   node={child}
                   answers={answers}
@@ -147,111 +241,20 @@ function SectionBlock({
                   onToggleMaterial={onToggleMaterial}
                   onAnswerChange={onAnswerChange}
                 />
-              );
-            }
-            if (child.type === 'MATERIAL') {
-              const open = materialsOpen[child.id] !== false;
-              return (
-                <div
-                  key={child.id}
-                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 px-4 py-3"
-                >
-                  <div className="flex items-center justify-between gap-3 mb-1">
-                    <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                      <FileText className="w-3.5 h-3.5" />
-                      {child.title || '材料'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => onToggleMaterial(child.id)}
-                      className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                    >
-                      {open ? '收起材料' : '展开材料'}
-                    </button>
-                  </div>
-                  {open && (
-                    <>
-                      <RichPaperText
-                        text={child.content}
-                        className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed"
-                      />
-                      {paperId && (child.meta?.assetIds?.length ?? 0) > 0 && (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          {(child.meta?.assetIds ?? []).map(assetId => (
-                            <AssetImage
-                              key={assetId}
-                              paperId={paperId}
-                              assetId={assetId}
-                              alt={`${child.title || '材料'}图片`}
-                              className="max-h-56 w-full rounded-lg border border-slate-200 object-contain dark:border-slate-700"
-                            />
-                          ))}
-                        </div>
-                      )}
-                      {(child.children ?? []).length > 0 && (
-                        <div className="mt-4 space-y-3">
-                          {(child.children ?? []).map(grandChild => {
-                            if (grandChild.type === 'QUESTION') {
-                              return (
-                                <QuestionBlock
-                                  key={grandChild.id}
-                                  node={grandChild}
-                                  value={answers[grandChild.questionIndex ?? -1] ?? EMPTY_ANSWER}
-                                  disabled={disabled}
-                                  paperId={paperId}
-                                  onAnswerChange={onAnswerChange}
-                                />
-                              );
-                            }
-                            if (grandChild.type === 'SECTION') {
-                              return (
-                                <SectionBlock
-                                  key={grandChild.id}
-                                  node={grandChild}
-                                  answers={answers}
-                                  disabled={disabled}
-                                  paperId={paperId}
-                                  collapsed={collapsed}
-                                  materialsOpen={materialsOpen}
-                                  onToggle={onToggle}
-                                  onToggleMaterial={onToggleMaterial}
-                                  onAnswerChange={onAnswerChange}
-                                />
-                              );
-                            }
-                            return null;
-                          })}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              );
-            }
-            if (child.type === 'INSTRUCTION') {
-              return (
-                <div
-                  key={child.id}
-                  className="text-xs text-slate-500 dark:text-slate-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2"
-                >
-                  <RichPaperText text={child.content} />
-                </div>
-              );
-            }
-            return (
-              <QuestionBlock
-                key={child.id}
-                node={child}
-                value={answers[child.questionIndex ?? -1] ?? EMPTY_ANSWER}
-                disabled={disabled}
-                paperId={paperId}
-                onAnswerChange={onAnswerChange}
-              />
-            );
-          })}
-        </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </section>
+  );
+}
+
+function InstructionBlock({ node }: { node: PaperNode }) {
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+      <RichPaperText text={node.content} />
+    </div>
   );
 }
 

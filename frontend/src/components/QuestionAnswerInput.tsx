@@ -34,7 +34,9 @@ type RenderKind = 'SINGLE_CHOICE' | 'MULTI_CHOICE' | 'FILL_BLANK' | 'TEXT';
 function resolveKind(question: InterviewQuestion): RenderKind {
   const options = question.options ?? [];
   const type = (question.questionType ?? '').toUpperCase();
-  if (options.length >= 2 && type === 'SINGLE_CHOICE') return 'SINGLE_CHOICE';
+  if (options.length >= 2 && (type === 'SINGLE_CHOICE' || type === 'TRUE_FALSE')) {
+    return 'SINGLE_CHOICE';
+  }
   if (options.length >= 2 && type === 'MULTI_CHOICE') return 'MULTI_CHOICE';
   if (type === 'FILL_BLANK') return 'FILL_BLANK';
   return 'TEXT';
@@ -101,10 +103,12 @@ export default function QuestionAnswerInput({
             return (
               <label
                 key={option.key}
-                className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 cursor-pointer transition-colors ${
-                  selected
-                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-slate-200 dark:border-slate-600 hover:border-primary-300 dark:hover:border-primary-700'
+                className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
+                  disabled
+                    ? 'cursor-default border-slate-200 dark:border-slate-600'
+                    : selected
+                      ? 'cursor-pointer border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                      : 'cursor-pointer border-slate-200 dark:border-slate-600 hover:border-primary-300 dark:hover:border-primary-700'
                 }`}
               >
                 <input
@@ -138,9 +142,11 @@ export default function QuestionAnswerInput({
           })}
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          {multi
-            ? `多选题：可点选多个${current.selectedKeys.length > 0 ? `，已选 ${current.selectedKeys.length} 项` : ''}`
-            : '单选题：点击选项即可选中'}
+          {disabled
+            ? '只读预览：不可作答'
+            : multi
+              ? `多选题：可点选多个${current.selectedKeys.length > 0 ? `，已选 ${current.selectedKeys.length} 项` : ''}`
+              : '单选题：点击选项即可选中'}
         </p>
       </div>
     );
@@ -153,32 +159,43 @@ export default function QuestionAnswerInput({
           type="text"
           value={current.text}
           disabled={disabled}
-          placeholder="在此填写答案"
+          placeholder={disabled ? '只读预览' : '在此填写答案'}
           aria-label={`第 ${question.questionIndex + 1} 题答案`}
           onChange={event => onChange({ selectedKeys: [], text: event.target.value })}
           className="w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
         />
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          填空题：答案会与标准答案做规范化比对（忽略空格与标点）
+          {disabled ? '只读预览：不可作答' : '填空题：答案会与标准答案做规范化比对（忽略空格与标点）'}
         </p>
       </div>
     );
   }
 
   const wordCount = current.text.replace(/\s/g, '').length;
+  const visualConstruction = /画出|补全|涂色|连接|在图中标出|在图中补充|作图/.test(question.question);
   return (
     <div className="space-y-1.5">
       <textarea
         value={current.text}
         disabled={disabled}
         rows={4}
-        placeholder="在这里写下你的答案（要点式作答即可，也可以留空跳过）"
+        placeholder={disabled
+          ? '只读预览'
+          : visualConstruction
+            ? '请用文字说明你会如何补充、连接、涂色或构造图形'
+            : '在这里写下你的答案（要点式作答即可，也可以留空跳过）'}
         aria-label={`第 ${question.questionIndex + 1} 题答案`}
         onChange={event => onChange({ selectedKeys: [], text: event.target.value })}
         className="w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
       />
       <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-        <span>主观题：按评分标准踩点给分</span>
+        <span>
+          {disabled
+            ? '只读预览：不可作答'
+            : visualConstruction
+              ? '作图题：提交后将由 AI 结合原题图判断文字描述是否满足要求'
+              : '主观题：按评分标准踩点给分'}
+        </span>
         <span>已写 {wordCount} 字</span>
       </div>
     </div>
@@ -250,7 +267,9 @@ function ImageOptionCard({
       ) : (
         <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
       )}
-      <span className="text-[11px] text-slate-400">{multi ? '可多选' : '点击选择'}</span>
+      <span className="text-[11px] text-slate-400">
+        {disabled ? '只读预览' : multi ? '可多选' : '点击选择'}
+      </span>
     </button>
   );
 }

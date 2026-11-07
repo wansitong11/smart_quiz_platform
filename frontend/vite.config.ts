@@ -6,7 +6,7 @@ import topLevelAwait from 'vite-plugin-top-level-await'
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8080'
+  const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8085'
   // Windows/Hyper-V 会动态保留一段 TCP 端口（本机是 5141-5240），5173 落在其中时
   // 绑定会直接 EACCES。默认改用 3000，可用 VITE_DEV_PORT 覆盖。
   const devPort = Number(env.VITE_DEV_PORT || 3000)

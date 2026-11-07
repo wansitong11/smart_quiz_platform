@@ -49,13 +49,18 @@ export default function InterviewDetailPanel({ interview }: InterviewDetailPanel
     });
   };
 
+  const manualReviewCount = (interview.answers ?? [])
+    .filter(answer => answer.scoreStatus === 'MANUAL_REVIEW').length;
+  const hasAutoScore = (interview.answers?.length ?? 0) > manualReviewCount;
+  const displayScore = hasAutoScore ? interview.overallScore : null;
+
   // 计算圆环进度
   const { scorePercent, circumference, strokeDashoffset } = useMemo(() => {
-    const percent = interview.overallScore !== null ? (interview.overallScore / 100) * 100 : 0;
+    const percent = displayScore !== null ? (displayScore / 100) * 100 : 0;
     const circ = 2 * Math.PI * 54; // r=54
     const offset = circ - (percent / 100) * circ;
     return { scorePercent: percent, circumference: circ, strokeDashoffset: offset };
-  }, [interview.overallScore]);
+  }, [displayScore]);
 
   return (
       <motion.div
@@ -65,7 +70,7 @@ export default function InterviewDetailPanel({ interview }: InterviewDetailPanel
     >
       {/* 评分卡片 */}
         <ScoreCard
-        score={interview.overallScore}
+        score={displayScore}
         feedback={interview.overallFeedback}
         scorePercent={scorePercent}
         circumference={circumference}
@@ -351,6 +356,13 @@ function QuestionCard({
                   "{answer.userAnswer || '(未回答)'}"
                 </p>
               </div>
+
+              {answer.lowConfidence && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+                  {answer.scoreMessage
+                    ?? `本题答案依据由 AI 生成，置信度较低${answer.answerKeyConfidence != null ? `（${answer.answerKeyConfidence}%）` : ''}，当前判分仅供参考。`}
+                </div>
+              )}
 
               {/* AI 深度评价 */}
               {answer.feedback && (

@@ -13,6 +13,7 @@ import {
   Target,
 } from 'lucide-react';
 import type { AnalyzeStatus } from '../api/history';
+import type { RecognitionStatus } from '../types/paperRecognition';
 
 interface PaperAnalysisSummary {
   id?: number;
@@ -33,6 +34,8 @@ interface AnalysisPanelProps {
   exporting: boolean;
   onReanalyze?: () => void;
   reanalyzing?: boolean;
+  recognitionStatus?: RecognitionStatus;
+  onReviewRecognition?: () => void;
   /** 开始（或继续）一次作答；具体由外层决定是复用未交卷的练习还是新开一次 */
   onStartPractice?: () => void;
 }
@@ -48,11 +51,40 @@ export default function AnalysisPanel({
   exporting,
   onReanalyze,
   reanalyzing,
+  recognitionStatus,
+  onReviewRecognition,
   onStartPractice,
 }: AnalysisPanelProps) {
   const isProcessing = analysisStatus === 'PENDING' || analysisStatus === 'PROCESSING';
   const isFailed = analysisStatus === 'FAILED';
   const hasResult = !isFailed && analysis != null && (analysis.questionCount ?? 0) > 0;
+
+  if (recognitionStatus === 'NEEDS_REVIEW') {
+    return (
+      <div className="bg-white dark:bg-slate-800 rounded-2xl p-12 text-center">
+        <div className="w-16 h-16 mx-auto mb-6 bg-amber-100 dark:bg-amber-900/50 rounded-full flex items-center justify-center">
+          <Clock className="w-8 h-8 text-amber-600 dark:text-amber-400" />
+        </div>
+        <h3 className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">
+          待校对
+        </h3>
+        <p className="text-slate-500 dark:text-slate-400 mb-4">
+          试卷识别已完成，请先校对页面内容，确认后再生成测验题。
+        </p>
+        {onReviewRecognition && (
+          <motion.button
+            onClick={onReviewRecognition}
+            className="px-6 py-2.5 bg-primary-500 text-white rounded-xl font-medium hover:bg-primary-600 transition-colors inline-flex items-center gap-2"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <Clock className="w-4 h-4" />
+            去校对
+          </motion.button>
+        )}
+      </div>
+    );
+  }
 
   if (isProcessing) {
     return (

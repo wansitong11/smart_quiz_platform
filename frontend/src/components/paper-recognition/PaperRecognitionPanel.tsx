@@ -26,9 +26,13 @@ const POLL_INTERVAL_MS = 2500;
 export default function PaperRecognitionPanel({
   paperId,
   onConfirmed,
+  mode = 'import',
+  hasExistingExtraction = false,
 }: {
   paperId: number;
-  onConfirmed: () => void;
+  onConfirmed?: () => void;
+  mode?: 'import' | 'management';
+  hasExistingExtraction?: boolean;
 }) {
   const [data, setData] = useState<PaperRecognition | null>(null);
   const [selectedPage, setSelectedPage] = useState(1);
@@ -39,8 +43,10 @@ export default function PaperRecognitionPanel({
   const [structure, setStructure] = useState<StructurePreview | null>(null);
   const [structureLoading, setStructureLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [recognitionSubmitting, setRecognitionSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  const actionLockRef = useRef(false);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const thumbsRef = useRef<Record<number, string>>({});
@@ -131,6 +137,7 @@ export default function PaperRecognitionPanel({
   }, [paperId, data]);
 
   const pages = data?.pages ?? [];
+  const isManagement = mode === 'management';
   const currentPage = useMemo(
     () => pages.find(page => page.pageNo === selectedPage) ?? pages[0],
     [pages, selectedPage],
@@ -138,15 +145,32 @@ export default function PaperRecognitionPanel({
   const readyCount = pages.filter(page => page.status === 'READY').length;
   const failedCount = pages.filter(page => page.status === 'FAILED').length;
   const recognizing = data?.recognitionStatus === 'PENDING' || data?.recognitionStatus === 'PROCESSING';
+  const recognitionLocked = recognizing || recognitionSubmitting;
+  const confirmLabel = hasExistingExtraction
+    ? '重新生成测验题'
+    : '确认并生成测验题';
+
+  const startAction = (key: string) => {
+    if (actionLockRef.current) return false;
+    actionLockRef.current = true;
+    setBusy(key);
+    setError('');
+    return true;
+  };
+
+  const finishAction = () => {
+    actionLockRef.current = false;
+    setBusy(null);
+  };
 
   const updateDraft = (pageNo: number, text: string) => {
+    if (recognitionLocked) return;
     setDrafts(prev => ({ ...prev, [pageNo]: text }));
     setDirty(prev => ({ ...prev, [pageNo]: true }));
   };
 
   const savePage = async (page: PaperPage) => {
-    setBusy(`save-${page.pageNo}`);
-    setError('');
+    if (recognitionLocked || !startAction(`save-${page.pageNo}`)) return;
     try {
       await paperRecognitionApi.updatePageText(paperId, page.pageNo, drafts[page.pageNo] ?? '');
       setDirty(prev => ({ ...prev, [page.pageNo]: false }));
@@ -154,13 +178,13 @@ export default function PaperRecognitionPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败');
     } finally {
-      setBusy(null);
+      finishAction();
     }
   };
 
   const retryPage = async (page: PaperPage, forceVision: boolean) => {
-    setBusy(`retry-${page.pageNo}`);
-    setError('');
+    if (recognitionLocked || !startAction(`retry-${page.pageNo}`)) return;
+    setRecognitionSubmitting(true);
     try {
       await paperRecognitionApi.retryPage(paperId, page.pageNo, forceVision);
       setDirty(prev => ({ ...prev, [page.pageNo]: false }));
@@ -168,7 +192,8 @@ export default function PaperRecognitionPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : '重试失败');
     } finally {
-      setBusy(null);
+      setRecognitionSubmitting(false);
+      finishAction();
     }
   };
 
@@ -180,13 +205,13 @@ export default function PaperRecognitionPanel({
   };
 
   const deletePage = async (page: PaperPage) => {
+    if (recognitionLocked || actionLockRef.current) return;
     if (pages.length <= 1) {
       setError('至少要保留 1 页');
       return;
     }
     if (!window.confirm(`确定删除第 ${page.pageNo} 页吗？后面的页会依次前移。`)) return;
-    setBusy(`delete-${page.pageNo}`);
-    setError('');
+    if (!startAction(`delete-${page.pageNo}`)) return;
     try {
       await paperRecognitionApi.deletePage(paperId, page.pageNo);
       setDirty(prev => {
@@ -200,24 +225,40 @@ export default function PaperRecognitionPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除失败');
     } finally {
-      setBusy(null);
+      finishAction();
     }
   };
 
   const retryAllFailed = async () => {
-    setBusy('retry-all');
-    setError('');
+    if (recognitionLocked || !startAction('retry-all')) return;
+    setRecognitionSubmitting(true);
     try {
       await paperRecognitionApi.retryRecognition(paperId, false);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '重试失败');
     } finally {
-      setBusy(null);
+      setRecognitionSubmitting(false);
+      finishAction();
+    }
+  };
+
+  const retryAllPages = async () => {
+    if (recognitionLocked || !startAction('retry-all-pages')) return;
+    setRecognitionSubmitting(true);
+    try {
+      await paperRecognitionApi.retryRecognition(paperId, true);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '整份重新识别失败');
+    } finally {
+      setRecognitionSubmitting(false);
+      finishAction();
     }
   };
 
   const previewStructure = async () => {
+    if (recognitionLocked || structureLoading) return;
     setStructureLoading(true);
     setError('');
     try {
@@ -230,10 +271,8 @@ export default function PaperRecognitionPanel({
   };
 
   const confirm = async () => {
-    if (!data) return;
+    if (!data || recognitionLocked || !startAction('confirm')) return;
     const targets = pages.filter(page => dirty[page.pageNo]);
-    setBusy('confirm');
-    setError('');
     try {
       for (const page of targets) {
         await paperRecognitionApi.updatePageText(paperId, page.pageNo, drafts[page.pageNo] ?? '');
@@ -242,15 +281,15 @@ export default function PaperRecognitionPanel({
         ? window.confirm(`还有 ${failedCount} 页识别失败，忽略它们继续切题吗？`)
         : false;
       if (failedCount > 0 && !ignoreFailed) {
-        setBusy(null);
         return;
       }
-      await paperRecognitionApi.confirm(paperId, ignoreFailed);
-      onConfirmed();
+      const forceRecut = isManagement || hasExistingExtraction;
+      await paperRecognitionApi.confirm(paperId, ignoreFailed, forceRecut);
+      onConfirmed?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : '确认失败');
     } finally {
-      setBusy(null);
+      finishAction();
     }
   };
 
@@ -271,6 +310,25 @@ export default function PaperRecognitionPanel({
         </div>
       )}
 
+      {isManagement && (data.geometryMissingPages?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-900/20">
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            第 {data.geometryMissingPages.join('、')} 页缺少几何快照，请重新识别后再切题
+          </p>
+          <button
+            type="button"
+            onClick={retryAllPages}
+            disabled={busy !== null || recognitionLocked || data.hasActiveAttempt}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+          >
+            {busy === 'retry-all-pages' || recognitionLocked
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <RotateCcw className="h-4 w-4" />}
+            {recognitionLocked ? '识别中，请稍候' : '整份重新识别'}
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
         <div>
           <p className="text-sm font-semibold text-slate-900 dark:text-white">
@@ -283,11 +341,24 @@ export default function PaperRecognitionPanel({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isManagement && (
+            <button
+              type="button"
+              onClick={retryAllPages}
+              disabled={busy !== null || recognitionLocked || data.hasActiveAttempt}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700"
+            >
+              {busy === 'retry-all-pages' || recognitionLocked
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : <RotateCcw className="h-4 w-4" />}
+              {recognitionLocked ? '识别中，请稍候' : '整份重新识别'}
+            </button>
+          )}
           {failedCount > 0 && (
             <button
               type="button"
               onClick={retryAllFailed}
-              disabled={busy !== null}
+              disabled={busy !== null || recognitionLocked || data.hasActiveAttempt}
               className="inline-flex items-center gap-2 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-60 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-900/20"
             >
               {busy === 'retry-all' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
@@ -305,17 +376,19 @@ export default function PaperRecognitionPanel({
               预览结构
             </button>
           )}
-          {!recognizing && (
-            <button
-              type="button"
-              onClick={confirm}
-              disabled={busy !== null || readyCount === 0}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-            >
-              {busy === 'confirm' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              确认并切题
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={confirm}
+            disabled={busy !== null || recognitionLocked || readyCount === 0 || data.hasActiveAttempt}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {busy === 'confirm' || recognitionLocked
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <CheckCircle2 className="h-4 w-4" />}
+            {recognitionLocked
+              ? '识别中，暂不能切题'
+              : confirmLabel}
+          </button>
         </div>
       </div>
 
@@ -394,6 +467,15 @@ export default function PaperRecognitionPanel({
         </div>
       )}
 
+      {!recognizing && data.hasActiveAttempt && (
+        <div className="flex items-start gap-3 rounded-xl border border-slate-300 bg-slate-100 p-4 dark:border-slate-600 dark:bg-slate-800/60">
+          <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-slate-500" />
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            当前试卷有进行中的作答或批改，暂不能修改页面内容
+          </p>
+        </div>
+      )}
+
       {!recognizing && currentPage && (
         <div className="grid gap-4 lg:grid-cols-[180px_1fr]">
           <aside className="space-y-2">
@@ -420,7 +502,13 @@ export default function PaperRecognitionPanel({
                   }`}>
                     {page.source === 'TEXT' ? '文字层' : '识图'}
                     {page.hasFigure ? ' · 含图' : ''}
+                    {page.assetCount > 0 ? ` · ${page.assetCount} 图` : ''}
                   </span>
+                  {page.geometryStatus === 'MISSING' || page.geometryStatus === 'INVALID' ? (
+                    <span className="block text-xs text-amber-600 dark:text-amber-400">
+                      {page.geometryStatus === 'MISSING' ? '几何快照缺失' : '几何快照不兼容'}
+                    </span>
+                  ) : null}
                 </span>
               </button>
             ))}
@@ -433,6 +521,11 @@ export default function PaperRecognitionPanel({
                 <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
                   只识别印刷体，手写作答与批改痕迹请忽略
                 </span>
+                {(currentPage.geometryStatus === 'MISSING' || currentPage.geometryStatus === 'INVALID') && (
+                  <span className="ml-2 text-xs font-normal text-amber-600 dark:text-amber-400">
+                    {currentPage.geometryStatus === 'MISSING' ? '几何快照缺失' : '几何快照不兼容'}
+                  </span>
+                )}
               </p>
               <div className="flex flex-wrap gap-2">
                 {thumbs[currentPage.pageNo] && (
@@ -449,7 +542,7 @@ export default function PaperRecognitionPanel({
                 <button
                   type="button"
                   onClick={() => retryPage(currentPage, true)}
-                  disabled={busy !== null}
+                  disabled={busy !== null || recognitionLocked || data.hasActiveAttempt}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700"
                 >
                   {busy === `retry-${currentPage.pageNo}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
@@ -458,7 +551,7 @@ export default function PaperRecognitionPanel({
                 <button
                   type="button"
                   onClick={() => deletePage(currentPage)}
-                  disabled={busy !== null}
+                  disabled={busy !== null || recognitionLocked || data.hasActiveAttempt}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
                 >
                   {busy === `delete-${currentPage.pageNo}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
@@ -476,6 +569,7 @@ export default function PaperRecognitionPanel({
             <textarea
               value={drafts[currentPage.pageNo] ?? ''}
               onChange={event => updateDraft(currentPage.pageNo, event.target.value)}
+              disabled={data.hasActiveAttempt || busy !== null || recognitionLocked}
               rows={18}
               className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-sm leading-relaxed text-slate-800 focus:border-primary-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
               placeholder="这一页的转写文本"
@@ -485,7 +579,7 @@ export default function PaperRecognitionPanel({
               <button
                 type="button"
                 onClick={() => savePage(currentPage)}
-                disabled={busy !== null || !dirty[currentPage.pageNo]}
+                disabled={busy !== null || recognitionLocked || !dirty[currentPage.pageNo] || data.hasActiveAttempt}
                 className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
               >
                 {busy === `save-${currentPage.pageNo}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}

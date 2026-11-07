@@ -9,6 +9,9 @@ export interface InterviewSession {
   currentQuestionIndex: number;
   questions: InterviewQuestion[];
   status: 'CREATED' | 'IN_PROGRESS' | 'COMPLETED' | 'EVALUATED';
+  /** 异步出题状态：PENDING/PROCESSING 时 questions 为空，前端应轮询 */
+  questionStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  questionError?: string | null;
   knowledgeBaseId?: number | null;
   subjectCategory?: string | null;
   /** 试卷层级树：卷 → 大题 → 小节 → 材料/题目 */
@@ -20,7 +23,7 @@ export interface InterviewSession {
 /** 试卷层级树节点 */
 export interface PaperNode {
   id: string;
-  /** PAPER | SECTION | MATERIAL | QUESTION | INSTRUCTION */
+  /** PAPER | SECTION | QUESTION_GROUP | MATERIAL | QUESTION | INSTRUCTION */
   type: string;
   order: number;
   depth: number;
@@ -36,6 +39,9 @@ export interface PaperNode {
     durationMinutes?: number | null;
     /** 题干图 / 材料卡片 / 表格资源 */
     assetIds?: string[] | null;
+    /** 后端内部行范围：用于确定性资源绑定，不应作为展示字段依赖 */
+    startLine?: number | null;
+    endLine?: number | null;
   } | null;
   questionIndex?: number | null;
   question?: InterviewQuestion | null;
@@ -136,6 +142,10 @@ export interface QuestionEvaluation {
   feedback: string;
   fullScore?: number | null;
   questionScore?: number | null;
+  scoreStatus?: 'AUTO' | 'TEXT_MODEL' | 'VISION_MODEL' | 'MANUAL_REVIEW' | null;
+  lowConfidence?: boolean;
+  answerKeyConfidence?: number | null;
+  scoreMessage?: string | null;
 }
 
 export interface ReferenceAnswer {

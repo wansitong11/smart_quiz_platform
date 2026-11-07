@@ -187,7 +187,12 @@ function QuizAttempt({
       </div>
 
       {session?.paperTree ? (
-        <PaperTreeView tree={session.paperTree} answers={answers} onAnswerChange={handleAnswerChange} />
+        <PaperTreeView
+          tree={session.paperTree}
+          answers={answers}
+          paperId={session.paperId ?? undefined}
+          onAnswerChange={handleAnswerChange}
+        />
       ) : (
         questions.map(question => (
           <motion.div

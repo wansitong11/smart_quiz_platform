@@ -15,6 +15,7 @@ export interface ScoredQuestionLike {
 export interface ScoredAnswerLike {
   questionIndex: number;
   score: number;
+  scoreStatus?: string | null;
 }
 
 export interface PaperScoreSummary {
@@ -58,6 +59,9 @@ export function summarizePaperScore(
 
   questions.forEach(question => {
     const answer = answerMap.get(question.questionIndex);
+    if (answer?.scoreStatus === 'MANUAL_REVIEW') {
+      return;
+    }
     const scoreRate = answer?.score ?? 0;
     rateSum += scoreRate;
     rateCount += 1;
@@ -88,6 +92,9 @@ export function summarizeCategories(
   questions.forEach(question => {
     const category = (question.category || '未标注').trim() || '未标注';
     const answer = answerMap.get(question.questionIndex);
+    if (answer?.scoreStatus === 'MANUAL_REVIEW') {
+      return;
+    }
     const scoreRate = answer?.score ?? 0;
     const fullScore = question.fullScore && question.fullScore > 0 ? question.fullScore : 0;
     const score = questionPaperScore(scoreRate, fullScore);

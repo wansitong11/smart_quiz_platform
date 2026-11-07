@@ -1,14 +1,14 @@
 import {Link, Outlet, useLocation, useNavigate} from 'react-router-dom';
 import {motion} from 'framer-motion';
 // Calendar 随「学习计划」模块一起下线：恢复该模块时把 Calendar 加回 import
-import {BookOpen, ChevronRight, ClipboardList, Database, FileStack, KeyRound, LogOut, MessageSquare, Moon, Settings, Sparkles, Sun, Users,} from 'lucide-react';
+import {BookOpen, ChevronRight, ClipboardList, Database, FileStack, MessageSquare, Moon, Settings, ShieldCheck, Sparkles, Sun, Users,} from 'lucide-react';
 import {useTheme} from '../hooks/useTheme';
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import UnifiedInterviewModal, {UnifiedInterviewConfig} from './UnifiedInterviewModal';
 import {ROUTES} from '../constants/routes';
-import ChangePasswordModal from './ChangePasswordModal';
 import {useAuth} from '../context/AuthContext';
-import {authToken, emitSessionExpired} from '../utils/authToken';
+import QuotaRing from './QuotaRing';
+import {aiUsageApi, type QuotaView} from '../api/aiCost';
 
 interface NavItem {
   id: string;
@@ -30,24 +30,8 @@ export default function Layout() {
   const currentPath = location.pathname;
   const {theme, toggleTheme} = useTheme();
   const navigate = useNavigate();
-  const {user, logout, hasPermission} = useAuth();
-  const [showChangePassword, setShowChangePassword] = useState(false);
-  const canManageUsers = hasPermission('user:manage');
-
-  const handleLogout = async () => {
-    if (!window.confirm('确认退出登录？')) {
-      return;
-    }
-    await logout();
-    navigate(ROUTES.login, {replace: true});
-  };
-
-  const handlePasswordChanged = () => {
-    setShowChangePassword(false);
-    authToken.clear();
-    emitSessionExpired();
-    navigate(ROUTES.login, {replace: true});
-  };
+  const {user} = useAuth();
+  const [quota, setQuota] = useState<QuotaView | null>(null);
   const [interviewModalPreset, setInterviewModalPreset] = useState<{
     defaultMode: 'text' | 'voice';
     defaultResumeId?: number;
@@ -55,6 +39,34 @@ export default function Layout() {
     subtitle: string;
     startButtonText: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (!user) {
+      setQuota(null);
+      return;
+    }
+    let cancelled = false;
+    aiUsageApi.quota()
+      .then(value => {
+        if (!cancelled) setQuota(value);
+      })
+      .catch(() => {
+        if (!cancelled) setQuota(null);
+      });
+    const timer = window.setInterval(() => {
+      aiUsageApi.quota()
+        .then(value => {
+          if (!cancelled) setQuota(value);
+        })
+        .catch(() => {
+          // 轮询失败保留上一次结果，避免额度环短暂消失。
+        });
+    }, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [currentPath, user]);
 
   const openInterviewModalWithResume = (resumeId: number) => {
     setInterviewModalPreset({
@@ -130,7 +142,7 @@ export default function Layout() {
       id: 'system',
       title: '系统',
       items: [
-        { id: 'settings', path: '/settings', label: '设置', icon: Settings, description: '管理模型和语音服务' },
+        { id: 'settings', path: '/settings', label: '设置', icon: Settings, description: '账号、调用成本与系统配置' },
       ],
     },
   ];
@@ -249,44 +261,27 @@ export default function Layout() {
         </nav>
 
         {/* 底部信息 */}
-        <div className="p-4 border-t border-slate-100 dark:border-slate-700 space-y-3">
-          <div className="px-3 py-2 bg-gradient-to-r from-primary-50 to-indigo-50 dark:from-primary-900/30 dark:to-slate-800 rounded-xl">
-            <p className="text-sm font-medium text-slate-800 dark:text-white truncate">
-              {user?.displayName || user?.username || '未登录'}
-            </p>
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 truncate">
-              {user?.roles?.map((role) => role.replace('ROLE_', '')).join('、') || '—'}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            {canManageUsers && (
-              <button
-                type="button"
-                onClick={() => navigate(ROUTES.userAdmin)}
-                title="账号管理"
-                className="flex-1 flex items-center justify-center py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-              >
-                <Users className="w-4 h-4" />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setShowChangePassword(true)}
-              title="修改密码"
-              className="flex-1 flex items-center justify-center py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-            >
-              <KeyRound className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleLogout()}
-              title="退出登录"
-              className="flex-1 flex items-center justify-center py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 hover:text-rose-500 transition"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
+        <div className="p-4 border-t border-slate-100 dark:border-slate-700">
+          <Link
+            to={ROUTES.settingsAccount}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gradient-to-r from-primary-50 to-indigo-50 dark:from-primary-900/30 dark:to-slate-800 hover:opacity-90 transition"
+          >
+            {quota && !quota.unlimited && <QuotaRing percent={quota.percent} />}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-slate-800 dark:text-white truncate">
+                {user?.displayName || user?.username || '未登录'}
+              </p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 truncate">
+                {user?.roles?.map((role) => role.replace('ROLE_', '')).join('、') || '—'}
+              </p>
+              {quota?.unlimited && (
+                <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                  <ShieldCheck className="h-3 w-3" /> 不限额度
+                </span>
+              )}
+            </div>
+            <ChevronRight className="w-4 h-4 shrink-0 text-slate-400" />
+          </Link>
         </div>
       </aside>
 
@@ -316,12 +311,6 @@ export default function Layout() {
         startButtonText={interviewModalPreset?.startButtonText || '开始面试'}
       />
 
-      {showChangePassword && (
-        <ChangePasswordModal
-          onClose={() => setShowChangePassword(false)}
-          onChanged={handlePasswordChanged}
-        />
-      )}
     </div>
   );
 }

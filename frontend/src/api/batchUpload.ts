@@ -58,6 +58,13 @@ export const paperUploadAdapter: BatchUploadAdapter = {
   },
   async getStatus(id, signal) {
     const result = await historyApi.getResumeDetail(id, signal);
+    if (result.inputStatus && result.inputStatus !== 'COMPLETED') {
+      return {
+        id: result.id,
+        status: result.inputStatus,
+        error: result.inputError,
+      };
+    }
     return {
       id: result.id,
       status: normalizeProcessingStatus(result.analysisStatus,

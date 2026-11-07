@@ -7,10 +7,10 @@ export const UPLOAD_RETRY_COOLDOWN_MS = 2000;
 export const STATUS_POLL_INTERVAL_MS = 5000;
 
 export const KNOWLEDGE_BASE_FILE_POLICY: FileUploadPolicy = {
-  extensions: ['pdf', 'doc', 'docx', 'txt', 'md'],
+  extensions: ['pdf', 'doc', 'docx', 'txt', 'md', 'jpg', 'jpeg', 'png'],
   maxFileSize: 50 * 1024 * 1024,
   maxSizeLabel: '50MB',
-  formatLabel: 'PDF、DOCX、DOC、TXT、MD',
+  formatLabel: 'PDF、DOCX、DOC、TXT、MD、JPG、PNG',
 };
 /** 试卷 / 练习材料的文件策略（与后端 PaperProperties 的限制保持一致） */
 export const PAPER_FILE_POLICY: FileUploadPolicy = {

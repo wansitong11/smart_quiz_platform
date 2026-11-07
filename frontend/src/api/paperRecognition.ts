@@ -27,8 +27,11 @@ export const paperRecognitionApi = {
     return request.delete<void>(`/api/papers/${paperId}/pages/${pageNo}`);
   },
 
-  async confirm(paperId: number, ignoreFailed = false): Promise<void> {
-    return request.post<void>(`/api/papers/${paperId}/recognition/confirm`, { ignoreFailed });
+  async confirm(paperId: number, ignoreFailed = false, force = false): Promise<void> {
+    return request.post<void>(
+      `/api/papers/${paperId}/recognition/confirm?force=${force}`,
+      { ignoreFailed },
+    );
   },
 
   async retryRecognition(paperId: number, all = false): Promise<void> {

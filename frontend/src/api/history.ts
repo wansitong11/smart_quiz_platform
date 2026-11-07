@@ -71,7 +71,12 @@ export interface AnswerItem {
   feedback: string;
   referenceAnswer?: string;
   keyPoints?: string[];
+  analysis?: string | null;
   answeredAt: string;
+  scoreStatus?: 'AUTO' | 'TEXT_MODEL' | 'VISION_MODEL' | 'MANUAL_REVIEW' | null;
+  lowConfidence?: boolean;
+  answerKeyConfidence?: number | null;
+  scoreMessage?: string | null;
 }
 
 export interface ResumeDetail {
@@ -88,9 +93,20 @@ export interface ResumeDetail {
   /** 扫描件识别状态：NONE/READY 表示走普通文字链路 */
   recognitionStatus?: RecognitionStatus;
   recognitionError?: string | null;
+  /** 原始文件解析状态：上传后先完成 input，再进入识别 / 切题。 */
+  inputStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  inputError?: string | null;
   pageCount?: number | null;
   analyses: AnalysisItem[];
   interviews: InterviewItem[];
+}
+
+export interface PaperOverview {
+  paperId: number;
+  subjectId?: string | null;
+  totalScore: number;
+  questionCount: number;
+  paperTree: PaperTree;
 }
 
 export interface InterviewDetail extends InterviewItem {
@@ -128,6 +144,13 @@ export const historyApi = {
    */
   async getResumeDetail(id: number, signal?: AbortSignal): Promise<ResumeDetail> {
     return request.get<ResumeDetail>(`/api/resumes/${id}/detail`, { signal });
+  },
+
+  /**
+   * 获取试卷只读概览：不创建作答会话，题目已剥离答案与解析。
+   */
+  async getPaperOverview(id: number): Promise<PaperOverview> {
+    return request.get<PaperOverview>(`/api/resumes/${id}/overview`);
   },
 
   /**

@@ -7,8 +7,11 @@ export type RecognitionStatus =
   | 'READY'
   | 'FAILED';
 
+export type ProcessingPath = 'INPUT_PENDING' | 'DIRECT_EXTRACTION' | 'VISION_RECOGNITION';
+
 export type PageSource = 'TEXT' | 'IMAGE';
 export type PageStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED';
+export type PageGeometryStatus = 'OK' | 'MISSING' | 'INVALID' | 'NOT_REQUIRED';
 
 export interface PaperPage {
   pageNo: number;
@@ -19,17 +22,23 @@ export interface PaperPage {
   notes: string | null;
   error: string | null;
   imageUrl: string;
+  geometryStatus: PageGeometryStatus;
+  assetCount: number;
 }
 
 export interface PaperRecognition {
   paperId: number;
   recognitionStatus: RecognitionStatus;
   recognitionError: string | null;
+  inputStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  inputError?: string | null;
   pageCount: number;
   pages: PaperPage[];
   questionNos: number[];
   warnings: string[];
   assets: PaperAsset[];
+  geometryMissingPages: number[];
+  hasActiveAttempt: boolean;
 }
 
 export interface PaperAsset {
@@ -69,6 +78,7 @@ export interface PaperUploadResult {
   paperId: number;
   pageCount: number;
   recognitionStatus: RecognitionStatus;
+  processingPath: ProcessingPath;
   duplicate: boolean;
   message: string;
 }

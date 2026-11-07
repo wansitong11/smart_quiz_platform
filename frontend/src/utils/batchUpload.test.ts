@@ -24,9 +24,11 @@ const file = (name: string, size = 1024, lastModified = 1) => (
 test('文件校验限制格式、空文件和 50MB 大小', () => {
   assert.equal(validateUploadFile(file('guide.pdf'), KNOWLEDGE_BASE_FILE_POLICY), null);
   assert.equal(validateUploadFile(file('guide.MD'), KNOWLEDGE_BASE_FILE_POLICY), null);
+  assert.equal(validateUploadFile(file('screen.png'), KNOWLEDGE_BASE_FILE_POLICY), null);
+  assert.equal(validateUploadFile(file('photo.JPG'), KNOWLEDGE_BASE_FILE_POLICY), null);
   assert.equal(validateUploadFile(file('empty.txt', 0), KNOWLEDGE_BASE_FILE_POLICY), '文件为空');
   assert.equal(validateUploadFile(file('large.docx', 50 * 1024 * 1024 + 1), KNOWLEDGE_BASE_FILE_POLICY), '文件超过 50MB');
-  assert.equal(validateUploadFile(file('archive.zip'), KNOWLEDGE_BASE_FILE_POLICY), '仅支持 PDF、DOCX、DOC、TXT、MD');
+  assert.equal(validateUploadFile(file('archive.zip'), KNOWLEDGE_BASE_FILE_POLICY), '仅支持 PDF、DOCX、DOC、TXT、MD、JPG、PNG');
 });
 
 test('连续选择共用列表去重和 10 个文件上限', () => {
@@ -102,9 +104,9 @@ test('上传和向量化状态、生产限制保持独立', () => {
 });
 
 
-test('简历复用同一校验器，但保留 10MB 和自身格式限制', () => {
-  assert.equal(validateUploadFile(file('resume.pdf', 10 * 1024 * 1024), PAPER_FILE_POLICY), null);
-  assert.equal(validateUploadFile(file('resume.pdf', 10 * 1024 * 1024 + 1), PAPER_FILE_POLICY), '文件超过 10MB');
+test('简历复用同一校验器，但保留 50MB 和自身格式限制', () => {
+  assert.equal(validateUploadFile(file('resume.pdf', 50 * 1024 * 1024), PAPER_FILE_POLICY), null);
+  assert.equal(validateUploadFile(file('resume.pdf', 50 * 1024 * 1024 + 1), PAPER_FILE_POLICY), '文件超过 50MB');
   assert.equal(validateUploadFile(file('resume.md'), PAPER_FILE_POLICY), '仅支持 PDF、DOCX、DOC、TXT');
   assert.equal(validateUploadFile(file('resume.doc'), PAPER_FILE_POLICY), null);
 });

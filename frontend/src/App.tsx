@@ -1,12 +1,13 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import Layout from './components/Layout';
-import { useEffect, useState, Suspense, lazy } from 'react';
+import { useEffect, useState, Suspense, lazy, type ReactNode } from 'react';
 import { historyApi, type InterviewDetail } from './api/history';
 import type { Difficulty } from './components/UnifiedInterviewModal';
 import type { CategoryDTO } from './api/skill';
 import { Loader2 } from 'lucide-react';
 import { ROUTE_PATTERNS, ROUTES } from './constants/routes';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { PERMISSIONS } from './types/auth';
 import RequireAuth from './components/RequireAuth';
 
 // Lazy load components
@@ -31,6 +32,11 @@ const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const UserAdminPage = lazy(() => import('./pages/UserAdminPage'));
+const AiCostPage = lazy(() => import('./pages/admin/AiCostPage'));
+const AiCostUsersPage = lazy(() => import('./pages/admin/AiCostUsersPage'));
+const AiCostEventsPage = lazy(() => import('./pages/admin/AiCostEventsPage'));
+const SettingsCenterPage = lazy(() => import('./pages/settings/SettingsCenterPage'));
+const SettingsAccountSection = lazy(() => import('./pages/settings/SettingsAccountSection'));
 const QuizHubPage = lazy(() => import('./pages/QuizHubPage'));
 const QuizPage = lazy(() => import('./pages/QuizPage'));
 const WrongQuestionsPage = lazy(() => import('./pages/WrongQuestionsPage'));
@@ -42,6 +48,14 @@ const Loading = () => (
     <div className="w-10 h-10 border-3 border-slate-200 border-t-primary-500 rounded-full animate-spin" />
   </div>
 );
+
+function PermissionGate({ permission, children }: { permission: string; children: ReactNode }) {
+  const { hasPermission } = useAuth();
+  if (!hasPermission(permission)) {
+    return <Navigate to={ROUTES.settingsAccount} replace />;
+  }
+  return <>{children}</>;
+}
 
 // 上传页面包装器
 function UploadPageWrapper() {
@@ -284,8 +298,51 @@ function App() {
             {/* 学习计划模块暂时下线：路由注释掉，页面与后端接口保留 */}
             {/* <Route path="interview-schedule" element={<InterviewSchedulePage />} /> */}
 
-            {/* 设置 */}
-            <Route path="settings" element={<SettingsPage />} />
+            {/* 设置中心 */}
+            <Route path="settings" element={<SettingsCenterPage />}>
+              <Route index element={<Navigate to="account" replace />} />
+              <Route path="account" element={<SettingsAccountSection />} />
+              <Route
+                path="ai-cost"
+                element={(
+                  <PermissionGate permission={PERMISSIONS.AI_COST_VIEW}>
+                    <AiCostPage />
+                  </PermissionGate>
+                )}
+              />
+              <Route
+                path="ai-cost/users"
+                element={(
+                  <PermissionGate permission={PERMISSIONS.AI_COST_VIEW}>
+                    <AiCostUsersPage />
+                  </PermissionGate>
+                )}
+              />
+              <Route
+                path="ai-cost/events"
+                element={(
+                  <PermissionGate permission={PERMISSIONS.AI_COST_VIEW}>
+                    <AiCostEventsPage />
+                  </PermissionGate>
+                )}
+              />
+              <Route
+                path="users"
+                element={(
+                  <PermissionGate permission={PERMISSIONS.USER_MANAGE}>
+                    <UserAdminPage />
+                  </PermissionGate>
+                )}
+              />
+              <Route
+                path="system"
+                element={(
+                  <PermissionGate permission={PERMISSIONS.PROVIDER_MANAGE}>
+                    <SettingsPage />
+                  </PermissionGate>
+                )}
+              />
+            </Route>
 
             {/* 问答助手（知识库聊天） */}
             <Route path="knowledgebase/chat" element={<KnowledgeBaseQueryPageWrapper />} />
@@ -306,8 +363,11 @@ function App() {
               )}
             />
 
-            {/* 账号管理（需 user:manage 权限，页面内再兜一层判断） */}
-            <Route path="admin/users" element={<UserAdminPage />} />
+            {/* 旧地址兼容：设置中心上线后保留跳转 */}
+            <Route path="admin/users" element={<Navigate to={ROUTES.settingsUsers} replace />} />
+            <Route path="admin/ai-cost" element={<Navigate to={ROUTES.settingsCost} replace />} />
+            <Route path="admin/ai-cost/users" element={<Navigate to={ROUTES.settingsCostUsers} replace />} />
+            <Route path="admin/ai-cost/events" element={<Navigate to={ROUTES.settingsCostEvents} replace />} />
             </Route>
 
           </Routes>

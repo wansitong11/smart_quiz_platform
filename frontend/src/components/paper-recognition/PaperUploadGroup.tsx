@@ -1,15 +1,16 @@
 import { useRef, useState } from 'react';
-import { AlertCircle, Camera, Loader2, Upload, X } from 'lucide-react';
+import { AlertCircle, Loader2, Upload, X } from 'lucide-react';
 import { paperRecognitionApi } from '../../api/paperRecognition';
 
 const MAX_FILES = 10;
 const MAX_SIZE = 50 * 1024 * 1024;
-const ALLOWED_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png'];
+const ALLOWED_EXTENSIONS = ['pdf', 'doc', 'docx', 'txt', 'md', 'jpg', 'jpeg', 'png'];
 
 /**
- * 扫描件 / 拍照试卷上传：多个文件按顺序合并成同一份试卷，识别后先预览校对再切题。
+ * 统一试卷上传组：一次可选多个文件（图片 / PDF / Word / 纯文字），按顺序合并为同一份试卷。
+ * 后端自动判定「纯文字直接切题」或「需要识图校对」，上传后统一交给宿主页面恢复现场。
  */
-export default function ScanPaperUpload({
+export default function PaperUploadGroup({
   onUploaded,
 }: {
   onUploaded: (paperId: number) => void;
@@ -28,7 +29,7 @@ export default function ScanPaperUpload({
         ? file.name.slice(file.name.lastIndexOf('.') + 1).toLowerCase()
         : '';
       if (!ALLOWED_EXTENSIONS.includes(extension)) {
-        setError(`${file.name}：仅支持 PDF、JPG、PNG`);
+        setError(`${file.name}：仅支持 PDF、Word、TXT、MD、JPG、PNG`);
         return;
       }
       if (file.size > MAX_SIZE) {
@@ -67,31 +68,31 @@ export default function ScanPaperUpload({
   };
 
   return (
-    <section className="mb-8 rounded-2xl border border-dashed border-indigo-300 bg-indigo-50/60 p-5 dark:border-indigo-700 dark:bg-indigo-900/20">
+    <section className="mb-8 rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/60 p-5 dark:border-emerald-700 dark:bg-emerald-900/20">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900 dark:text-white">
-            <Camera className="h-4 w-4 text-indigo-500" />
-            扫描件 / 拍照试卷
+            <Upload className="h-4 w-4 text-emerald-600" />
+            上传试卷 / 习题
           </h2>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-            没有文字层的 PDF、手机拍的照片走这里：最多 10 页，按选择顺序合并成一份试卷，
-            AI 识别后可逐页校对再切题。
+            图片、PDF、Word 或纯文字文件都可混选，最多 10 个，按选择顺序合并成一份试卷；
+            纯文字直接切题，需要识图的先预览校对。
           </p>
         </div>
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={busy}
-          className="inline-flex items-center gap-2 rounded-xl border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-600 transition hover:bg-indigo-50 disabled:opacity-60 dark:border-indigo-700 dark:bg-slate-800 dark:text-indigo-300"
+          className="inline-flex items-center gap-2 rounded-xl border border-emerald-300 bg-white px-4 py-2 text-sm font-medium text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300"
         >
-          <Camera className="h-4 w-4" />
-          选择图片 / PDF
+          <Upload className="h-4 w-4" />
+          选择文件
         </button>
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+          accept=".pdf,.doc,.docx,.txt,.md,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/jpeg,image/png"
           multiple
           className="hidden"
           onChange={event => {
@@ -136,10 +137,10 @@ export default function ScanPaperUpload({
           type="button"
           onClick={upload}
           disabled={busy}
-          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60"
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
         >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          {busy ? '正在上传…' : `开始识别 ${files.length} 个文件`}
+          {busy ? '正在上传…' : `上传 ${files.length} 个文件`}
         </button>
       )}
     </section>

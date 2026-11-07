@@ -6,6 +6,7 @@ export interface CurrentUser {
   email: string | null;
   roles: string[];
   permissions: string[];
+  tier?: 'FREE' | 'AUTHORIZED';
 }
 
 /** 登录/续期响应：Access Token 在响应体，Refresh Token 在 HttpOnly Cookie 里 */
@@ -80,4 +81,5 @@ export const PERMISSIONS = {
   SCHEDULE_USE: 'schedule:use',
   PROVIDER_MANAGE: 'provider:manage',
   USER_MANAGE: 'user:manage',
+  AI_COST_VIEW: 'ai:cost:view',
 } as const;

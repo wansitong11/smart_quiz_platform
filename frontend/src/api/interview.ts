@@ -5,7 +5,6 @@ import type {
   BatchSubmitAnswerResponse,
   CreateInterviewRequest,
   CurrentQuestionResponse,
-  InterviewReport,
   InterviewSession,
   SubmitAnswerRequest,
   SubmitAnswerResponse
@@ -50,8 +49,16 @@ export const interviewApi = {
    */
   async createSession(req: CreateInterviewRequest): Promise<InterviewSession> {
     return request.post<InterviewSession>('/api/interview/sessions', req, {
-      timeout: 180000, // 3分钟超时，AI生成问题需要时间
+      timeout: 15000, // 创建只建壳并投递，真正出题由前端轮询
     });
+  },
+
+  /**
+   * 重新出题（仅异步出题失败后允许）
+   */
+  async retryQuestionGeneration(sessionId: string): Promise<InterviewSession> {
+    return request.post<InterviewSession>(
+      `/api/interview/sessions/${sessionId}/questions/retry`);
   },
 
   /**
@@ -87,15 +94,6 @@ export const interviewApi = {
         timeout: 180000, // 3分钟超时
       }
     );
-  },
-
-  /**
-   * 获取面试报告
-   */
-  async getReport(sessionId: string): Promise<InterviewReport> {
-    return request.get<InterviewReport>(`/api/interview/sessions/${sessionId}/report`, {
-      timeout: 180000, // 3分钟超时，AI评估需要时间
-    });
   },
 
   /**

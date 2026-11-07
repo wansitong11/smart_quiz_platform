@@ -59,7 +59,10 @@ export default function Interview({
   const [error, setError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
+  const [failedSessionId, setFailedSessionId] = useState<string | null>(null);
   const startedRef = useRef(false);
+  const pollTimerRef = useRef<number | null>(null);
+  const pollInFlightRef = useRef(false);
 
   const questionCount = initialConfig?.questionCount ?? 8;
   const llmProvider = initialConfig?.llmProvider ?? '';
@@ -82,9 +85,16 @@ export default function Interview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => () => {
+    if (pollTimerRef.current !== null) {
+      window.clearInterval(pollTimerRef.current);
+    }
+  }, []);
+
   const startInterview = async () => {
     setIsCreating(true);
     setError('');
+    setFailedSessionId(null);
 
     try {
       const newSession = await interviewApi.createSession({
@@ -100,12 +110,16 @@ export default function Interview({
         requestId,
       });
 
-      initSession(newSession);
       onSessionCreated?.(newSession.sessionId);
+      if (newSession.questionStatus && newSession.questionStatus !== 'COMPLETED') {
+        waitForQuestions(newSession);
+        return;
+      }
+      initSession(newSession);
+      setIsCreating(false);
     } catch (err) {
       setError('创建面试失败，请重试');
       console.error(err);
-    } finally {
       setIsCreating(false);
     }
   };
@@ -113,9 +127,15 @@ export default function Interview({
   const resumeExistingSession = async (sessionId: string) => {
     setIsCreating(true);
     setError('');
+    setFailedSessionId(null);
 
     try {
       const existingSession = await interviewApi.getSession(sessionId);
+      if (existingSession.questionStatus
+        && existingSession.questionStatus !== 'COMPLETED') {
+        waitForQuestions(existingSession);
+        return;
+      }
       initSession(existingSession);
 
       // 恢复已填写的答案
@@ -123,11 +143,86 @@ export default function Interview({
       if (currentQ?.userAnswer) {
         setAnswer(currentQ.userAnswer);
       }
+      setIsCreating(false);
     } catch (err) {
       setError('恢复面试失败，请重试');
       console.error(err);
-    } finally {
       setIsCreating(false);
+    }
+  };
+
+  const clearQuestionPoll = () => {
+    pollInFlightRef.current = false;
+    if (pollTimerRef.current !== null) {
+      window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  };
+
+  const waitForQuestions = (initial: InterviewSession) => {
+    setSession(initial);
+    setIsCreating(true);
+    setError('');
+    clearQuestionPoll();
+
+    const tick = async () => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      try {
+        const latest = await interviewApi.getSession(initial.sessionId);
+        if (latest.questionStatus === 'COMPLETED') {
+          clearQuestionPoll();
+          initSession(latest);
+          setIsCreating(false);
+        } else if (latest.questionStatus === 'FAILED') {
+          clearQuestionPoll();
+          setSession(null);
+          setFailedSessionId(latest.sessionId);
+          setError(latest.questionError || '题目生成失败，请重试');
+          setIsCreating(false);
+        }
+      } catch (err) {
+        // 轮询期间的瞬时失败不终止，下一轮继续
+        console.error(err);
+      } finally {
+        pollInFlightRef.current = false;
+      }
+    };
+
+    pollTimerRef.current = window.setInterval(tick, 1500);
+    tick();
+  };
+
+  const retryFailedQuestionGeneration = async (sessionId: string) => {
+    setIsCreating(true);
+    setError('');
+    setFailedSessionId(null);
+    try {
+      const retried = await interviewApi.retryQuestionGeneration(sessionId);
+      if (retried.questionStatus && retried.questionStatus !== 'COMPLETED') {
+        waitForQuestions(retried);
+        return;
+      }
+      initSession(retried);
+      setIsCreating(false);
+    } catch (err) {
+      setError('重新出题失败，请重试');
+      console.error(err);
+      setIsCreating(false);
+    }
+  };
+
+  const retryCurrentEntry = () => {
+    if (failedSessionId) {
+      void retryFailedQuestionGeneration(failedSessionId);
+      return;
+    }
+    // 恢复失败必须重试恢复，否则会创建一个无关的新会话
+    const entry = resolveInterviewEntry(sessionIdToResume);
+    if (entry.type === 'resume') {
+      void resumeExistingSession(entry.sessionId);
+    } else {
+      void startInterview();
     }
   };
 
@@ -235,20 +330,10 @@ export default function Interview({
           <p className="text-red-500 dark:text-red-400 mb-4">{error}</p>
           <div className="flex gap-3 justify-center">
             <button
-              onClick={() => {
-                // 重试应按入口类型走对应路径：恢复失败必须重试恢复，
-                // 否则会用 resumeText="" 创建一个新的默认学科的普通练习，
-                // 知识库面试场景下会让用户从错误页面突然跳进无关会话
-                const entry = resolveInterviewEntry(sessionIdToResume);
-                if (entry.type === 'resume') {
-                  resumeExistingSession(entry.sessionId);
-                } else {
-                  startInterview();
-                }
-              }}
+              onClick={retryCurrentEntry}
               className="px-5 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600"
             >
-              重试
+              {failedSessionId ? '重新出题' : '重试'}
             </button>
             <button
               onClick={onBack}

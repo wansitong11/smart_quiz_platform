@@ -1,0 +1,35 @@
+displayName: 教育教学知识与能力（小学）
+examCode: teacher
+suggestedMinutes: 120
+categories:
+  - key: EDU_BASICS
+    label: 教育基础
+    priority: NORMAL
+  - key: STUDENT_GUIDANCE
+    label: 学生指导
+    priority: NORMAL
+  - key: CLASS_MANAGEMENT
+    label: 班级管理
+    priority: NORMAL
+  - key: SUBJECT_TEACHING
+    label: 学科知识与教学设计
+    priority: NORMAL
+  - key: TEACHING_IMPL
+    label: 教学实施
+    priority: NORMAL
+  - key: TEACHING_EVAL
+    label: 教学评价
+    priority: NORMAL
+questionTypes:
+  - type: SINGLE_CHOICE
+    defaultScore: 2
+    weight: 4
+  - type: SHORT_ANSWER
+    defaultScore: 10
+    weight: 2
+  - type: CASE_ANALYSIS
+    defaultScore: 20
+    weight: 2
+  - type: WRITING
+    defaultScore: 40
+    weight: 1

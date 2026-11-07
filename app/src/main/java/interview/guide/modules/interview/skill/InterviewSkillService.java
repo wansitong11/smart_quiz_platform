@@ -6,6 +6,9 @@ import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.ai.StructuredOutputInvoker;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.modules.interview.skill.InterviewSkillProperties.ExamDefinition;
+import interview.guide.modules.interview.skill.InterviewSkillProperties.ExamListDefinition;
+import interview.guide.modules.interview.skill.InterviewSkillProperties.QuestionTypeDef;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -25,6 +28,7 @@ import java.util.LinkedHashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
@@ -51,6 +55,8 @@ public class InterviewSkillService {
     private static final Pattern SKILL_ID_PATTERN = Pattern.compile(".*/skills/([^/]+)/SKILL\\.md$");
     private static final String SKILL_META_FILE = "skill.meta.yml";
     private static final String JD_PARSE_SYSTEM_PROMPT_PATH = "classpath:prompts/jd-parse-system.st";
+    private static final String EXAMS_CONFIG_PATH = "classpath:skills/_exams.yml";
+    private static final String DEFAULT_EXAM_CODE = "general";
 
     private static final int MAX_REFERENCE_SECTION_CHARS = 12000;
     private static final int MAX_EVALUATION_REFERENCE_SECTION_CHARS = 6000;
@@ -65,6 +71,9 @@ public class InterviewSkillService {
 
     /** 预设 Skill 注册表，启动时从 classpath:skills/{skillId}/SKILL.md 加载 */
     private final Map<String, InterviewSkillProperties.SkillDefinition> presetRegistry = new TreeMap<>();
+
+    /** 系统考试注册表，启动时从 classpath:skills/_exams.yml 加载 */
+    private final Map<String, ExamDefinition> examRegistry = new TreeMap<>();
 
     /** 参考内容缓存（classpath 资源不可变，加载一次后复用） */
     private final Map<String, String> referenceCache = new ConcurrentHashMap<>();
@@ -113,8 +122,35 @@ public class InterviewSkillService {
 
         log.info("共加载 {} 个预设 Skill", presetRegistry.size());
 
+        loadExams();
         buildCategoryRefIndex();
         cachedReferenceFileList = buildReferenceFileList();
+    }
+
+    private void loadExams() {
+        Resource resource = resourceLoader.getResource(EXAMS_CONFIG_PATH);
+        if (!resource.exists()) {
+            log.warn("未找到考试配置，所有预设学科将归入默认分组: {}", EXAMS_CONFIG_PATH);
+            return;
+        }
+        try {
+            Yaml yaml = new Yaml();
+            ExamListDefinition list = yaml.loadAs(
+                resource.getContentAsString(StandardCharsets.UTF_8), ExamListDefinition.class);
+            if (list == null || list.getExams() == null) {
+                return;
+            }
+            for (ExamDefinition exam : list.getExams()) {
+                if (exam == null || exam.getCode() == null || exam.getCode().isBlank()) {
+                    continue;
+                }
+                examRegistry.put(exam.getCode(), exam);
+            }
+            log.info("共加载 {} 个考试分组", examRegistry.size());
+        } catch (IOException e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                "读取考试配置失败: " + EXAMS_CONFIG_PATH);
+        }
     }
 
     private void buildCategoryRefIndex() {
@@ -144,6 +180,66 @@ public class InterviewSkillService {
             return toSkillDTO(skillId, preset);
         }
         throw new BusinessException(ErrorCode.BAD_REQUEST, "未找到面试主题: " + skillId);
+    }
+
+    /** 系统考试分组列表，用于测验目录的分组渲染。 */
+    public List<ExamDTO> listExams() {
+        return examRegistry.values().stream()
+            .map(this::toExamDTO)
+            .toList();
+    }
+
+    /** 全部预设科目的定义（含考试、题型与默认分），供测验目录合并自定义科目。 */
+    public List<SubjectDefinitionDTO> listSubjectDefinitions() {
+        return presetRegistry.entrySet().stream()
+            .map(entry -> toSubjectDefinitionDTO(entry.getKey(), entry.getValue()))
+            .toList();
+    }
+
+    /** 单个预设科目定义；不存在时返回 null，由调用方决定错误语义。 */
+    public SubjectDefinitionDTO getSubjectDefinition(String subjectCode) {
+        InterviewSkillProperties.SkillDefinition preset = presetRegistry.get(subjectCode);
+        return preset == null ? null : toSubjectDefinitionDTO(subjectCode, preset);
+    }
+
+    private ExamDTO toExamDTO(ExamDefinition exam) {
+        DisplayDTO display = exam.getDisplay() == null
+            ? null : new DisplayDTO(exam.getDisplay().getIcon(), exam.getDisplay().getGradient(),
+                exam.getDisplay().getIconBg(), exam.getDisplay().getIconColor());
+        int sortOrder = exam.getSortOrder() == null ? 0 : exam.getSortOrder();
+        return new ExamDTO(exam.getCode(), exam.getName(), exam.getDescription(), display,
+            Boolean.TRUE.equals(exam.getCustomBucket()), sortOrder);
+    }
+
+    private SubjectDefinitionDTO toSubjectDefinitionDTO(
+        String id, InterviewSkillProperties.SkillDefinition definition) {
+        String displayName = definition.getDisplayName() != null && !definition.getDisplayName().isBlank()
+            ? definition.getDisplayName() : definition.getName();
+        List<SkillCategoryDTO> categories = definition.getCategories() == null
+            ? List.of()
+            : definition.getCategories().stream()
+                .map(c -> new SkillCategoryDTO(
+                    c.getKey(), c.getLabel(), c.getPriority(), c.getRef(),
+                    Boolean.TRUE.equals(c.getShared())))
+                .toList();
+        List<QuestionTypeDTO> questionTypes = definition.getQuestionTypes() == null
+            ? List.of()
+            : definition.getQuestionTypes().stream()
+                .map(this::toQuestionTypeDTO)
+                .filter(Objects::nonNull)
+                .toList();
+        return new SubjectDefinitionDTO(id, displayName, definition.getDescription(),
+            defaultExamCode(definition.getExamCode()), categories, questionTypes,
+            definition.getSuggestedMinutes(), definition.getPersona());
+    }
+
+    private QuestionTypeDTO toQuestionTypeDTO(QuestionTypeDef definition) {
+        if (definition == null || definition.getType() == null || definition.getType().isBlank()) {
+            return null;
+        }
+        int score = definition.getDefaultScore() == null ? 0 : definition.getDefaultScore();
+        int weight = definition.getWeight() == null ? 1 : definition.getWeight();
+        return new QuestionTypeDTO(definition.getType().trim().toUpperCase(), score, weight);
     }
 
     /**
@@ -436,6 +532,9 @@ public class InterviewSkillService {
                 definition.setDisplayName(metaDef.getDisplayName());
                 definition.setDisplay(metaDef.getDisplay());
                 definition.setCategories(metaDef.getCategories());
+                definition.setExamCode(defaultExamCode(metaDef.getExamCode()));
+                definition.setQuestionTypes(metaDef.getQuestionTypes());
+                definition.setSuggestedMinutes(metaDef.getSuggestedMinutes());
             }
 
             if (definition.getCategories() == null) {
@@ -446,6 +545,13 @@ public class InterviewSkillService {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR,
                 "读取 Skill 文件失败: " + resource.getDescription());
         }
+    }
+
+    private String defaultExamCode(String configuredExamCode) {
+        if (configuredExamCode != null && !configuredExamCode.isBlank()) {
+            return configuredExamCode.trim();
+        }
+        return DEFAULT_EXAM_CODE;
     }
 
     private InterviewSkillProperties.SkillMetaDefinition loadSkillMetaDefinition(String skillId, Yaml yaml) {
@@ -631,6 +737,22 @@ public class InterviewSkillService {
                            boolean isPreset, String sourceJd, String persona, DisplayDTO display) {}
 
     public record DisplayDTO(String icon, String gradient, String iconBg, String iconColor) {}
+
+    public record ExamDTO(String code, String name, String description, DisplayDTO display,
+                          boolean customBucket, int sortOrder) {}
+
+    public record QuestionTypeDTO(String type, int defaultScore, int weight) {}
+
+    public record SubjectDefinitionDTO(
+        String id,
+        String name,
+        String description,
+        String examCode,
+        List<SkillCategoryDTO> categories,
+        List<QuestionTypeDTO> questionTypes,
+        Integer suggestedMinutes,
+        String persona
+    ) {}
 
     /**
      * 预设 Skill 分类（可携带 references 绑定信息）

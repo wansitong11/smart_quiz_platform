@@ -33,6 +33,9 @@ public final class InterviewSkillProperties {
         private String displayName;
         private DisplayDef display;
         private List<CategoryDef> categories = new ArrayList<>();
+        private String examCode;
+        private List<QuestionTypeDef> questionTypes = new ArrayList<>();
+        private Integer suggestedMinutes;
     }
 
     /**
@@ -48,6 +51,9 @@ public final class InterviewSkillProperties {
         private String displayName;
         private DisplayDef display;
         private List<CategoryDef> categories = new ArrayList<>();
+        private String examCode;
+        private List<QuestionTypeDef> questionTypes = new ArrayList<>();
+        private Integer suggestedMinutes;
     }
 
     @Data
@@ -69,5 +75,33 @@ public final class InterviewSkillProperties {
         private String priority;
         private String ref;
         private Boolean shared;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class QuestionTypeDef {
+        private String type;
+        private Integer defaultScore;
+        private Integer weight;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ExamDefinition {
+        private String code;
+        private String name;
+        private String description;
+        private DisplayDef display;
+        private Integer sortOrder;
+        private Boolean customBucket;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ExamListDefinition {
+        private List<ExamDefinition> exams = new ArrayList<>();
     }
 }

@@ -1,4 +1,6 @@
 displayName: 英语
+examCode: general
+suggestedMinutes: 90
 display:
   icon: 🔤
   gradient: from-emerald-500 to-teal-500
@@ -30,3 +32,16 @@ categories:
     priority: ALWAYS_ONE
     ref: english-writing.md
     shared: true
+questionTypes:
+  - type: SINGLE_CHOICE
+    defaultScore: 2
+    weight: 4
+  - type: FILL_BLANK
+    defaultScore: 2
+    weight: 2
+  - type: READING
+    defaultScore: 4
+    weight: 2
+  - type: WRITING
+    defaultScore: 25
+    weight: 1

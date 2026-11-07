@@ -26,7 +26,7 @@ public record GeneratedPaperDTO(
   public record Material(String title, String content) {}
 
   public record Question(
-      /** SINGLE_CHOICE / MULTI_CHOICE / FILL_BLANK / SHORT_ANSWER / READING / WRITING / OTHER */
+      /** SINGLE_CHOICE / MULTI_CHOICE / TRUE_FALSE / FILL_BLANK / SHORT_ANSWER / READING / WRITING / CASE_ANALYSIS / OTHER */
       String questionType,
       String stem,
       List<Option> options,

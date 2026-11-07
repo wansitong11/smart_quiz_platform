@@ -3,25 +3,38 @@ package interview.guide.modules.quiz.model;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
- * 错题本条目：同一道题多次做错时按题干聚合，wrongCount 记录次数。
+ * 错题本列表条目。只包含学生可见内容，不暴露内部答案键。
  */
 public record WrongQuestionDTO(
-    String sessionId,
-    Integer questionIndex,
+    String questionKey,
     String skillId,
-    String category,
+    String examCode,
+    String examName,
+    String subjectName,
+    String knowledgePointKey,
+    String knowledgePointName,
     String questionType,
+    String typeLabel,
     String stem,
+    List<InterviewQuestionDTO.QuestionOption> options,
+    Integer fullScore,
+    List<WrongQuestionSnapshot.MaterialBlock> materials,
+    Long paperId,
+    List<String> assetIds,
     String userAnswer,
     String referenceAnswer,
     String analysis,
-    Integer score,
-    Integer fullScore,
+    Integer lastScoreRate,
+    int correctCount,
     int wrongCount,
+    WrongQuestionStatus status,
+    String statusLabel,
     LocalDateTime lastWrongAt,
-    /** 原始题目，供「错题重练」直接重建测验 */
-    InterviewQuestionDTO question
+    LocalDateTime lastCorrectAt,
+    LocalDateTime masteredAt,
+    LocalDateTime archivedAt
 ) {
 }

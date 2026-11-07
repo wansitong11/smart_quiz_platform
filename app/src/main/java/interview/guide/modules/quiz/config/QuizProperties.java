@@ -27,11 +27,17 @@ public class QuizProperties {
   /** 单个知识板块下的最大题量（避免某一板块把整卷堆满） */
   private int maxQuestionsPerSection = 6;
 
-  /** 单篇阅读材料最大字符数，超出截断（防止材料把 prompt 撑爆） */
+  /** 普通板块（非阅读型）单篇材料最大字符数，超出截断（防止材料把 prompt 撑爆） */
   private int maxMaterialCharsPerMaterial = 1200;
 
+  /** 阅读型板块单篇材料最大字符数（托福等长阅读需要完整原文） */
+  private int maxReadingMaterialCharsPerMaterial = 4000;
+
   /** 整卷所有材料合计最大字符数 */
-  private int maxTotalMaterialChars = 3600;
+  private int maxTotalMaterialChars = 6000;
+
+  /** 单卷最多允许的长阅读板块数量，超出部分整板块丢弃（控制单次生成规模与 60 秒边界） */
+  private int maxLongReadingSectionsPerPaper = 1;
 
   /** 单个题干最大字符数，超出截断 */
   private int maxQuestionStemChars = 600;
@@ -49,4 +55,13 @@ public class QuizProperties {
 
   /** 组卷时可参考的历史题数量（用于去重提示） */
   private int historyQuestionLimit = 20;
+
+  /** 主观题达到多少得分率算“答对一次” */
+  private int wrongBookSubjectiveCorrectThreshold = 80;
+
+  /** 错题本一键随机重练默认题量 */
+  private int wrongBookRandomRetryCount = 10;
+
+  /** 错题重练单次最大题量 */
+  private int wrongBookMaxRetryQuestions = 20;
 }

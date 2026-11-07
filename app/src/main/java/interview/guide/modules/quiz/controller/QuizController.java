@@ -1,22 +1,37 @@
 package interview.guide.modules.quiz.controller;
 
 import interview.guide.common.annotation.RateLimit;
+import interview.guide.common.ai.AiCost;
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiCostControl;
+import interview.guide.common.ai.AiCostEstimateInput;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.result.Result;
 import interview.guide.modules.interview.model.BatchSubmitAnswerRequest;
 import interview.guide.modules.interview.model.BatchSubmitAnswerResponse;
 import interview.guide.modules.interview.model.InterviewDetailDTO;
-import interview.guide.modules.interview.model.InterviewReportDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.model.SessionListItemDTO;
 import interview.guide.modules.interview.service.InterviewHistoryService;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
 import interview.guide.modules.interview.service.InterviewSessionService;
 import interview.guide.modules.interview.skill.InterviewSkillService;
+import interview.guide.modules.quiz.model.QuizCatalogDTO;
 import interview.guide.modules.quiz.model.QuizConfigRequest;
-import interview.guide.modules.quiz.model.WrongQuestionDTO;
+import interview.guide.modules.quiz.model.QuizSubjectRequest;
+import interview.guide.modules.quiz.model.WrongQuestionFilter;
+import interview.guide.modules.quiz.model.WrongQuestionPageDTO;
+import interview.guide.modules.quiz.model.WrongQuestionRetryRequest;
+import interview.guide.modules.quiz.model.WrongQuestionStatus;
+import interview.guide.modules.quiz.model.WrongQuestionStatusRequest;
+import interview.guide.modules.quiz.service.QuizCatalogService;
 import interview.guide.modules.quiz.service.QuizService;
+import interview.guide.modules.quiz.service.QuizSubjectService;
+import interview.guide.modules.quiz.service.WrongQuestionBookService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -26,6 +41,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -53,6 +69,16 @@ public class QuizController {
   private final InterviewHistoryService historyService;
   private final InterviewPersistenceService persistenceService;
   private final InterviewSkillService skillService;
+  private final QuizCatalogService catalogService;
+  private final QuizSubjectService subjectService;
+  private final WrongQuestionBookService wrongQuestionBookService;
+  private final AiCostControl aiCostControl;
+
+  /** 考试 → 科目 → 考点 → 题型目录（系统科目 + 我的科目） */
+  @GetMapping("/catalog")
+  public Result<QuizCatalogDTO> catalog() {
+    return Result.success(catalogService.catalog());
+  }
 
   /** 学科与知识板块（供组卷配置面板渲染） */
   @GetMapping("/subjects")
@@ -63,14 +89,58 @@ public class QuizController {
     return Result.success(subjects);
   }
 
+  /** 新建自定义科目 */
+  @PostMapping("/subjects")
+  public Result<QuizCatalogDTO.Subject> createSubject(
+      @Valid @RequestBody QuizSubjectRequest request) {
+    return Result.success(subjectService.create(request));
+  }
+
+  /** 编辑自定义科目 */
+  @PutMapping("/subjects/{subjectCode}")
+  public Result<QuizCatalogDTO.Subject> updateSubject(
+      @PathVariable String subjectCode,
+      @Valid @RequestBody QuizSubjectRequest request) {
+    return Result.success(subjectService.update(subjectCode, request));
+  }
+
+  /** 软删除自定义科目 */
+  @DeleteMapping("/subjects/{subjectCode}")
+  public Result<Void> deleteSubject(@PathVariable String subjectCode) {
+    subjectService.delete(subjectCode);
+    return Result.success();
+  }
+
+  /** 复制内置科目为我的科目 */
+  @PostMapping("/subjects/clone")
+  public Result<QuizCatalogDTO.Subject> cloneSubject(
+      @Valid @RequestBody CloneSubjectRequest request) {
+    return Result.success(subjectService.clone(request.sourceCode()));
+  }
+
   /** 创建模拟测验（组卷） */
   @PostMapping("/sessions")
+  @AiCost(feature = AiFeature.QUIZ_GENERATE, operation = "create")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
   @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
   public Result<InterviewSessionDTO> createQuiz(@Valid @RequestBody QuizConfigRequest request) {
     log.info("创建模拟测验: skill={}, 题量={}, 板块={}",
         request.skillId(), request.questionCount(), request.categories());
-    return Result.success(quizService.createQuiz(request));
+    AiCallContext context = AiCallContextHolder.get();
+    aiCostControl.reserveOrThrow(
+        context == null ? null : context.operationId(),
+        context == null ? null : context.userId(),
+        AiFeature.QUIZ_GENERATE,
+        new AiCostEstimateInput(null,
+            request.questionCount() == null ? 8L : request.questionCount().longValue(),
+            null, null, null));
+    try {
+      return Result.success(quizService.createQuiz(request));
+    } finally {
+      if (context != null) {
+        aiCostControl.finalize(context.operationId());
+      }
+    }
   }
 
   /** 会话详情（含试卷层级树） */
@@ -81,18 +151,26 @@ public class QuizController {
 
   /** 整卷交卷（一次提交全部答案，后端触发批改） */
   @PostMapping("/sessions/{sessionId}/submit")
+  @AiCost(feature = AiFeature.ANSWER_EVALUATE, operation = "submit")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
   @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
   public Result<BatchSubmitAnswerResponse> submit(@PathVariable String sessionId,
       @Valid @RequestBody BatchSubmitAnswerRequest request) {
     log.info("模拟测验交卷: sessionId={}, 题数={}", sessionId, request.answers().size());
-    return Result.success(sessionService.submitWholePaper(sessionId, request.answers()));
-  }
-
-  /** 批改报告 */
-  @GetMapping("/sessions/{sessionId}/report")
-  public Result<InterviewReportDTO> report(@PathVariable String sessionId) {
-    return Result.success(sessionService.generateReport(sessionId));
+    AiCallContext context = AiCallContextHolder.get();
+    aiCostControl.reserveOrThrow(
+        context == null ? null : context.operationId(),
+        context == null ? null : context.userId(),
+        AiFeature.ANSWER_EVALUATE,
+        new AiCostEstimateInput(null, (long) request.answers().size(), null, null, null));
+    try {
+      return Result.success(sessionService.submitWholePaper(sessionId, request.answers()));
+    } catch (RuntimeException e) {
+      if (context != null) {
+        aiCostControl.finalize(context.operationId());
+      }
+      throw e;
+    }
   }
 
   /** 报告详情（含逐题对错与解析） */
@@ -140,10 +218,22 @@ public class QuizController {
 
   /** 错题本 */
   @GetMapping("/wrong-questions")
-  public Result<List<WrongQuestionDTO>> wrongQuestions(
+  public Result<WrongQuestionPageDTO> wrongQuestions(
+      @RequestParam(required = false) String examCode,
+      @RequestParam(required = false) String subjectCode,
       @RequestParam(required = false) String skillId,
+      @RequestParam(required = false) String knowledgePointKey,
+      @RequestParam(required = false) String questionType,
+      @RequestParam(required = false) WrongQuestionStatus status,
+      @RequestParam(required = false) String keyword,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size,
       @RequestParam(required = false) Integer limit) {
-    return Result.success(quizService.listWrongQuestions(skillId, limit));
+    String subject = subjectCode == null || subjectCode.isBlank() ? skillId : subjectCode;
+    int pageSize = limit == null ? size : limit;
+    return Result.success(wrongQuestionBookService.list(
+        new WrongQuestionFilter(examCode, subject, knowledgePointKey, questionType, status, keyword),
+        page, pageSize));
   }
 
   /** 错题重练 */
@@ -151,10 +241,20 @@ public class QuizController {
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
   @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
   public Result<InterviewSessionDTO> retryWrongQuestions(
-      @Valid @RequestBody WrongRetryRequest request) {
-    return Result.success(quizService.retryWrongQuestions(request.items()));
+      @Valid @RequestBody WrongQuestionRetryRequest request) {
+    return Result.success(wrongQuestionBookService.retry(request));
   }
 
-  public record WrongRetryRequest(List<QuizService.WrongQuestionRef> items) {
+  /** 手动移出/恢复错题 */
+  @PutMapping("/wrong-questions/{questionKey}/status")
+  public Result<Void> updateWrongQuestionStatus(
+      @PathVariable String questionKey,
+      @Valid @RequestBody WrongQuestionStatusRequest request) {
+    wrongQuestionBookService.updateStatus(questionKey, request.status());
+    return Result.success();
+  }
+
+  public record CloneSubjectRequest(
+      @NotBlank(message = "源科目不能为空") String sourceCode) {
   }
 }

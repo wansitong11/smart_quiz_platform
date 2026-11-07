@@ -1,0 +1,29 @@
+displayName: 综合素质（小学）
+examCode: teacher
+suggestedMinutes: 120
+categories:
+  - key: PROF_IDEA
+    label: 职业理念
+    priority: NORMAL
+  - key: EDUCATION_LAW
+    label: 教育法律法规
+    priority: NORMAL
+  - key: TEACHER_ETHICS
+    label: 教师职业道德
+    priority: NORMAL
+  - key: CULTURE_LITERACY
+    label: 文化素养
+    priority: NORMAL
+  - key: BASIC_ABILITY
+    label: 基本能力
+    priority: NORMAL
+questionTypes:
+  - type: SINGLE_CHOICE
+    defaultScore: 2
+    weight: 4
+  - type: CASE_ANALYSIS
+    defaultScore: 14
+    weight: 2
+  - type: WRITING
+    defaultScore: 50
+    weight: 1

@@ -1,0 +1,32 @@
+displayName: 计算机网络
+examCode: computer
+suggestedMinutes: 60
+categories:
+  - key: NET_ARCH
+    label: 网络体系结构
+    priority: NORMAL
+  - key: PHYSICAL_LINK
+    label: 物理层与数据链路层
+    priority: NORMAL
+  - key: NETWORK_LAYER
+    label: 网络层
+    priority: NORMAL
+  - key: TRANSPORT_LAYER
+    label: 传输层
+    priority: NORMAL
+  - key: APPLICATION_LAYER
+    label: 应用层
+    priority: NORMAL
+  - key: NET_SECURITY
+    label: 网络安全
+    priority: NORMAL
+questionTypes:
+  - type: SHORT_ANSWER
+    defaultScore: 10
+    weight: 7
+  - type: SINGLE_CHOICE
+    defaultScore: 2
+    weight: 2
+  - type: TRUE_FALSE
+    defaultScore: 2
+    weight: 1

@@ -1,0 +1,38 @@
+displayName: 经济法基础
+examCode: accounting
+suggestedMinutes: 75
+categories:
+  - key: LAW_GENERAL
+    label: 总论
+    priority: NORMAL
+  - key: ACCT_LAW
+    label: 会计法律制度
+    priority: NORMAL
+  - key: PAYMENT_SETTLEMENT
+    label: 支付结算法律制度
+    priority: NORMAL
+  - key: TAX_MAIN
+    label: 增值税、消费税
+    priority: NORMAL
+  - key: INCOME_TAX
+    label: 企业所得税、个人所得税
+    priority: NORMAL
+  - key: OTHER_TAX
+    label: 其他税收法律制度
+    priority: NORMAL
+  - key: TAX_COLLECTION
+    label: 税收征收管理
+    priority: NORMAL
+  - key: LABOR_CONTRACT
+    label: 劳动合同与社会保险
+    priority: NORMAL
+questionTypes:
+  - type: SINGLE_CHOICE
+    defaultScore: 2
+    weight: 4
+  - type: MULTI_CHOICE
+    defaultScore: 2
+    weight: 3
+  - type: TRUE_FALSE
+    defaultScore: 1
+    weight: 2

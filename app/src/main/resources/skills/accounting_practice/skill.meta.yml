@@ -1,0 +1,38 @@
+displayName: 初级会计实务
+examCode: accounting
+suggestedMinutes: 105
+categories:
+  - key: ACCT_BASICS
+    label: 会计概述
+    priority: NORMAL
+  - key: ASSETS
+    label: 资产
+    priority: NORMAL
+  - key: LIABILITIES
+    label: 负债
+    priority: NORMAL
+  - key: OWNERS_EQUITY
+    label: 所有者权益
+    priority: NORMAL
+  - key: INCOME_EXPENSE_PROFIT
+    label: 收入、费用和利润
+    priority: NORMAL
+  - key: FINANCIAL_STATEMENTS
+    label: 财务报表
+    priority: NORMAL
+  - key: MANAGEMENT_ACCT
+    label: 管理会计基础
+    priority: NORMAL
+  - key: GOVERNMENT_ACCT
+    label: 政府会计
+    priority: NORMAL
+questionTypes:
+  - type: SINGLE_CHOICE
+    defaultScore: 2
+    weight: 4
+  - type: MULTI_CHOICE
+    defaultScore: 2
+    weight: 3
+  - type: TRUE_FALSE
+    defaultScore: 1
+    weight: 2

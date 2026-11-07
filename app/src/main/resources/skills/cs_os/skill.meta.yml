@@ -1,0 +1,32 @@
+displayName: 操作系统
+examCode: computer
+suggestedMinutes: 60
+categories:
+  - key: PROCESS_THREAD
+    label: 进程与线程
+    priority: NORMAL
+  - key: SCHEDULING
+    label: 处理机调度
+    priority: NORMAL
+  - key: MEMORY_MGMT
+    label: 内存管理
+    priority: NORMAL
+  - key: FILE_SYSTEM
+    label: 文件系统
+    priority: NORMAL
+  - key: IO_MGMT
+    label: 设备管理
+    priority: NORMAL
+  - key: SYNC_DEADLOCK
+    label: 同步与死锁
+    priority: NORMAL
+questionTypes:
+  - type: SHORT_ANSWER
+    defaultScore: 10
+    weight: 7
+  - type: SINGLE_CHOICE
+    defaultScore: 2
+    weight: 2
+  - type: TRUE_FALSE
+    defaultScore: 2
+    weight: 1

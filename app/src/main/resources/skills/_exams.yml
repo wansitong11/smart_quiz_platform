@@ -1,0 +1,51 @@
+exams:
+  - code: teacher
+    name: 中小学教师资格（小学）
+    description: 综合素质与教育教学知识与能力
+    sortOrder: 1
+    customBucket: false
+    display:
+      icon: "🎓"
+      gradient: from-amber-500 to-orange-500
+      iconBg: bg-amber-100 dark:bg-amber-900/30
+      iconColor: text-amber-600 dark:text-amber-400
+  - code: accounting
+    name: 初级会计
+    description: 初级会计实务与经济法基础
+    sortOrder: 2
+    customBucket: false
+    display:
+      icon: "🧾"
+      gradient: from-emerald-500 to-teal-500
+      iconBg: bg-emerald-100 dark:bg-emerald-900/30
+      iconColor: text-emerald-600 dark:text-emerald-400
+  - code: computer
+    name: 计算机专业能力（后端方向）
+    description: 以简答为主的技术能力测评
+    sortOrder: 3
+    customBucket: false
+    display:
+      icon: "💻"
+      gradient: from-sky-500 to-indigo-500
+      iconBg: bg-sky-100 dark:bg-sky-900/30
+      iconColor: text-sky-600 dark:text-sky-400
+  - code: general
+    name: 中小学/学科练习
+    description: 语文、数学、英语等通用学科练习
+    sortOrder: 90
+    customBucket: false
+    display:
+      icon: "📚"
+      gradient: from-slate-500 to-slate-600
+      iconBg: bg-slate-100 dark:bg-slate-900/30
+      iconColor: text-slate-600 dark:text-slate-400
+  - code: other
+    name: 其他/自定义
+    description: 未归入系统考试的科目收纳桶
+    sortOrder: 99
+    customBucket: true
+    display:
+      icon: "✨"
+      gradient: from-fuchsia-500 to-pink-500
+      iconBg: bg-fuchsia-100 dark:bg-fuchsia-900/30
+      iconColor: text-fuchsia-600 dark:text-fuchsia-400

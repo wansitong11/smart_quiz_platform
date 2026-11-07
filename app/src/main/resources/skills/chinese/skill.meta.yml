@@ -1,4 +1,6 @@
 displayName: 语文
+examCode: general
+suggestedMinutes: 90
 display:
   icon: ✒️
   gradient: from-rose-500 to-pink-500
@@ -30,3 +32,19 @@ categories:
     priority: ALWAYS_ONE
     ref: chinese-writing.md
     shared: true
+questionTypes:
+  - type: SINGLE_CHOICE
+    defaultScore: 3
+    weight: 3
+  - type: FILL_BLANK
+    defaultScore: 2
+    weight: 2
+  - type: SHORT_ANSWER
+    defaultScore: 5
+    weight: 3
+  - type: READING
+    defaultScore: 4
+    weight: 2
+  - type: WRITING
+    defaultScore: 30
+    weight: 1

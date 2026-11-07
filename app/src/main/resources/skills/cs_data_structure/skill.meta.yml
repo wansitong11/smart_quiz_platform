@@ -1,0 +1,32 @@
+displayName: 数据结构与算法
+examCode: computer
+suggestedMinutes: 60
+categories:
+  - key: LINEAR_LIST
+    label: 线性表
+    priority: NORMAL
+  - key: STACK_QUEUE
+    label: 栈与队列
+    priority: NORMAL
+  - key: TREE_GRAPH
+    label: 树与图
+    priority: NORMAL
+  - key: SEARCH
+    label: 查找
+    priority: NORMAL
+  - key: SORT
+    label: 排序
+    priority: NORMAL
+  - key: ALGORITHM_DESIGN
+    label: 算法设计
+    priority: NORMAL
+questionTypes:
+  - type: SHORT_ANSWER
+    defaultScore: 10
+    weight: 7
+  - type: SINGLE_CHOICE
+    defaultScore: 2
+    weight: 2
+  - type: TRUE_FALSE
+    defaultScore: 2
+    weight: 1

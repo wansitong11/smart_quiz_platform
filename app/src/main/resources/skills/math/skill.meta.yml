@@ -1,4 +1,6 @@
 displayName: 数学
+examCode: general
+suggestedMinutes: 90
 display:
   icon: 📐
   gradient: from-blue-500 to-cyan-500
@@ -35,3 +37,13 @@ categories:
     priority: NORMAL
     ref: math-probability-statistics.md
     shared: true
+questionTypes:
+  - type: SINGLE_CHOICE
+    defaultScore: 5
+    weight: 4
+  - type: FILL_BLANK
+    defaultScore: 3
+    weight: 3
+  - type: SHORT_ANSWER
+    defaultScore: 8
+    weight: 3

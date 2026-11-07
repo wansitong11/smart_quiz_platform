@@ -1,0 +1,32 @@
+displayName: 数据库
+examCode: computer
+suggestedMinutes: 60
+categories:
+  - key: RELATIONAL_SQL
+    label: 关系模型与 SQL
+    priority: NORMAL
+  - key: DB_DESIGN
+    label: 数据库设计
+    priority: NORMAL
+  - key: TRANSACTION
+    label: 事务与并发控制
+    priority: NORMAL
+  - key: INDEX_OPT
+    label: 索引与查询优化
+    priority: NORMAL
+  - key: STORAGE_ENGINE
+    label: 存储引擎
+    priority: NORMAL
+  - key: DISTRIBUTED_DB
+    label: 分布式数据库
+    priority: NORMAL
+questionTypes:
+  - type: SHORT_ANSWER
+    defaultScore: 10
+    weight: 7
+  - type: SINGLE_CHOICE
+    defaultScore: 2
+    weight: 2
+  - type: TRUE_FALSE
+    defaultScore: 2
+    weight: 1

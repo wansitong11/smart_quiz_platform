@@ -1,5 +1,11 @@
 package interview.guide.modules.interviewschedule;
 
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiCost;
+import interview.guide.common.ai.AiCostControl;
+import interview.guide.common.ai.AiCostEstimateInput;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.result.Result;
 import interview.guide.modules.interviewschedule.model.CreateInterviewRequest;
 import interview.guide.modules.interviewschedule.model.InterviewScheduleDTO;
@@ -38,6 +44,7 @@ public class InterviewScheduleController {
 
     private final InterviewScheduleService scheduleService;
     private final InterviewParseService parseService;
+    private final AiCostControl aiCostControl;
 
     /**
      * 解析面试邀约文本
@@ -46,10 +53,23 @@ public class InterviewScheduleController {
      * @return 解析结果
      */
     @PostMapping("/parse")
+    @AiCost(feature = AiFeature.INTERVIEW_SCHEDULE_PARSE, operation = "parse")
     public Result<ParseResponse> parse(@Valid @RequestBody ParseRequest request) {
         log.info("接收到解析请求，来源: {}", request.getSource());
-        ParseResponse response = parseService.parse(request.getRawText(), request.getSource());
-        return Result.success(response);
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.INTERVIEW_SCHEDULE_PARSE,
+            new AiCostEstimateInput(null, null, null, null, null));
+        try {
+            ParseResponse response = parseService.parse(request.getRawText(), request.getSource());
+            return Result.success(response);
+        } finally {
+            if (context != null && context.operationId() != null) {
+                aiCostControl.finalize(context.operationId());
+            }
+        }
     }
 
     /**

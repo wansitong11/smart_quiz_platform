@@ -1,6 +1,7 @@
 package interview.guide.modules.knowledgebase.listener;
 
 import interview.guide.common.exception.BusinessException;
+import interview.guide.common.async.StreamWorkerRegistry;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
@@ -39,6 +40,8 @@ class VectorizeStreamConsumerTest {
   @Mock
   private RedisService redisService;
   @Mock
+  private StreamWorkerRegistry workerRegistry;
+  @Mock
   private KnowledgeBaseVectorService vectorService;
   @Mock
   private KnowledgeBaseRepository knowledgeBaseRepository;
@@ -49,7 +52,7 @@ class VectorizeStreamConsumerTest {
 
   @BeforeEach
   void setUp() {
-    consumer = new VectorizeStreamConsumer(redisService, vectorService,
+    consumer = new VectorizeStreamConsumer(redisService, workerRegistry, vectorService,
         knowledgeBaseRepository, parseService, new VectorizeRecoveryProperties());
   }
 

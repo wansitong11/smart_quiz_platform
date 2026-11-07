@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.ai.AiErrorMessages;
@@ -369,17 +371,30 @@ public class KnowledgeBaseQueryService {
     public Flux<RagStreamEvent> answerQuestionEventStreamWithTools(
             ResolvedScope scope, Long sessionId, String question,
             List<Message> history, String llmProvider) {
+        AiCallContext callContext = AiCallContextHolder.get();
         return Flux.concat(
             Flux.just(RagStreamEvent.tool("search_knowledge_base", "start")),
             Flux.defer(() -> {
-                AtomicReference<List<RagStreamEvent.Source>> sources =
-                    new AtomicReference<>(List.of());
-                Flux<RagStreamEvent> answers = answerQuestionStreamWithTools(
-                    scope, sessionId, question, history, llmProvider, sources::set, false)
-                    .map(RagStreamEvent::answer);
-                return answers.concatWith(Flux.defer(() -> sources.get().isEmpty()
-                    ? Flux.empty()
-                    : Flux.just(RagStreamEvent.sources(sources.get()))));
+                AiCallContext previous = AiCallContextHolder.get();
+                if (callContext != null) {
+                    AiCallContextHolder.set(callContext);
+                }
+                try {
+                    AtomicReference<List<RagStreamEvent.Source>> sources =
+                        new AtomicReference<>(List.of());
+                    Flux<RagStreamEvent> answers = answerQuestionStreamWithTools(
+                        scope, sessionId, question, history, llmProvider, sources::set, false)
+                        .map(RagStreamEvent::answer);
+                    return answers.concatWith(Flux.defer(() -> sources.get().isEmpty()
+                        ? Flux.empty()
+                        : Flux.just(RagStreamEvent.sources(sources.get()))));
+                } finally {
+                    if (previous == null) {
+                        AiCallContextHolder.clear();
+                    } else {
+                        AiCallContextHolder.set(previous);
+                    }
+                }
             })
         );
     }

@@ -1,6 +1,12 @@
 package interview.guide.modules.knowledgebase;
 
 import interview.guide.common.annotation.RateLimit;
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiCost;
+import interview.guide.common.ai.AiCostControl;
+import interview.guide.common.ai.AiCostEstimateInput;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.result.Result;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.knowledgebase.model.CreateKnowledgeBaseInterviewRequest;
@@ -9,6 +15,7 @@ import interview.guide.modules.knowledgebase.model.GenerateKnowledgeBaseQuestion
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseInterviewCapacityResponse;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionDTO;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionStatus;
+import interview.guide.modules.knowledgebase.model.QuestionGenStatus;
 import interview.guide.modules.knowledgebase.model.QuestionGenStatusResponse;
 import interview.guide.modules.knowledgebase.model.UpdateKnowledgeBaseQuestionRequest;
 import interview.guide.modules.knowledgebase.model.UpdateKnowledgeBaseQuestionStatusRequest;
@@ -38,6 +45,7 @@ public class KnowledgeBaseInterviewController {
 
   private final KnowledgeBaseQuestionService questionService;
   private final KnowledgeBaseInterviewService interviewService;
+  private final AiCostControl aiCostControl;
 
   @GetMapping("/api/knowledgebase/{id}/questions")
   public Result<List<KnowledgeBaseQuestionDTO>> listQuestions(
@@ -55,12 +63,30 @@ public class KnowledgeBaseInterviewController {
   }
 
   @PostMapping("/api/knowledgebase/{id}/questions/generate")
+  @AiCost(feature = AiFeature.KB_QUESTION_GEN, operation = "generate")
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 2)
   @RateLimit(dimension = RateLimit.Dimension.IP, count = 2)
   public Result<QuestionGenStatusResponse> generateQuestions(
       @PathVariable Long id,
       @Valid @RequestBody GenerateKnowledgeBaseQuestionsRequest request) {
-    return Result.success(questionService.submitGenerationTask(id, request));
+    AiCallContext context = AiCallContextHolder.get();
+    aiCostControl.reserveOrThrow(
+        context == null ? null : context.operationId(),
+        context == null ? null : context.userId(),
+        AiFeature.KB_QUESTION_GEN,
+        new AiCostEstimateInput(null, (long) Math.max(1, request.questionCount()),
+            null, null, null));
+    try {
+      QuestionGenStatusResponse response = questionService.submitGenerationTask(id, request);
+      if (response.questionGenStatus() != QuestionGenStatus.QUEUED
+          && response.questionGenStatus() != QuestionGenStatus.PROCESSING) {
+        finalizeOperation(context);
+      }
+      return Result.success(response);
+    } catch (RuntimeException e) {
+      finalizeOperation(context);
+      throw e;
+    }
   }
 
   @GetMapping("/api/knowledgebase/{id}/questions/generation-status")
@@ -112,5 +138,11 @@ public class KnowledgeBaseInterviewController {
       int mainQuestionCount) {
     return Result.success(
         interviewService.getCapacity(id, category, difficulty, mainQuestionCount));
+  }
+
+  private void finalizeOperation(AiCallContext context) {
+    if (context != null && context.operationId() != null) {
+      aiCostControl.finalize(context.operationId());
+    }
   }
 }

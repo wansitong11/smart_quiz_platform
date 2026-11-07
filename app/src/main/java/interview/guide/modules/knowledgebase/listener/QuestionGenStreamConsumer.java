@@ -1,6 +1,7 @@
 package interview.guide.modules.knowledgebase.listener;
 
 import interview.guide.common.async.AbstractStreamConsumer;
+import interview.guide.common.async.StreamWorkerRegistry;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.knowledgebase.model.QuestionGenerationConfig;
@@ -29,11 +30,12 @@ public class QuestionGenStreamConsumer
 
   public QuestionGenStreamConsumer(
       RedisService redisService,
+      StreamWorkerRegistry workerRegistry,
       KnowledgeBaseQuestionGenerationService generationService,
       QuestionGenerationStateService stateService,
       QuestionGenStreamProducer producer
   ) {
-    super(redisService);
+    super(redisService, workerRegistry);
     this.generationService = generationService;
     this.stateService = stateService;
     this.producer = producer;
@@ -57,6 +59,11 @@ public class QuestionGenStreamConsumer
   @Override
   protected String consumerPrefix() {
     return AsyncTaskStreamConstants.KB_QUESTION_GEN_CONSUMER_PREFIX;
+  }
+
+  @Override
+  protected String consumerKey() {
+    return "knowledgebase-question-gen";
   }
 
   @Override

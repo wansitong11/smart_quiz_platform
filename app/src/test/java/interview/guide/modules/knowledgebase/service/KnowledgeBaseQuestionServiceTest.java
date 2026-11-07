@@ -1,5 +1,6 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
 import interview.guide.modules.knowledgebase.listener.QuestionGenStreamProducer;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionDTO;
@@ -17,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
@@ -32,13 +34,19 @@ class KnowledgeBaseQuestionServiceTest {
   private QuestionGenStreamProducer questionGenStreamProducer;
   @Mock
   private QuestionGenerationStateService questionGenerationStateService;
+  @Mock
+  private KnowledgeBaseAccessService knowledgeBaseAccessService;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
   private KnowledgeBaseQuestionService service;
 
   @BeforeEach
   void setUp() {
+    when(knowledgeBaseRepository.findByIdAccessible(1L, null))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     service = new KnowledgeBaseQuestionService(
+        new OwnerScope(),
+        knowledgeBaseAccessService,
         knowledgeBaseRepository,
         questionRepository,
         objectMapper,

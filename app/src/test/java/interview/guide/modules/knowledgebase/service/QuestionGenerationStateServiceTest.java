@@ -1,5 +1,6 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionEntity;
@@ -41,6 +42,7 @@ class QuestionGenerationStateServiceTest {
   @BeforeEach
   void setUp() {
     service = new QuestionGenerationStateService(
+        new OwnerScope(),
         knowledgeBaseRepository,
         questionRepository,
         new ObjectMapper()

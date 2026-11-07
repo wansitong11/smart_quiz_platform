@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -32,6 +33,7 @@ public class KnowledgeBaseUploadService {
   private final OwnerScope ownerScope;
 
     private final KnowledgeBaseParseService parseService;
+    private final KnowledgeBaseOcrProperties ocrProperties;
     private final KnowledgeBasePersistenceService persistenceService;
     private final FileStorageService storageService;
     private final KnowledgeBaseRepository knowledgeBaseRepository;
@@ -136,10 +138,30 @@ public class KnowledgeBaseUploadService {
         fileValidationService.validateContentType(
             contentType,
             fileName,
-            fileValidationService::isKnowledgeBaseMimeType,
-            fileValidationService::isMarkdownExtension,
-            "不支持的文件类型: " + contentType + "，支持的类型：PDF、DOCX、DOC、TXT、MD等"
+            this::isKnowledgeBaseContentType,
+            this::isKnowledgeBaseExtension,
+            "不支持的文件类型: " + contentType + "，支持的类型：PDF、DOCX、DOC、TXT、MD、JPG、PNG"
         );
+    }
+
+    private boolean isKnowledgeBaseContentType(String contentType) {
+        return fileValidationService.isKnowledgeBaseMimeType(contentType)
+            || (ocrProperties.isEnabled()
+                && contentType != null
+                && contentType.toLowerCase(Locale.ROOT).startsWith("image/"));
+    }
+
+    private boolean isKnowledgeBaseExtension(String fileName) {
+        return fileValidationService.isMarkdownExtension(fileName)
+            || (ocrProperties.isEnabled() && isImageExtension(fileName));
+    }
+
+    private boolean isImageExtension(String fileName) {
+        if (fileName == null) {
+            return false;
+        }
+        String lower = fileName.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png");
     }
     
     /**

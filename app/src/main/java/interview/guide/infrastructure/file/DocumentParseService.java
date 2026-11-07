@@ -1,5 +1,7 @@
 package interview.guide.infrastructure.file;
 
+import interview.guide.common.async.BoundedExecutor;
+import interview.guide.common.async.ExecutorRejectedException;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.log.ErrorLogSanitizer;
@@ -22,7 +24,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -38,7 +40,7 @@ public class DocumentParseService {
     private static final int MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5MB
 
     private final TextCleaningService textCleaningService;
-    private final ThreadPoolExecutor parseExecutor;
+    private final BoundedExecutor parseExecutor;
     private final DocumentParseProperties properties;
 
     public DocumentParseService(TextCleaningService textCleaningService) {
@@ -48,7 +50,7 @@ public class DocumentParseService {
     @Autowired
     public DocumentParseService(TextCleaningService textCleaningService,
                                 @Qualifier("documentParseExecutor")
-                                ThreadPoolExecutor parseExecutor,
+                                BoundedExecutor parseExecutor,
                                 DocumentParseProperties properties) {
         this.textCleaningService = textCleaningService;
         this.parseExecutor = parseExecutor;
@@ -81,7 +83,7 @@ public class DocumentParseService {
         } catch (IOException e) {
             log.error("文件读取失败: {}", ErrorLogSanitizer.summarize(e),
                 ErrorLogSanitizer.forLogging(e));
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件读取失败");
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件读取失败", e);
         }
     }
 
@@ -163,11 +165,17 @@ public class DocumentParseService {
         if (parseExecutor == null) {
             return parseDirect(fileBytes);
         }
-        var future = parseExecutor.submit(() -> {
-            try (InputStream inputStream = new ByteArrayInputStream(fileBytes)) {
-                return parseContent(inputStream);
-            }
-        });
+        Future<String> future;
+        try {
+            future = parseExecutor.submit(() -> {
+                try (InputStream inputStream = new ByteArrayInputStream(fileBytes)) {
+                    return parseContent(inputStream);
+                }
+            });
+        } catch (ExecutorRejectedException e) {
+            log.warn("文件解析队列已满，稍后重试: executor={}", e.executorName());
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件解析繁忙，请稍后重试");
+        }
         try {
             return future.get(properties.getTimeout().toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -183,7 +191,7 @@ public class DocumentParseService {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             log.error("文件解析失败: {}", ErrorLogSanitizer.summarize(cause),
                 ErrorLogSanitizer.forLogging(cause));
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件解析失败");
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件解析失败", cause);
         }
     }
 
@@ -191,7 +199,7 @@ public class DocumentParseService {
         try (InputStream inputStream = new ByteArrayInputStream(fileBytes)) {
             return parseContent(inputStream);
         } catch (IOException | TikaException | SAXException e) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件解析失败");
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件解析失败", e);
         }
     }
 
@@ -215,7 +223,7 @@ public class DocumentParseService {
         } catch (Exception e) {
             log.error("下载并解析文件失败: storageKey={}, error={}", storageKey,
                 ErrorLogSanitizer.summarize(e), ErrorLogSanitizer.forLogging(e));
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "下载并解析文件失败");
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "下载并解析文件失败", e);
         }
     }
 }

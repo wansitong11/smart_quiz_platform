@@ -2,6 +2,12 @@ package interview.guide.modules.knowledgebase;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiCost;
+import interview.guide.common.ai.AiCostControl;
+import interview.guide.common.ai.AiCostEstimateInput;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.result.Result;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.CreateSessionRequest;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.SendMessageRequest;
@@ -40,6 +46,7 @@ public class RagChatController {
 
     private final RagChatSessionService sessionService;
     private final ObjectMapper objectMapper;
+    private final AiCostControl aiCostControl;
 
     /**
      * 创建新会话
@@ -118,6 +125,7 @@ public class RagChatController {
      */
     @PostMapping(value = "/api/rag-chat/sessions/{sessionId}/messages/stream",
                  produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @AiCost(feature = AiFeature.KB_QA, operation = "chatStream")
     public Flux<ServerSentEvent<String>> sendMessageStream(
             @PathVariable Long sessionId,
             @Valid @RequestBody SendMessageRequest request) {
@@ -125,31 +133,49 @@ public class RagChatController {
         log.info("收到 RAG 聊天流式请求: sessionId={}, questionLength={}, 线程: {} (虚拟线程: {})",
             sessionId, request.question().length(), Thread.currentThread(), Thread.currentThread().isVirtual());
 
-        // 1. 准备消息（保存用户消息，创建 AI 消息占位）
-        Long messageId = sessionService.prepareStreamMessage(sessionId, request.question());
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.KB_QA,
+            new AiCostEstimateInput(null, null, 4000L, null, 800L));
+        try {
+            // 1. 准备消息（保存用户消息，创建 AI 消息占位）
+            Long messageId = sessionService.prepareStreamMessage(sessionId, request.question());
 
-        // 2. 获取流式响应
-        StringBuilder fullContent = new StringBuilder();
+            // 2. 获取流式响应
+            StringBuilder fullContent = new StringBuilder();
 
-        return sessionService.getStreamEvents(sessionId, request.question())
-            .doOnNext(event -> fullContent.append(event.persistenceText()))
-            .map(event -> ServerSentEvent.<String>builder()
-                .event(event.name())
-                .data(serializeEventData(event))
-                .build())
-            .doOnComplete(() -> {
-                // 3. 流式完成后更新消息内容
-                sessionService.completeStreamMessage(messageId, fullContent.toString());
-                log.info("RAG 聊天流式完成: sessionId={}, messageId={}", sessionId, messageId);
-            })
-            .doOnError(e -> {
-                // 错误时也保存已接收的内容
-                String content = !fullContent.isEmpty()
-                    ? fullContent.toString()
-                    : "【错误】回答生成失败：" + e.getMessage();
-                sessionService.completeStreamMessage(messageId, content);
-                log.error("RAG 聊天流式错误: sessionId={}", sessionId, e);
-            });
+            return sessionService.getStreamEvents(sessionId, request.question())
+                .doOnNext(event -> fullContent.append(event.persistenceText()))
+                .map(event -> ServerSentEvent.<String>builder()
+                    .event(event.name())
+                    .data(serializeEventData(event))
+                    .build())
+                .doOnComplete(() -> {
+                    // 3. 流式完成后更新消息内容
+                    sessionService.completeStreamMessage(messageId, fullContent.toString());
+                    log.info("RAG 聊天流式完成: sessionId={}, messageId={}", sessionId, messageId);
+                })
+                .doOnError(e -> {
+                    // 错误时也保存已接收的内容
+                    String content = !fullContent.isEmpty()
+                        ? fullContent.toString()
+                        : "【错误】回答生成失败：" + e.getMessage();
+                    sessionService.completeStreamMessage(messageId, content);
+                    log.error("RAG 聊天流式错误: sessionId={}", sessionId, e);
+                })
+                .doFinally(signal -> finalizeOperation(context));
+        } catch (RuntimeException e) {
+            finalizeOperation(context);
+            throw e;
+        }
+    }
+
+    private void finalizeOperation(AiCallContext context) {
+        if (context != null && context.operationId() != null) {
+            aiCostControl.finalize(context.operationId());
+        }
     }
 
     private String serializeEventData(RagStreamEvent event) {

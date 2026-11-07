@@ -2,6 +2,7 @@ package interview.guide.modules.knowledgebase.service;
 
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.modules.auth.security.OwnerScope;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO.SessionStatus;
@@ -29,7 +30,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,7 +51,8 @@ class KnowledgeBaseInterviewServiceTest {
   @DisplayName("启用题目不足时拒绝创建知识库面试")
   void shouldRejectWhenActiveQuestionsAreInsufficient() {
     KnowledgeBaseInterviewService service = newService();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAccessible(1L, null))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of());
 
@@ -73,7 +74,8 @@ class KnowledgeBaseInterviewServiceTest {
     KnowledgeBaseQuestionEntity question = questionWithFollowUp();
     InterviewSessionDTO expected =
         new InterviewSessionDTO("session1", "", 2, 0, List.of(), SessionStatus.CREATED, 1L, null, null, null);
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAccessible(1L, null))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
@@ -88,9 +90,8 @@ class KnowledgeBaseInterviewServiceTest {
         captor.capture(), eq(""), eq(KnowledgeBaseQuestionEntity.DEFAULT_SKILL_ID), eq("mid"), eq(1L),
         eq(null));
     assertThat(actual).isSameAs(expected);
-    assertThat(captor.getValue()).hasSize(2);
+    assertThat(captor.getValue()).hasSize(1);
     assertThat(captor.getValue().get(0).isFollowUp()).isFalse();
-    assertThat(captor.getValue().get(1).isFollowUp()).isTrue();
     assertThat(captor.getValue().get(0).category()).isEqualTo("Redis");
   }
 
@@ -100,7 +101,8 @@ class KnowledgeBaseInterviewServiceTest {
   void shouldFilterByCategoryWhenCategoryProvided() throws Exception {
     KnowledgeBaseInterviewService service = newService();
     KnowledgeBaseQuestionEntity question = questionWithFollowUp();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAccessible(1L, null))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndCategoryAndStatusOrderByUpdatedAtDesc(
         1L, "mid", "Redis", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
@@ -121,7 +123,8 @@ class KnowledgeBaseInterviewServiceTest {
   void shouldPassNormalizedCategoryToSession() throws Exception {
     KnowledgeBaseInterviewService service = newService();
     KnowledgeBaseQuestionEntity question = questionWithFollowUp();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAccessible(1L, null))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndCategoryAndStatusOrderByUpdatedAtDesc(
         1L, "mid", "MySQL", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
@@ -137,12 +140,13 @@ class KnowledgeBaseInterviewServiceTest {
   }
 
   @Test
-  @DisplayName("followUpCount 小于追问池时随机抽取指定数量的追问")
+  @DisplayName("资料测验忽略请求中的追问数，只生成主问题")
   @SuppressWarnings("unchecked")
-  void shouldPickFollowUpsRandomlyWhenPoolLargerThanCount() throws Exception {
+  void shouldIgnoreRequestedFollowUpCount() throws Exception {
     KnowledgeBaseInterviewService service = newService();
     KnowledgeBaseQuestionEntity question = questionWithThreeFollowUps();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAccessible(1L, null))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
     when(interviewSessionService.createSessionFromQuestions(
@@ -158,33 +162,32 @@ class KnowledgeBaseInterviewServiceTest {
         eq(null));
 
     List<InterviewQuestionDTO> built = captor.getValue();
-    assertThat(built).hasSize(3);
-    List<String> followUpQuestions = built.subList(1, 3).stream()
-        .map(InterviewQuestionDTO::question).toList();
-    assertThat(followUpQuestions).hasSize(2);
-    assertThat(followUpQuestions).doesNotHaveDuplicates();
-    assertThat(followUpQuestions).isSubsetOf("追问1", "追问2", "追问3");
+    assertThat(built).hasSize(1);
+    assertThat(built.get(0).isFollowUp()).isFalse();
   }
 
   @Test
-  @DisplayName("追问池不足严格数量时使用专用错误码拒绝创建面试")
+  @DisplayName("资料测验不因追问池不足而拒绝创建")
   @SuppressWarnings("unchecked")
-  void shouldRejectWhenFollowUpPoolIsSmallerThanRequestedCount() throws Exception {
+  void shouldNotRejectWhenFollowUpPoolIsSmallerThanRequestedCount() throws Exception {
     KnowledgeBaseInterviewService service = newService();
     KnowledgeBaseQuestionEntity question = questionWithFollowUp();
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAccessible(1L, null))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(question));
+    InterviewSessionDTO expected =
+        new InterviewSessionDTO("session1", "", 1, 0, List.of(), SessionStatus.CREATED, 1L, null, null, null);
+    when(interviewSessionService.createSessionFromQuestions(
+        any(), eq(""), eq(KnowledgeBaseQuestionEntity.DEFAULT_SKILL_ID), eq("mid"), eq(1L), eq(null)))
+        .thenReturn(expected);
 
-    assertThatThrownBy(() -> service.createSession(
-        new CreateKnowledgeBaseInterviewRequest(1L, null, "mid", 1, 3, "")))
-        .isInstanceOfSatisfying(BusinessException.class, exception -> {
-          assertThat(exception.getCode()).isEqualTo(ErrorCode.INTERVIEW_QUESTION_INSUFFICIENT.getCode());
-          assertThat(exception.getMessage()).contains("每题至少 3 个追问");
-        });
+    InterviewSessionDTO actual = service.createSession(
+        new CreateKnowledgeBaseInterviewRequest(1L, null, "mid", 1, 3, ""));
 
-    verify(interviewSessionService, never()).createSessionFromQuestions(
-        any(), any(), any(), any(), any(), any());
+    assertThat(actual).isSameAs(expected);
+    verify(interviewSessionService).createSessionFromQuestions(
+        any(), eq(""), eq(KnowledgeBaseQuestionEntity.DEFAULT_SKILL_ID), eq("mid"), eq(1L), eq(null));
   }
 
   @Test
@@ -201,7 +204,8 @@ class KnowledgeBaseInterviewServiceTest {
         new KnowledgeBaseQuestionFollowUpDTO("追问2"),
         new KnowledgeBaseQuestionFollowUpDTO("追问3")
     ));
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAccessible(1L, null))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE))
         .thenReturn(List.of(noFollowUp, oneFollowUp, threeFollowUps));
@@ -243,7 +247,8 @@ class KnowledgeBaseInterviewServiceTest {
     KnowledgeBaseQuestionEntity mysql = questionWithFollowUps("MySQL", List.of(
         new KnowledgeBaseQuestionFollowUpDTO("追问1")
     ));
-    when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(new KnowledgeBaseEntity()));
+    when(knowledgeBaseRepository.findByIdAccessible(1L, null))
+        .thenReturn(Optional.of(new KnowledgeBaseEntity()));
     when(questionRepository.findByKnowledgeBase_IdAndDifficultyAndStatusOrderByUpdatedAtDesc(
         1L, "mid", KnowledgeBaseQuestionStatus.ACTIVE)).thenReturn(List.of(redis, mysql));
 
@@ -263,6 +268,7 @@ class KnowledgeBaseInterviewServiceTest {
 
   private KnowledgeBaseInterviewService newService() {
     return new KnowledgeBaseInterviewService(
+        new OwnerScope(),
         knowledgeBaseRepository,
         questionRepository,
         interviewSessionService,

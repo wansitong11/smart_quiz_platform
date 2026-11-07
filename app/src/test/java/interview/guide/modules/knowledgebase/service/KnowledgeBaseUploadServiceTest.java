@@ -1,5 +1,6 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.auth.security.OwnerScope;
 import interview.guide.infrastructure.file.FileHashService;
 import interview.guide.infrastructure.file.FileStorageService;
 import interview.guide.infrastructure.file.FileValidationService;
@@ -23,6 +24,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -48,14 +51,17 @@ class KnowledgeBaseUploadServiceTest {
   private VectorizeStreamProducer vectorizeStreamProducer;
   @Mock
   private KbCategoryService categoryService;
+  @Mock
+  private KnowledgeBaseAccessService knowledgeBaseAccessService;
 
   private KnowledgeBaseUploadService service;
+  private final KnowledgeBaseOcrProperties ocrProperties = new KnowledgeBaseOcrProperties();
 
   @BeforeEach
   void setUp() {
-    service = new KnowledgeBaseUploadService(parseService, persistenceService, storageService,
-        knowledgeBaseRepository, fileValidationService, fileHashService, vectorizeStreamProducer,
-        categoryService);
+    service = new KnowledgeBaseUploadService(new OwnerScope(), parseService, ocrProperties,
+        persistenceService, storageService, knowledgeBaseRepository, fileValidationService,
+        fileHashService, vectorizeStreamProducer, categoryService, knowledgeBaseAccessService);
   }
 
   @Test
@@ -64,7 +70,8 @@ class KnowledgeBaseUploadServiceTest {
     MultipartFile file = new MockMultipartFile("file", "a.pdf", "application/pdf", new byte[] {1, 2, 3});
     when(parseService.detectContentType(file)).thenReturn("application/pdf");
     when(fileHashService.calculateHash(file)).thenReturn("hash-1");
-    when(knowledgeBaseRepository.findByFileHash("hash-1")).thenReturn(Optional.empty());
+    when(knowledgeBaseRepository.findByFileHashOwned(eq("hash-1"), isNull()))
+        .thenReturn(Optional.empty());
     when(storageService.uploadKnowledgeBase(file)).thenReturn("kb/1");
     when(storageService.getFileUrl("kb/1")).thenReturn("http://rustfs/kb/1");
     KnowledgeBaseEntity saved = new KnowledgeBaseEntity();
@@ -96,7 +103,8 @@ class KnowledgeBaseUploadServiceTest {
     MultipartFile file = new MockMultipartFile("file", "a.pdf", "application/pdf", new byte[] {1, 2, 3});
     when(parseService.detectContentType(file)).thenReturn("application/pdf");
     when(fileHashService.calculateHash(file)).thenReturn("hash-2");
-    when(knowledgeBaseRepository.findByFileHash("hash-2")).thenReturn(Optional.empty());
+    when(knowledgeBaseRepository.findByFileHashOwned(eq("hash-2"), isNull()))
+        .thenReturn(Optional.empty());
     when(storageService.uploadKnowledgeBase(file)).thenReturn("kb/12");
     when(storageService.getFileUrl("kb/12")).thenReturn("http://rustfs/kb/12");
     KnowledgeBaseEntity saved = new KnowledgeBaseEntity();
@@ -124,7 +132,8 @@ class KnowledgeBaseUploadServiceTest {
     MultipartFile file = new MockMultipartFile("file", "a.pdf", "application/pdf", new byte[] {1, 2, 3});
     when(parseService.detectContentType(file)).thenReturn("application/pdf");
     when(fileHashService.calculateHash(file)).thenReturn("hash-3");
-    when(knowledgeBaseRepository.findByFileHash("hash-3")).thenReturn(Optional.empty());
+    when(knowledgeBaseRepository.findByFileHashOwned(eq("hash-3"), isNull()))
+        .thenReturn(Optional.empty());
     when(storageService.uploadKnowledgeBase(file)).thenReturn("kb/orphan");
     when(storageService.getFileUrl("kb/orphan")).thenReturn("http://rustfs/kb/orphan");
     when(persistenceService.saveKnowledgeBase(any(), anyString(), any(), anyString(), anyString(), anyString()))
@@ -145,7 +154,8 @@ class KnowledgeBaseUploadServiceTest {
     MultipartFile file = new MockMultipartFile("file", "a.pdf", "application/pdf", new byte[] {1, 2, 3});
     when(parseService.detectContentType(file)).thenReturn("application/pdf");
     when(fileHashService.calculateHash(file)).thenReturn("hash-4");
-    when(knowledgeBaseRepository.findByFileHash("hash-4")).thenReturn(Optional.empty());
+    when(knowledgeBaseRepository.findByFileHashOwned(eq("hash-4"), isNull()))
+        .thenReturn(Optional.empty());
     when(storageService.uploadKnowledgeBase(file)).thenReturn("kb/orphan2");
     when(storageService.getFileUrl("kb/orphan2")).thenReturn("http://rustfs/kb/orphan2");
     when(persistenceService.saveKnowledgeBase(any(), anyString(), any(), anyString(), anyString(), anyString()))
@@ -168,7 +178,8 @@ class KnowledgeBaseUploadServiceTest {
     existing.setName("a.pdf");
     existing.setFileSize(3L);
     existing.setVectorStatus(interview.guide.modules.knowledgebase.model.VectorStatus.COMPLETED);
-    when(knowledgeBaseRepository.findByFileHash("hash-dup")).thenReturn(Optional.of(existing));
+    when(knowledgeBaseRepository.findByFileHashOwned(eq("hash-dup"), isNull()))
+        .thenReturn(Optional.of(existing));
     when(persistenceService.handleDuplicateKnowledgeBase(existing, "hash-dup")).thenReturn(Map.of(
         "knowledgeBase", Map.of(
             "id", existing.getId(),
@@ -196,7 +207,7 @@ class KnowledgeBaseUploadServiceTest {
     kb.setId(11L);
     kb.setStorageKey("kb/11");
     kb.setOriginalFilename("a.pdf");
-    when(knowledgeBaseRepository.findById(11L)).thenReturn(Optional.of(kb));
+    when(knowledgeBaseAccessService.requireManageable(11L)).thenReturn(kb);
     when(vectorizeStreamProducer.sendVectorizeTask(11L)).thenReturn(true);
 
     service.revectorize(11L);
@@ -214,11 +225,60 @@ class KnowledgeBaseUploadServiceTest {
     kb.setId(13L);
     kb.setStorageKey("kb/13");
     kb.setOriginalFilename("a.pdf");
-    when(knowledgeBaseRepository.findById(13L)).thenReturn(Optional.of(kb));
+    when(knowledgeBaseAccessService.requireManageable(13L)).thenReturn(kb);
     when(vectorizeStreamProducer.sendVectorizeTask(13L)).thenReturn(false);
 
     assertThatThrownBy(() -> service.revectorize(13L))
         .isInstanceOf(interview.guide.common.exception.BusinessException.class)
         .hasMessageContaining("任务投递失败");
+  }
+
+  @Test
+  @DisplayName("识图开启时允许 PNG 上传")
+  void shouldAllowPngWhenOcrEnabled() {
+    MultipartFile file = new MockMultipartFile("file", "a.png", "image/png", new byte[] {1, 2, 3});
+    when(parseService.detectContentType(file)).thenReturn("image/png");
+    when(fileHashService.calculateHash(file)).thenReturn("hash-img");
+    when(knowledgeBaseRepository.findByFileHashOwned(eq("hash-img"), isNull()))
+        .thenReturn(Optional.empty());
+    when(storageService.uploadKnowledgeBase(file)).thenReturn("kb/img");
+    when(storageService.getFileUrl("kb/img")).thenReturn("http://rustfs/kb/img");
+    KnowledgeBaseEntity saved = new KnowledgeBaseEntity();
+    saved.setId(31L);
+    saved.setName("a.png");
+    saved.setFileSize(3L);
+    when(persistenceService.saveKnowledgeBase(any(), anyString(), any(), anyString(), anyString(), anyString()))
+        .thenReturn(saved);
+    when(vectorizeStreamProducer.sendVectorizeTask(31L)).thenReturn(true);
+
+    KnowledgeBaseUploadService imageService = new KnowledgeBaseUploadService(
+        new OwnerScope(), parseService, ocrProperties, persistenceService, storageService,
+        knowledgeBaseRepository, new FileValidationService(), fileHashService,
+        vectorizeStreamProducer, categoryService, knowledgeBaseAccessService);
+
+    Map<String, Object> result = imageService.uploadKnowledgeBase(file, "图片知识库", "JVM");
+
+    assertThat(result).containsEntry("duplicate", false);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> knowledgeBase = (Map<String, Object>) result.get("knowledgeBase");
+    assertThat(knowledgeBase).containsEntry("vectorStatus", "PENDING");
+  }
+
+  @Test
+  @DisplayName("识图关闭时拒绝 PNG 上传")
+  void shouldRejectPngWhenOcrDisabled() {
+    KnowledgeBaseOcrProperties disabled = new KnowledgeBaseOcrProperties();
+    disabled.setEnabled(false);
+    MultipartFile file = new MockMultipartFile("file", "a.png", "image/png", new byte[] {1, 2, 3});
+    when(parseService.detectContentType(file)).thenReturn("image/png");
+
+    KnowledgeBaseUploadService imageService = new KnowledgeBaseUploadService(
+        new OwnerScope(), parseService, disabled, persistenceService, storageService,
+        knowledgeBaseRepository, new FileValidationService(), fileHashService,
+        vectorizeStreamProducer, categoryService, knowledgeBaseAccessService);
+
+    assertThatThrownBy(() -> imageService.uploadKnowledgeBase(file, "图片知识库", "JVM"))
+        .isInstanceOf(interview.guide.common.exception.BusinessException.class)
+        .hasMessageContaining("不支持的文件类型");
   }
 }

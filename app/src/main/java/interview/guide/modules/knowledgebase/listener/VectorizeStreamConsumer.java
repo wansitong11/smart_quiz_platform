@@ -1,22 +1,23 @@
 package interview.guide.modules.knowledgebase.listener;
 
 import interview.guide.common.async.AbstractStreamConsumer;
+import interview.guide.common.async.recovery.VectorizeRecoveryProperties;
+import interview.guide.common.async.StreamWorkerRegistry;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
-import interview.guide.common.log.ErrorLogSanitizer;
-import interview.guide.infrastructure.redis.RedisService;
-import interview.guide.modules.knowledgebase.model.VectorStatus;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.log.ErrorLogSanitizer;
+import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
+import interview.guide.modules.knowledgebase.model.VectorStatus;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
-import interview.guide.common.async.recovery.VectorizeRecoveryProperties;
 import interview.guide.modules.knowledgebase.service.KnowledgeBaseParseService;
 import interview.guide.modules.knowledgebase.service.KnowledgeBaseVectorService;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.stream.StreamMessageId;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -32,17 +33,16 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<VectorizeStr
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final KnowledgeBaseParseService parseService;
     private final VectorizeRecoveryProperties recoveryProperties;
-    /** 当前任务的 Embedding 心跳上次写库时间（领取时清零），仅内存态 */
-    private volatile long lastEmbeddingHeartbeatNanos;
 
     public VectorizeStreamConsumer(
         RedisService redisService,
+        StreamWorkerRegistry workerRegistry,
         KnowledgeBaseVectorService vectorService,
         KnowledgeBaseRepository knowledgeBaseRepository,
         KnowledgeBaseParseService parseService,
         VectorizeRecoveryProperties recoveryProperties
     ) {
-        super(redisService);
+        super(redisService, workerRegistry);
         this.vectorService = vectorService;
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.parseService = parseService;
@@ -53,6 +53,7 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<VectorizeStr
 
         private final Long kbId;
         private String attemptId;
+        private volatile long lastEmbeddingHeartbeatNanos;
 
         VectorizePayload(Long kbId) {
             this.kbId = kbId;
@@ -68,6 +69,18 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<VectorizeStr
 
         void setAttemptId(String attemptId) {
             this.attemptId = attemptId;
+        }
+
+        long lastEmbeddingHeartbeatNanos() {
+            return lastEmbeddingHeartbeatNanos;
+        }
+
+        void setLastEmbeddingHeartbeatNanos(long lastEmbeddingHeartbeatNanos) {
+            this.lastEmbeddingHeartbeatNanos = lastEmbeddingHeartbeatNanos;
+        }
+
+        void resetEmbeddingHeartbeat() {
+            this.lastEmbeddingHeartbeatNanos = 0;
         }
     }
 
@@ -89,6 +102,11 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<VectorizeStr
     @Override
     protected String consumerPrefix() {
         return AsyncTaskStreamConstants.KB_VECTORIZE_CONSUMER_PREFIX;
+    }
+
+    @Override
+    protected String consumerKey() {
+        return "knowledgebase-vectorize";
     }
 
     @Override
@@ -137,7 +155,7 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<VectorizeStr
             payload.kbId(), attemptId, java.time.LocalDateTime.now()) == 1;
         if (claimed) {
             payload.setAttemptId(attemptId);
-            lastEmbeddingHeartbeatNanos = 0;
+            payload.resetEmbeddingHeartbeat();
         }
         return claimed;
     }
@@ -159,11 +177,12 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<VectorizeStr
     void throttledEmbeddingHeartbeat(VectorizePayload payload) {
         long now = System.nanoTime();
         long throttleNanos = recoveryProperties.getHeartbeatThrottle().toNanos();
-        if (lastEmbeddingHeartbeatNanos != 0 && now - lastEmbeddingHeartbeatNanos < throttleNanos) {
+        if (payload.lastEmbeddingHeartbeatNanos() != 0
+            && now - payload.lastEmbeddingHeartbeatNanos() < throttleNanos) {
             return;
         }
         heartbeat(payload);
-        lastEmbeddingHeartbeatNanos = now;
+        payload.setLastEmbeddingHeartbeatNanos(now);
     }
 
     @Override
@@ -220,10 +239,10 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<VectorizeStr
             return;
         }
         try {
-            Map<String, String> message = Map.of(
-                AsyncTaskStreamConstants.FIELD_KB_ID, kbId.toString(),
-                AsyncTaskStreamConstants.FIELD_RETRY_COUNT, String.valueOf(retryCount)
-            );
+            Map<String, String> message = new LinkedHashMap<>();
+            message.put(AsyncTaskStreamConstants.FIELD_KB_ID, kbId.toString());
+            message.put(AsyncTaskStreamConstants.FIELD_RETRY_COUNT, String.valueOf(retryCount));
+            message.putAll(aiContextMessageFields());
 
             redisService().streamAdd(
                 AsyncTaskStreamConstants.KB_VECTORIZE_STREAM_KEY,

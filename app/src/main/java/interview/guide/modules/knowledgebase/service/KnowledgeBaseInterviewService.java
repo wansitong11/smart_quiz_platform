@@ -184,7 +184,11 @@ public class KnowledgeBaseInterviewService {
           readOptions(entity.getOptionsJson()),
           entity.getAnalysis(),
           null,
-          null
+          null,
+          null,
+          null,
+          null,
+          false
       ));
     }
     return questions;

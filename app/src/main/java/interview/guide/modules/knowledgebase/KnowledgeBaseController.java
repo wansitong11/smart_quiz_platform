@@ -3,6 +3,12 @@ package interview.guide.modules.knowledgebase;
 import interview.guide.common.exception.ErrorCode;
 
 import interview.guide.common.annotation.RateLimit;
+import interview.guide.common.ai.AiCost;
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiCostControl;
+import interview.guide.common.ai.AiCostEstimateInput;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.result.Result;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseListItemDTO;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseStatsDTO;
@@ -49,6 +55,7 @@ public class KnowledgeBaseController {
     private final KnowledgeBaseQueryService queryService;
     private final KnowledgeBaseListService listService;
     private final KnowledgeBaseDeleteService deleteService;
+    private final AiCostControl aiCostControl;
 
     /**
      * 获取所有知识库列表
@@ -103,23 +110,48 @@ public class KnowledgeBaseController {
      * 基于知识库回答问题（支持多知识库）
      */
     @PostMapping("/api/knowledgebase/query")
+    @AiCost(feature = AiFeature.KB_QA, operation = "query")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
     @RateLimit(dimension = RateLimit.Dimension.IP, count = 10)
     public Result<QueryResponse> queryKnowledgeBase(@Valid @RequestBody QueryRequest request) {
-        return Result.success(queryService.queryKnowledgeBase(request));
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.KB_QA,
+            new AiCostEstimateInput(null, null, 4000L, null, 800L));
+        try {
+            return Result.success(queryService.queryKnowledgeBase(request));
+        } finally {
+            finalizeOperation(context);
+        }
     }
 
     /**
      * 基于知识库回答问题（流式SSE，支持多知识库）
      */
     @PostMapping(value = "/api/knowledgebase/query/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @AiCost(feature = AiFeature.KB_QA, operation = "queryStream")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 5)
     @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
     public Flux<String> queryKnowledgeBaseStream(@Valid @RequestBody QueryRequest request) {
         log.debug("收到知识库流式查询请求: kbIds={}, questionLength={}, 线程: {} (虚拟线程: {})",
             request.knowledgeBaseIds(), request.question().length(), Thread.currentThread(),
             Thread.currentThread().isVirtual());
-        return queryService.answerQuestionStream(request.knowledgeBaseIds(), request.question());
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.KB_QA,
+            new AiCostEstimateInput(null, null, 4000L, null, 800L));
+        try {
+            return queryService.answerQuestionStream(
+                    request.knowledgeBaseIds(), request.question())
+                .doFinally(signal -> finalizeOperation(context));
+        } catch (RuntimeException e) {
+            finalizeOperation(context);
+            throw e;
+        }
     }
 
     // ========== 分类管理 API（分类本身见 KbCategoryController） ==========
@@ -139,13 +171,38 @@ public class KnowledgeBaseController {
      * 上传知识库文件
      */
     @PostMapping(value = "/api/knowledgebase/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @AiCost(feature = AiFeature.KB_VECTORIZE, operation = "upload")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 3)
     @RateLimit(dimension = RateLimit.Dimension.IP, count = 3)
     public Result<Map<String, Object>> uploadKnowledgeBase(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "name", required = false) String name,
             @RequestParam(value = "categoryCode", required = false) String categoryCode) {
-        return Result.success(uploadService.uploadKnowledgeBase(file, name, categoryCode));
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.KB_VECTORIZE,
+            new AiCostEstimateInput(null, null, null,
+                Math.max(1L, file.getSize() / (1024L * 1024L)), null));
+        try {
+            Map<String, Object> result = uploadService.uploadKnowledgeBase(file, name, categoryCode);
+            boolean asyncEnqueued = !Boolean.TRUE.equals(result.get("duplicate"))
+                && Boolean.TRUE.equals(result.get("enqueueAccepted"));
+            if (!asyncEnqueued) {
+                finalizeOperation(context);
+            }
+            return Result.success(result);
+        } catch (RuntimeException e) {
+            finalizeOperation(context);
+            throw e;
+        }
+    }
+
+    private void finalizeOperation(AiCallContext context) {
+        if (context != null && context.operationId() != null) {
+            aiCostControl.finalize(context.operationId());
+        }
     }
 
     /**

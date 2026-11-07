@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.file.ContentTypeDetectionService;
 import interview.guide.infrastructure.file.DocumentParseService;
 import interview.guide.infrastructure.file.FileStorageService;
@@ -20,6 +22,7 @@ public class KnowledgeBaseParseService {
     private final DocumentParseService documentParseService;
     private final ContentTypeDetectionService contentTypeDetectionService;
     private final FileStorageService storageService;
+    private final KnowledgeBaseContentExtractor contentExtractor;
 
     /**
      * 解析上传的知识库文件，提取文本内容
@@ -53,7 +56,11 @@ public class KnowledgeBaseParseService {
      */
     public String downloadAndParseContent(String storageKey, String originalFilename) {
         log.info("从存储下载并解析知识库文件: {}", originalFilename);
-        return documentParseService.downloadAndParseContent(storageService, storageKey, originalFilename);
+        byte[] bytes = storageService.downloadFile(storageKey);
+        if (bytes == null || bytes.length == 0) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "下载文件失败");
+        }
+        return contentExtractor.extractText(bytes, originalFilename);
     }
 
     /**

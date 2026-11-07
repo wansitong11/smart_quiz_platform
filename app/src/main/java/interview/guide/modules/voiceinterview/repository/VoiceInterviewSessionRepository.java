@@ -5,9 +5,11 @@ import interview.guide.modules.voiceinterview.model.OralPracticeSessionEntity.In
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.persistence.LockModeType;
 
@@ -61,4 +63,46 @@ public interface VoiceInterviewSessionRepository extends JpaRepository<OralPract
         interview.guide.common.model.AsyncTaskStatus evaluateStatus,
         LocalDateTime time
     );
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE OralPracticeSessionEntity s SET s.evaluateStatus = 'PROCESSING', "
+        + "s.evaluateError = null, s.updatedAt = :now WHERE s.id = :sessionId "
+        + "AND s.evaluateStatus = 'PENDING'")
+    int tryMarkEvaluateProcessing(@Param("sessionId") Long sessionId,
+                                  @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE OralPracticeSessionEntity s SET s.evaluateStatus = 'COMPLETED', "
+        + "s.evaluateError = null, s.updatedAt = :now WHERE s.id = :sessionId "
+        + "AND s.evaluateStatus = 'PROCESSING'")
+    int completeEvaluateIfProcessing(@Param("sessionId") Long sessionId,
+                                     @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE OralPracticeSessionEntity s SET s.evaluateStatus = 'FAILED', "
+        + "s.evaluateError = :error, s.updatedAt = :now WHERE s.id = :sessionId "
+        + "AND s.evaluateStatus = 'PROCESSING'")
+    int failEvaluateIfProcessing(@Param("sessionId") Long sessionId,
+                                 @Param("error") String error,
+                                 @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE OralPracticeSessionEntity s SET s.evaluateStatus = 'PENDING', "
+        + "s.evaluateError = null, s.updatedAt = :now WHERE s.id = :sessionId "
+        + "AND s.evaluateStatus = 'PROCESSING'")
+    int resetEvaluateToPending(@Param("sessionId") Long sessionId,
+                               @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE OralPracticeSessionEntity s SET s.evaluateStatus = 'FAILED', "
+        + "s.evaluateError = :error, s.updatedAt = :now WHERE s.id = :sessionId "
+        + "AND s.evaluateStatus = 'PENDING'")
+    int failEvaluateIfPending(@Param("sessionId") Long sessionId,
+                              @Param("error") String error,
+                              @Param("now") LocalDateTime now);
 }

@@ -29,6 +29,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -147,6 +149,52 @@ class VoiceInterviewEvaluationRecoveryTest {
 
         assertThat(session.getEvaluateStatus()).isEqualTo(AsyncTaskStatus.COMPLETED);
         verify(sessionBucket).delete();
+    }
+
+    @Test
+    @DisplayName("条件状态更新成功时应按每次状态迁移清理会话缓存")
+    void shouldInvalidateSessionCacheForEachSuccessfulConditionalTransition() {
+        when(sessionRepository.tryMarkEvaluateProcessing(eq(5L), any(LocalDateTime.class)))
+            .thenReturn(1);
+        when(sessionRepository.completeEvaluateIfProcessing(eq(5L), any(LocalDateTime.class)))
+            .thenReturn(1);
+        when(sessionRepository.failEvaluateIfProcessing(
+            eq(5L), anyString(), any(LocalDateTime.class))).thenReturn(1);
+        when(sessionRepository.resetEvaluateToPending(eq(5L), any(LocalDateTime.class)))
+            .thenReturn(1);
+        when(sessionRepository.failEvaluateIfPending(
+            eq(5L), anyString(), any(LocalDateTime.class))).thenReturn(1);
+
+        assertThat(voiceInterviewService.tryMarkEvaluateProcessing(5L)).isTrue();
+        assertThat(voiceInterviewService.completeEvaluateIfProcessing(5L)).isTrue();
+        assertThat(voiceInterviewService.failEvaluateIfProcessing(5L, "失败")).isTrue();
+        assertThat(voiceInterviewService.resetEvaluateToPending(5L)).isTrue();
+        assertThat(voiceInterviewService.failEvaluateIfPending(5L, "重投失败")).isTrue();
+
+        verify(sessionBucket, times(5)).delete();
+    }
+
+    @Test
+    @DisplayName("条件状态未命中时不应误清理会话缓存")
+    void shouldNotInvalidateSessionCacheWhenConditionalTransitionMisses() {
+        when(sessionRepository.tryMarkEvaluateProcessing(eq(6L), any(LocalDateTime.class)))
+            .thenReturn(0);
+        when(sessionRepository.completeEvaluateIfProcessing(eq(6L), any(LocalDateTime.class)))
+            .thenReturn(0);
+        when(sessionRepository.failEvaluateIfProcessing(
+            eq(6L), anyString(), any(LocalDateTime.class))).thenReturn(0);
+        when(sessionRepository.resetEvaluateToPending(eq(6L), any(LocalDateTime.class)))
+            .thenReturn(0);
+        when(sessionRepository.failEvaluateIfPending(
+            eq(6L), anyString(), any(LocalDateTime.class))).thenReturn(0);
+
+        assertThat(voiceInterviewService.tryMarkEvaluateProcessing(6L)).isFalse();
+        assertThat(voiceInterviewService.completeEvaluateIfProcessing(6L)).isFalse();
+        assertThat(voiceInterviewService.failEvaluateIfProcessing(6L, "失败")).isFalse();
+        assertThat(voiceInterviewService.resetEvaluateToPending(6L)).isFalse();
+        assertThat(voiceInterviewService.failEvaluateIfPending(6L, "重投失败")).isFalse();
+
+        verify(sessionBucket, never()).delete();
     }
 
     @Test

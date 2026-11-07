@@ -132,6 +132,8 @@ public class VoiceInterviewProperties {
 
     @Data
     public static class QwenConfig {
+        /** 音频调用的 Provider 标识，用于价格表和免费模型闸门匹配。 */
+        private String provider = "dashscope";
         private AsrConfig asr = new AsrConfig();
         private QwenTtsConfig tts = new QwenTtsConfig();
     }

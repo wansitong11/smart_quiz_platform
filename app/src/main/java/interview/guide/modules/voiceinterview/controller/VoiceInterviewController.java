@@ -1,5 +1,11 @@
 package interview.guide.modules.voiceinterview.controller;
 
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiCallContextHolder.AiCallContext;
+import interview.guide.common.ai.AiCost;
+import interview.guide.common.ai.AiCostControl;
+import interview.guide.common.ai.AiCostEstimateInput;
+import interview.guide.common.ai.AiFeature;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
@@ -50,6 +56,7 @@ public class VoiceInterviewController {
     private final VoiceInterviewService voiceInterviewService;
     private final VoiceInterviewEvaluationService evaluationService;
     private final VoiceEvaluateStreamProducer voiceEvaluateStreamProducer;
+    private final AiCostControl aiCostControl;
 
     /**
      * Create a new voice interview session
@@ -81,10 +88,22 @@ public class VoiceInterviewController {
      * </p>
      */
     @PostMapping("/sessions/{sessionId}/end")
+    @AiCost(feature = AiFeature.VOICE_EVALUATE, operation = "endSession")
     public Result<Void> endSession(@PathVariable Long sessionId) {
         log.info("Ending session: {}", sessionId);
-        voiceInterviewService.endSession(sessionId.toString());
-        return Result.success();
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.VOICE_EVALUATE,
+            new AiCostEstimateInput(null, 1L, null, null, null));
+        try {
+            voiceInterviewService.endSession(sessionId.toString());
+            return Result.success();
+        } catch (RuntimeException e) {
+            finalizeOperation(context);
+            throw e;
+        }
     }
 
     /**
@@ -185,6 +204,7 @@ public class VoiceInterviewController {
      * </p>
      */
     @PostMapping("/sessions/{sessionId}/evaluation")
+    @AiCost(feature = AiFeature.VOICE_EVALUATE, operation = "evaluate")
     public Result<VoiceEvaluationStatusDTO> generateEvaluation(@PathVariable Long sessionId) {
         log.info("Triggering async evaluation for session: {}", sessionId);
 
@@ -213,11 +233,28 @@ public class VoiceInterviewController {
         }
 
         // Trigger new async evaluation via service
-        voiceInterviewService.triggerEvaluation(sessionId);
+        AiCallContext context = AiCallContextHolder.get();
+        aiCostControl.reserveOrThrow(
+            context == null ? null : context.operationId(),
+            context == null ? null : context.userId(),
+            AiFeature.VOICE_EVALUATE,
+            new AiCostEstimateInput(null, 1L, null, null, null));
+        try {
+            voiceInterviewService.triggerEvaluation(sessionId);
+        } catch (RuntimeException e) {
+            finalizeOperation(context);
+            throw e;
+        }
 
         return Result.success(VoiceEvaluationStatusDTO.builder()
                 .evaluateStatus(AsyncTaskStatus.PENDING.name())
                 .evaluateStatusUpdatedAt(LocalDateTime.now())
                 .build());
+    }
+
+    private void finalizeOperation(AiCallContext context) {
+        if (context != null && context.operationId() != null) {
+            aiCostControl.finalize(context.operationId());
+        }
     }
 }

@@ -145,7 +145,7 @@ public class VoiceInterviewService {
         session.setEvaluateStatus(AsyncTaskStatus.PENDING);
 
         sessionRepository.save(session);
-        invalidateSessionCache(session.getId());
+        invalidateSessionCacheAfterCommit(session.getId());
 
         log.info("Ended voice interview session: {}, duration: {} seconds, evaluation triggered",
                 session.getId(), session.getActualDuration());
@@ -408,7 +408,7 @@ public class VoiceInterviewService {
         session.setPausedAt(LocalDateTime.now());
 
         sessionRepository.save(session);
-        invalidateSessionCache(sessionIdLong);
+        invalidateSessionCacheAfterCommit(sessionIdLong);
 
         log.info("Session {} paused, reason: {}", sessionId, reason);
     }
@@ -642,13 +642,68 @@ public class VoiceInterviewService {
                 session.setEvaluateStatus(status);
                 session.setEvaluateError(error);
                 sessionRepository.save(session);
-                invalidateSessionCache(sessionId);
+                invalidateSessionCacheAfterCommit(sessionId);
                 log.debug("Evaluation status updated: sessionId={}, status={}", sessionId, status);
             });
         } catch (Exception e) {
             log.error("Failed to update evaluation status: sessionId={}, status={}, error={}",
                     sessionId, status, e.getMessage(), e);
         }
+    }
+
+    /**
+     * 条件领取语音评估任务；只有本次更新命中时才清理会话缓存。
+     */
+    @Transactional
+    public boolean tryMarkEvaluateProcessing(Long sessionId) {
+        boolean updated = sessionRepository.tryMarkEvaluateProcessing(
+            sessionId, LocalDateTime.now()) == 1;
+        invalidateSessionCacheIfUpdated(sessionId, updated);
+        return updated;
+    }
+
+    /**
+     * 将当前执行中的语音评估标记为完成。
+     */
+    @Transactional
+    public boolean completeEvaluateIfProcessing(Long sessionId) {
+        boolean updated = sessionRepository.completeEvaluateIfProcessing(
+            sessionId, LocalDateTime.now()) == 1;
+        invalidateSessionCacheIfUpdated(sessionId, updated);
+        return updated;
+    }
+
+    /**
+     * 将当前执行中的语音评估标记为失败。
+     */
+    @Transactional
+    public boolean failEvaluateIfProcessing(Long sessionId, String error) {
+        boolean updated = sessionRepository.failEvaluateIfProcessing(
+            sessionId, error, LocalDateTime.now()) == 1;
+        invalidateSessionCacheIfUpdated(sessionId, updated);
+        return updated;
+    }
+
+    /**
+     * 将当前执行中的语音评估重置为待处理，供消息重投前使用。
+     */
+    @Transactional
+    public boolean resetEvaluateToPending(Long sessionId) {
+        boolean updated = sessionRepository.resetEvaluateToPending(
+            sessionId, LocalDateTime.now()) == 1;
+        invalidateSessionCacheIfUpdated(sessionId, updated);
+        return updated;
+    }
+
+    /**
+     * 重投失败时将仍处于待处理状态的语音评估标记为失败。
+     */
+    @Transactional
+    public boolean failEvaluateIfPending(Long sessionId, String error) {
+        boolean updated = sessionRepository.failEvaluateIfPending(
+            sessionId, error, LocalDateTime.now()) == 1;
+        invalidateSessionCacheIfUpdated(sessionId, updated);
+        return updated;
     }
 
     /**
@@ -699,14 +754,40 @@ public class VoiceInterviewService {
         log.debug("Cached session: {}", session.getId());
     }
 
+    private void invalidateSessionCacheIfUpdated(Long sessionId, boolean updated) {
+        if (updated) {
+            invalidateSessionCacheAfterCommit(sessionId);
+        }
+    }
+
     /**
-     * Invalidate session cache in Redis
+     * 数据库提交后再清理缓存，避免并发读把提交前的旧值重新写回缓存。
      */
-    private void invalidateSessionCache(Long sessionId) {
-        String cacheKey = getSessionCacheKey(sessionId);
-        RBucket<OralPracticeSessionEntity> bucket = redissonClient.getBucket(cacheKey);
-        bucket.delete();
-        log.debug("Invalidated cache for session: {}", sessionId);
+    private void invalidateSessionCacheAfterCommit(Long sessionId) {
+        Runnable invalidateTask = () -> invalidateSessionCacheQuietly(sessionId);
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            invalidateTask.run();
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                invalidateTask.run();
+            }
+        });
+    }
+
+    private void invalidateSessionCacheQuietly(Long sessionId) {
+        try {
+            String cacheKey = getSessionCacheKey(sessionId);
+            RBucket<OralPracticeSessionEntity> bucket = redissonClient.getBucket(cacheKey);
+            bucket.delete();
+            log.debug("Invalidated cache for session: {}", sessionId);
+        } catch (Exception e) {
+            log.warn("Failed to invalidate voice session cache after state change: sessionId={}",
+                sessionId, e);
+        }
     }
 
     /**
@@ -762,7 +843,7 @@ public class VoiceInterviewService {
             session.setEvaluateError(null);
             session.setUpdatedAt(LocalDateTime.now());
             sessionRepository.save(session);
-            invalidateSessionCache(session.getId());
+            invalidateSessionCacheAfterCommit(session.getId());
             sendEvaluateTaskAfterCommit(session.getId());
             cleaned++;
         }
@@ -777,7 +858,7 @@ public class VoiceInterviewService {
             session.setEvaluateStatus(AsyncTaskStatus.FAILED);
             session.setEvaluateError("评估超时，请重新触发");
             sessionRepository.save(session);
-            invalidateSessionCache(session.getId());
+            invalidateSessionCacheAfterCommit(session.getId());
             cleaned++;
         }
 

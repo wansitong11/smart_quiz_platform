@@ -1,6 +1,7 @@
 package interview.guide.modules.voiceinterview.service;
 
 import com.alibaba.dashscope.audio.qwen_tts_realtime.QwenTtsRealtimeParam;
+import interview.guide.modules.aicost.service.FreeModelConcurrencyGate;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -8,15 +9,24 @@ import org.junit.jupiter.api.DisplayName;
 
 import java.time.Duration;
 
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("QwenTtsService Unit Tests")
 class QwenTtsServiceTest {
 
     private QwenTtsService ttsService;
+    private FreeModelConcurrencyGate freeModelConcurrencyGate;
 
     @BeforeEach
     void setUp() {
+        freeModelConcurrencyGate = mock(FreeModelConcurrencyGate.class);
+        when(freeModelConcurrencyGate.acquireIfFree(anyString(), anyString(), anyString()))
+                .thenReturn(FreeModelConcurrencyGate.Permit.noop());
+
         VoiceInterviewProperties properties = new VoiceInterviewProperties();
         VoiceInterviewProperties.QwenTtsConfig tts = properties.getQwen().getTts();
         tts.setModel("qwen3-tts-flash-realtime");
@@ -29,7 +39,7 @@ class QwenTtsServiceTest {
         tts.setSpeechRate(1.0f);
         tts.setVolume(60);
 
-        ttsService = new QwenTtsService(properties);
+        ttsService = new QwenTtsService(properties, freeModelConcurrencyGate);
     }
 
     @Test
@@ -91,12 +101,14 @@ class QwenTtsServiceTest {
             tts.setModel("qwen3-tts-flash-realtime");
             tts.setApiKey("test-api-key");
             properties.setTtsConnectTimeoutSeconds(1);
-            ttsService = new QwenTtsService(properties);
+            ttsService = new QwenTtsService(properties, freeModelConcurrencyGate);
 
             assertTimeoutPreemptively(
                 Duration.ofSeconds(2),
                 () -> assertEquals(0, ttsService.synthesize("握手失败测试").length)
             );
+            verify(freeModelConcurrencyGate)
+                    .acquireIfFree("dashscope", "qwen3-tts-flash-realtime", "AUDIO");
         } finally {
             QwenTtsRealtimeParam.baseWebsocketApiUrl = originalUrl;
         }

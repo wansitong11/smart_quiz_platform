@@ -2,6 +2,7 @@ package interview.guide.modules.voiceinterview.service;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import interview.guide.modules.aicost.service.FreeModelConcurrencyGate;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,15 +22,25 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("QwenAsrService Unit Tests")
 class QwenAsrServiceTest {
 
     private QwenAsrService asrService;
+    private FreeModelConcurrencyGate freeModelConcurrencyGate;
 
     @BeforeEach
     void setUp() {
+        freeModelConcurrencyGate = mock(FreeModelConcurrencyGate.class);
+        when(freeModelConcurrencyGate.acquireIfFree(anyString(), anyString(), anyString()))
+                .thenReturn(FreeModelConcurrencyGate.Permit.noop());
+
         VoiceInterviewProperties properties = new VoiceInterviewProperties();
         VoiceInterviewProperties.AsrConfig asr = properties.getQwen().getAsr();
         asr.setUrl("wss://dashscope.aliyuncs.com/api-ws/v1/realtime");
@@ -43,7 +54,7 @@ class QwenAsrServiceTest {
         asr.setTurnDetectionThreshold(0.0f);
         asr.setTurnDetectionSilenceDurationMs(400);
 
-        asrService = new QwenAsrService(properties);
+        asrService = new QwenAsrService(properties, freeModelConcurrencyGate);
     }
 
     @Test
@@ -69,6 +80,8 @@ class QwenAsrServiceTest {
 
         // Verify session was created
         assertTrue(asrService.hasActiveSession(sessionId));
+        verify(freeModelConcurrencyGate)
+                .acquireIfFree("dashscope", "qwen3-asr-flash-realtime", "AUDIO");
 
         // Cleanup
         asrService.stopTranscription(sessionId);
@@ -92,6 +105,24 @@ class QwenAsrServiceTest {
 
         asrService.stopTranscription(sessionId);
 
+        assertFalse(asrService.hasActiveSession(sessionId));
+    }
+
+    @Test
+    @DisplayName("ASR 建连失败时应归还免费音频许可")
+    void shouldReleaseAudioPermitWhenConnectionFails() {
+        asrService.setUrl("ws://127.0.0.1:1");
+        asrService.init();
+
+        FreeModelConcurrencyGate.Permit permit = mock(FreeModelConcurrencyGate.Permit.class);
+        when(freeModelConcurrencyGate.acquireIfFree(
+                "dashscope", "qwen3-asr-flash-realtime", "AUDIO"))
+                .thenReturn(permit);
+
+        String sessionId = "test-session-connect-failure";
+        asrService.startTranscription(sessionId, text -> {}, error -> {});
+
+        verify(permit, timeout(5_000)).close();
         assertFalse(asrService.hasActiveSession(sessionId));
     }
 

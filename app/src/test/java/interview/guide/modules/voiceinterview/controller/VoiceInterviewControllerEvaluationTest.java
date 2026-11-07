@@ -1,5 +1,6 @@
 package interview.guide.modules.voiceinterview.controller;
 
+import interview.guide.common.ai.AiCostControl;
 import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.common.result.Result;
 import interview.guide.modules.voiceinterview.dto.VoiceEvaluationStatusDTO;
@@ -33,6 +34,9 @@ class VoiceInterviewControllerEvaluationTest {
 
     @Mock
     private VoiceEvaluateStreamProducer voiceEvaluateStreamProducer;
+
+    @Mock
+    private AiCostControl aiCostControl;
 
     @InjectMocks
     private VoiceInterviewController controller;

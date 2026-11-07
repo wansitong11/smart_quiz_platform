@@ -6,6 +6,7 @@ import com.alibaba.dashscope.audio.qwen_tts_realtime.QwenTtsRealtimeCallback;
 import com.alibaba.dashscope.audio.qwen_tts_realtime.QwenTtsRealtimeConfig;
 import com.alibaba.dashscope.audio.qwen_tts_realtime.QwenTtsRealtimeParam;
 import com.google.gson.JsonObject;
+import interview.guide.modules.aicost.service.FreeModelConcurrencyGate;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.Response;
@@ -47,6 +48,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public class QwenTtsService {
 
     // Runtime configuration values (loaded from VoiceInterviewProperties; setters kept for tests)
+    private String provider;
+
     private String model;
 
     private String apiKey;
@@ -67,7 +70,12 @@ public class QwenTtsService {
 
     private int connectTimeoutSeconds;
 
-    public QwenTtsService(VoiceInterviewProperties voiceInterviewProperties) {
+    private final FreeModelConcurrencyGate freeModelConcurrencyGate;
+
+    public QwenTtsService(
+            VoiceInterviewProperties voiceInterviewProperties,
+            FreeModelConcurrencyGate freeModelConcurrencyGate) {
+        this.freeModelConcurrencyGate = freeModelConcurrencyGate;
         applyTtsConfig(voiceInterviewProperties);
     }
 
@@ -78,6 +86,7 @@ public class QwenTtsService {
     }
 
     private void applyTtsConfig(VoiceInterviewProperties voiceInterviewProperties) {
+        this.provider = voiceInterviewProperties.getQwen().getProvider();
         VoiceInterviewProperties.QwenTtsConfig tts = voiceInterviewProperties.getQwen().getTts();
         this.model = tts.getModel();
         this.apiKey = tts.getApiKey();
@@ -127,6 +136,13 @@ public class QwenTtsService {
             return new byte[0];
         }
 
+        try (FreeModelConcurrencyGate.Permit ignored =
+                 freeModelConcurrencyGate.acquireIfFree(provider, model, "AUDIO")) {
+            return synthesizeWithPermit(text);
+        }
+    }
+
+    private byte[] synthesizeWithPermit(String text) {
         log.debug("Starting TTS synthesis for text: {} characters", text.length());
 
         // Latch for synchronous waiting

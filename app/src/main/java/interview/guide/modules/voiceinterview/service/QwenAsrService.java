@@ -10,8 +10,11 @@ import com.alibaba.dashscope.exception.NoApiKeyException;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import interview.guide.common.log.ErrorLogSanitizer;
+import interview.guide.modules.aicost.service.FreeModelConcurrencyGate;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.Response;
+import okhttp3.WebSocket;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
@@ -52,6 +55,8 @@ import java.util.function.Consumer;
 public class QwenAsrService {
 
     // Runtime configuration values (loaded from VoiceInterviewProperties; setters kept for tests)
+    private String provider;
+
     private String url;
 
     private String model;
@@ -72,11 +77,18 @@ public class QwenAsrService {
 
     private Integer turnDetectionSilenceDurationMs;
 
-    public QwenAsrService(VoiceInterviewProperties voiceInterviewProperties) {
+    private final FreeModelConcurrencyGate freeModelConcurrencyGate;
+
+    public QwenAsrService(
+            VoiceInterviewProperties voiceInterviewProperties,
+            FreeModelConcurrencyGate freeModelConcurrencyGate) {
+        this.freeModelConcurrencyGate = freeModelConcurrencyGate;
+        this.provider = voiceInterviewProperties.getQwen().getProvider();
         applyAsrConfig(voiceInterviewProperties.getQwen().getAsr());
     }
 
     public void reload(VoiceInterviewProperties voiceInterviewProperties) {
+        this.provider = voiceInterviewProperties.getQwen().getProvider();
         applyAsrConfig(voiceInterviewProperties.getQwen().getAsr());
         log.info("QwenAsrService reloaded: model={}, url={}", model, url);
     }
@@ -224,6 +236,8 @@ public class QwenAsrService {
             throw new IllegalStateException("Session already exists: " + sessionId);
         }
 
+        FreeModelConcurrencyGate.Permit permit =
+                freeModelConcurrencyGate.acquireIfFree(provider, model, "AUDIO");
         try {
             // Build OmniRealtimeParam with connection settings
             OmniRealtimeParam param = OmniRealtimeParam.builder()
@@ -254,6 +268,7 @@ public class QwenAsrService {
                     // 仅移除与本次连接对应的会话，避免重连后旧 onClose 误删新连接（典型「第三轮起无声」根因）
                     sessions.compute(sessionId, (id, existing) -> {
                         if (existing != null && closed != null && existing.getConversation() == closed) {
+                            existing.close();
                             return null;
                         }
                         return existing;
@@ -262,9 +277,32 @@ public class QwenAsrService {
             };
 
             // Create OmniRealtimeConversation instance
-            OmniRealtimeConversation conversation = new OmniRealtimeConversation(param, callback);
+            AtomicReference<Thread> connectionThreadRef = new AtomicReference<>();
+            OmniRealtimeConversation conversation = new OmniRealtimeConversation(param, callback) {
+                @Override
+                public void onFailure(WebSocket webSocket, Throwable throwable, Response response) {
+                    super.onFailure(webSocket, throwable, response);
+                    String status = response == null
+                            ? "no HTTP response"
+                            : "HTTP " + response.code() + " " + response.message();
+                    log.error("[Session: {}] DashScope ASR WebSocket failed - {}",
+                            sessionId, status, throwable);
+                    sessions.compute(sessionId, (id, existing) -> {
+                        if (existing != null && existing.getConversation() == this) {
+                            existing.close();
+                            return null;
+                        }
+                        return existing;
+                    });
+                    Thread connectionThread = connectionThreadRef.get();
+                    if (connectionThread != null) {
+                        connectionThread.interrupt();
+                    }
+                }
+            };
             conversationRef.set(conversation);
-            AsrSession asrSession = new AsrSession(conversation, onFinal, onPartial, onError);
+            AsrSession asrSession =
+                    new AsrSession(conversation, onFinal, onPartial, onError, permit);
 
             // Store session in map BEFORE connecting to ensure hasActiveSession() returns true
             sessions.put(sessionId, asrSession);
@@ -306,6 +344,7 @@ public class QwenAsrService {
                     log.error("[Session: {}] Failed to establish connection", sessionId, e);
                     sessions.compute(sessionId, (id, existing) -> {
                         if (existing != null && existing.getConversation() == conversation) {
+                            existing.close();
                             return null;
                         }
                         return existing;
@@ -314,9 +353,11 @@ public class QwenAsrService {
                 }
             }, "ASR-Connection-" + sessionId);
             connectionThread.setDaemon(true);
+            connectionThreadRef.set(connectionThread);
             connectionThread.start();
 
         } catch (Exception e) {
+            permit.close();
             String errorMsg = "Failed to create transcription session: " + sessionId;
             log.error(errorMsg, e);
             sessions.remove(sessionId);
@@ -388,6 +429,7 @@ public class QwenAsrService {
             }
 
             try {
+                session.close();
                 session.getConversation().endSession();
                 log.info("[Session: {}] Transcription session stopped", sessionId);
             } catch (InterruptedException e) {
@@ -614,17 +656,20 @@ public class QwenAsrService {
         private final Consumer<String> onFinal;
         private final Consumer<String> onPartial;
         private final Consumer<Throwable> onError;
+        private final FreeModelConcurrencyGate.Permit permit;
         private final CountDownLatch readyLatch = new CountDownLatch(1);
 
         AsrSession(
                 OmniRealtimeConversation conversation,
                 Consumer<String> onFinal,
                 Consumer<String> onPartial,
-                Consumer<Throwable> onError) {
+                Consumer<Throwable> onError,
+                FreeModelConcurrencyGate.Permit permit) {
             this.conversation = conversation;
             this.onFinal = onFinal;
             this.onPartial = onPartial;
             this.onError = onError;
+            this.permit = permit;
         }
 
         public OmniRealtimeConversation getConversation() {
@@ -645,6 +690,10 @@ public class QwenAsrService {
 
         boolean awaitReady(long timeoutMs) throws InterruptedException {
             return readyLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
+        }
+
+        void close() {
+            permit.close();
         }
     }
 

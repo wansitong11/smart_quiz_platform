@@ -32,8 +32,8 @@ public class S3Config {
             .region(Region.of(storageConfig.getRegion()))
             .credentialsProvider(StaticCredentialsProvider.create(credentials))
             .overrideConfiguration(clientOverrideConfiguration())
-            // 使用路径风格访问，避免 SDK 使用 bucket.endpoint 导致 DNS 解析失败。
-            .forcePathStyle(true)
+            // RustFS 默认走 path-style；阿里云 OSS 必须配置为 virtual-hosted style。
+            .forcePathStyle(storageConfig.isPathStyle())
             .build();
     }
 

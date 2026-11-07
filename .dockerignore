@@ -10,13 +10,21 @@
 
 # Gradle
 .gradle
-**/build/
 !gradle/wrapper/gradle-wrapper.jar
+# 只排除 Gradle 中间产物，保留生产运行时镜像需要的 app/build/libs/app.jar
+app/build/classes/
+app/build/generated/
+app/build/resources/
+app/build/tmp/
+app/build/reports/
+app/build/test-results/
+app/build/distributions/
+app/build/publications/
 
 # Node.js (Frontend)
 **/node_modules
 **/dist
-**/build
+frontend/build
 **/.pnpm-store
 pnpm-lock.yaml
 package-lock.json

@@ -21,4 +21,5 @@ public class StorageConfigProperties {
     private Duration apiCallTimeout = Duration.ofSeconds(60);
     private Duration apiCallAttemptTimeout = Duration.ofSeconds(20);
     private boolean autoCreateBucket = true;
+    private boolean pathStyle = true;
 }

@@ -551,6 +551,7 @@ app:
     api-call-timeout: ${APP_STORAGE_API_CALL_TIMEOUT:60s}
     api-call-attempt-timeout: ${APP_STORAGE_API_CALL_ATTEMPT_TIMEOUT:20s}
     auto-create-bucket: ${APP_STORAGE_AUTO_CREATE_BUCKET:true}
+    path-style: ${APP_STORAGE_PATH_STYLE:true}
 
   document-parse:
     timeout: ${APP_DOCUMENT_PARSE_TIMEOUT:2m}

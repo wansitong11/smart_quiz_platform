@@ -6,7 +6,7 @@
 #   docker compose -f docker-compose.prod.yml --env-file deploy/env.prod up -d --build
 #
 # 与 docker-compose.dev.yml / docker-compose.yml 的关键差异：
-#   1. 对象存储统一用 RustFS（与 application.yml、.env 默认一致，不是 MinIO）
+#   1. 对象存储支持 RustFS 或阿里云 OSS；默认不启动本地 RustFS，需要时加 --profile rustfs
 #   2. PostgreSQL / Redis / RustFS 只在内部网络互通，不对公网 publish 端口
 #   3. app / frontend 也不对公网暴露，统一由 gateway(nginx) 终止 TLS 后代理
 #   4. 所有服务带 restart 策略，宿主机重启后自动恢复
@@ -96,7 +96,8 @@ services:
     environment:
       RUSTFS_ACCESS_KEY: ${APP_STORAGE_ACCESS_KEY:?APP_STORAGE_ACCESS_KEY 必填}
       RUSTFS_SECRET_KEY: ${APP_STORAGE_SECRET_KEY:?APP_STORAGE_SECRET_KEY 必填}
-      RUSTFS_RPC_SECRET: ${RUSTFS_RPC_SECRET:?RUSTFS_RPC_SECRET 必填}
+      # OSS 模式不会启动 RustFS，但仍需让 Compose 能解析未启用 profile 的服务
+      RUSTFS_RPC_SECRET: ${RUSTFS_RPC_SECRET:-unused-in-oss-mode}
       # 生产默认关闭 9001 控制台；需要临时查看时改成 "true" 并临时映射端口
       RUSTFS_CONSOLE_ENABLE: ${RUSTFS_CONSOLE_ENABLE:-false}
       TZ: ${TZ:-Asia/Shanghai}
@@ -136,25 +137,27 @@ services:
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8}
 
       # === 数据库 ===
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
       POSTGRES_PORT: "5432"
       POSTGRES_DB: ${POSTGRES_DB:-smart-quiz}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填}
 
       # === Redis ===
-      REDIS_HOST: redis
+      REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: "6379"
       REDIS_DATABASE: ${REDIS_DATABASE:-0}
 
       # === 对象存储（容器内地址，不是浏览器地址）===
-      APP_STORAGE_ENDPOINT: http://rustfs:9000
+      APP_STORAGE_ENDPOINT: ${APP_STORAGE_ENDPOINT:-http://rustfs:9000}
       APP_STORAGE_ACCESS_KEY: ${APP_STORAGE_ACCESS_KEY:?APP_STORAGE_ACCESS_KEY 必填}
       APP_STORAGE_SECRET_KEY: ${APP_STORAGE_SECRET_KEY:?APP_STORAGE_SECRET_KEY 必填}
       APP_STORAGE_BUCKET: ${APP_STORAGE_BUCKET:-smart-quiz}
       APP_STORAGE_REGION: ${APP_STORAGE_REGION:-us-east-1}
-      # 应用启动时自动创建 bucket（生产建议保留，省掉手工初始化）
-      APP_STORAGE_AUTO_CREATE_BUCKET: "true"
+      # OSS 模式建议 false（Bucket 预先在控制台创建）；RustFS 模式可保留 true
+      APP_STORAGE_AUTO_CREATE_BUCKET: ${APP_STORAGE_AUTO_CREATE_BUCKET:-true}
+      # RustFS 用 path-style；阿里云 OSS 必须用 virtual-hosted style
+      APP_STORAGE_PATH_STYLE: ${APP_STORAGE_PATH_STYLE:-true}
 
       # === AI ===
       AI_BAILIAN_API_KEY: ${AI_BAILIAN_API_KEY:?AI_BAILIAN_API_KEY 必填}
@@ -191,7 +194,7 @@ services:
       - app_tmp:/tmp/smart-quiz-platform
     healthcheck:
       # 基础镜像未带 curl，用 bash 探活端口；需要严格探活可给 Dockerfile 装 curl 后改探 /actuator/health
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8085' || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -200,7 +203,7 @@ services:
     networks: [internal]
 
   # ---------------------------------------------------------------------------
-  # 前端静态资源 + 内部反代（/api、/ws → app:8080）
+  # 前端静态资源 + 内部反代（/api、/ws → app:8085）
   # 只在容器网络内暴露 80，由 gateway 转发
   # ---------------------------------------------------------------------------
   frontend:

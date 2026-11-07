@@ -4,5 +4,5 @@ FROM eclipse-temurin:25-jre
 WORKDIR /app
 # 本地构建产物：app/build/libs/*.jar（传上去时重命名为 app.jar）
 COPY app/build/libs/app.jar app.jar
-EXPOSE 8080
+EXPOSE 8085
 ENTRYPOINT ["java", "-jar", "app.jar"]

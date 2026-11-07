@@ -48,7 +48,7 @@ server {
     add_header Referrer-Policy strict-origin-when-cross-origin always;
 
     # 与 application.yml 的 multipart 上限（50MB）对齐并留余量
-    client_max_body_size 60m;
+    client_max_body_size 210m;
     client_body_timeout 300s;
 
     # 后端管理端点不对公网开放（防探测；frontend 的 nginx 本来也没转发它们）

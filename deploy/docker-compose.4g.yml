@@ -1,0 +1,69 @@
+# ==============================================================================
+# 4G 内存服务器覆盖文件
+#
+# 与 2G 的 docker-compose.server.yml 区别：
+#   - app/frontend 都使用「只复制产物」的运行时镜像，不在服务器编译
+#   - app 给 1.75G，JVM 堆 1.1G，适合当前并发与试卷识别
+#   - postgres / redis 保留回环端口，便于 SSH 隧道迁移和排障
+#
+# 用法：
+#   docker compose -f docker-compose.prod.yml -f deploy/docker-compose.4g.yml \
+#     --env-file deploy/env.prod up -d
+# ==============================================================================
+services:
+  app:
+    build:
+      context: .
+      dockerfile: deploy/server/Dockerfile.app
+    # 4G 生产走 OSS，只保留真正需要的数据库/队列就绪依赖
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 1792m
+    environment:
+      JAVA_TOOL_OPTIONS: >-
+        -Xmx1100m -XX:MaxMetaspaceSize=256m -XX:+UseG1GC -XX:ActiveProcessorCount=2
+        -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError
+        -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8
+      SPRING_DATASOURCE_HIKARI_KEEPALIVE_TIME: "120000"
+      SPRING_DATASOURCE_HIKARI_MAX_LIFETIME: "900000"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "2"
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "10000"
+      SPRING_DATASOURCE_HIKARI_VALIDATION_TIMEOUT: "3000"
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    mem_limit: 64m
+  postgres:
+    mem_limit: 768m
+    ports:
+      - "127.0.0.1:5432:5432"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=50
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - max_wal_size=1GB
+      - -c
+      - min_wal_size=128MB
+  redis:
+    mem_limit: 384m
+    ports:
+      - "127.0.0.1:6379:6379"
+  rustfs:
+    profiles: ["rustfs"]
+  gateway:
+    mem_limit: 64m
+  certbot:
+    mem_limit: 32m

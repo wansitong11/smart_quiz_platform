@@ -17,6 +17,11 @@ build
 .env.prod
 deploy/env.prod
 deploy/certbot/
+
+# 部署私钥与云厂商凭据（只保留在本机，绝不入库）
+docs/项目部署/*.pem
+docs/项目部署/*AccessKey*.csv
+
 backup/
 test-output.txt
 backend.log

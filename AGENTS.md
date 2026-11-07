@@ -1,4 +1,4 @@
-# Smart Quiz Platform Agent Rules
+ Smart Quiz Platform Agent Rules
 
 Spring Boot 4.1.0 + Java 25 + Spring AI 2.0.1 + React 智能刷题平台。
 
@@ -96,8 +96,79 @@ docker compose -f docker-compose.dev.yml up -d
 - 改后端公共能力时至少运行 `./gradlew :app:test --no-daemon`。
 - 改前端时至少运行 `cd frontend && pnpm run build`。
 
-## Never Do
+## 标准测试流程（开发完成后强制）
 
+按本次改动影响面分级，交付前必须清账，不允许带着一堆失败收尾：
+
+- T1 局部（单文件 / 常量 / 文案 / 配置 / 纯样式）：后端 `./gradlew :app:compileJava`、前端 `pnpm build`；受影响类定向测试。
+- T2 模块内（改 / 增 Service、Controller、DTO、Repository 方法）：受影响类定向测试 + 同模块关联测试；接口有变再跑前端 `pnpm build`。
+- T3 公共 / 跨模块 / 数据 / 并发 / 事务（common、infrastructure、DDL、Redis Stream、AI 调用）：全量 `./gradlew :app:test --no-daemon` + 前端 build（如涉及）。
+
+交付收尾标准：编译通过、对应级别测试全绿；失败必须修复或登记 `docs/待优化事项.md` 并注明原因；
+不新增失败 / 跳过；全量回归跑完必须给出失败清单与处置，跑完不看结果等于没测。
+详细流程见 `.claude/rules/testing.md`。
+
+## Development Workflow（Codex / DeepSeek）
+
+本仓库开发时，必须遵守下面流程，禁止「能跑就行」和补丁式堆砌。
+
+### 动手前
+- 新功能或大改：先对齐需求边界（可用 `$grill-me` / `$grill-with-docs`），写清目标、非目标、失败模式、影响模块。
+- 复杂改动：先 `$to-spec` 出接口/分层草图，确认后再 `$implement`；不要边猜边写。
+- 每次会话只做一个意图；开新 chat，不要在长线程里叠十次「再改一下」。
+- 动手前扫一眼 `docs/待优化事项.md` 和相关 `.claude/rules/`。
+
+### 设计与分层（强制）
+- 严格沿用现有模式：`Controller → Service → Repository`；新能力优先扩展现有 Service / 抽象，禁止平行再造一套。
+- 跨模块复用放 `common/` 或 `infrastructure/`；业务差异用策略/模板方法扩展（如已有的 Stream Producer/Consumer、`LlmProviderRegistry`、`StructuredOutputInvoker`），不要 if-else 散落。
+- 改代码前先说明：影响哪些模块、是否动公共抽象、对事务/异步/AI 调用边界有无副作用。
+- 不确定现有约定时先读同目录邻近代码，再提问；禁止凭空引入新框架或新分层命名。
+
+### Bug 修复纪律（强制）
+
+按影响面分级，不搞一刀切：
+
+- L1 局部（单文件/空值/边界/文案/配置）：最小复现 + 一个目标单测 + 定向测试。
+- L2 逻辑（跨方法/分支/状态）：失败测试 + 最小修复 + 扫 1 条最相关同类路径。
+- L3 核心（公共抽象/事务/异步/并发/数据一致性）：失败测试 + 修复 + 同类路径 + 全量回归。
+
+执行要点：
+- 先复现再改；测试基建成本明显高于修复成本时，允许最小复现脚本或手动验证，并说明原因。
+- 默认只跑受影响测试：`./gradlew :app:test --tests "完整类名" --no-daemon`；仅 L3 或改公共能力才跑全量。
+- Gradle 输出只看尾部：`... 2>&1 | Select-Object -Last 60`；不要整份日志进上下文，失败先看第一个 cause。
+- 同类路径只强制扫 1 条最相关的；其余记入 `docs/待优化事项.md`，不展开。
+- 同一 bug 连续 2 次修复失败，停下来汇报根因假设与下一步，不再盲试。
+- 临时 workaround 不得进主分支；必须暂存时标 `TODO` + 拆除条件。
+- `$diagnosing-bugs` / `$tdd` / `$bugfix` 只用于 L2/L3 或疑难 bug，L1 直接按本节走。
+
+Bug 解释（强制）
+
+主说明按「开发对产品经理」的方式讲清「发生了什么 → 为什么错 → 改成什么」，默认大白话；
+不加专业术语会影响理解时，可适当使用（代码标识符可少量点名当路标）。
+实现细节（根因定位 / 修复方式 / 影响面 / 验证）单独给、按需给，不混在主说明里。
+完整 diff、失败日志、全量回归结果落盘文档，只给摘要 + 路径。
+
+### 会话提示习惯
+- 用户/开发者应用明确范围开场，例如：「只做 X；不动 Y；沿用现有 Z 模式」。
+- Agent 回复必须先给方案影响面，再改代码；禁止 silent drive-by 大范围重写。
+
+
+## 设计说明交付（强制）
+
+所有「设计 / 方案 / 新能力说明」按 `.claude/rules/design-delivery.md` 交付：
+
+- 正文按「一个开发向另一个开发讲逻辑」的方式写：目的 / 触发 / 规则与步骤 / 结果 / 边界与异常 / 可改点；关键步骤顺带讲清大致怎么实现。
+- 正文不要通篇堆项目内部英文类名、方法名、字段名和错误码；必要处可加项目内代码标识符作辅助，点一下并说明它在流程里做什么；完整命名/签名/分支放附录。
+- 判断标准：熟悉业务但没看过这段代码的开发，读完正文能复述逻辑、说出大致怎么实现；要记住一堆英文名才能看懂，就是写偏了。
+- AI 可照做的实现表述（入口签名 / 数据 / 步骤映射 / 状态分支 / 可改点映射）单独放「附录」，必须自足到零猜测：只读附录就能完整实现、不用补决策。
+- 附录不能只贴代码：每个模块/方法先用几句话讲职责、输入输出、执行顺序、关键状态和失败路径；代码对不易一眼看出的分支、并发、条件更新和异常路径加简短注释，不逐行解释样板代码。
+
+验收标准：正文让没看过代码的人能看懂逻辑、知道怎么改，关键逻辑的实现方式已融进描述、开发不用先翻附录；附录让模型只读附录即可完整实现、零猜测。附录不全就不进实现。
+对话内只给正文骨架 + 摘要，完整版（正文 + 附录）落盘 `docs/design/`。
+交付分 2–3 轮，每轮用户确认；实现前用一句话复述意图，用户点头才动手。
+
+
+## Never Do
 - 不要 `throw new RuntimeException(...)`，业务失败必须用 `BusinessException`。
 - 不要直接返回 Entity 给前端。
 - 不要把 `@Value` 散落在 Service 中。
@@ -107,9 +178,14 @@ docker compose -f docker-compose.dev.yml up -d
 - 不要循环调用 DB，优先批量查询或批量写入。
 - 不要硬编码密钥、Token、数据库密码。
 - 不要使用 `Executors.newXxxThreadPool()`，需要线程池时显式配置 `ThreadPoolExecutor`。
-
+- 不要在没有复现的情况下直接改实现来「碰运气」修 bug。
+- 不要为同一问题连续打补丁而不回溯根因与同类路径。
+- 不要引入与现有 Controller/Service/Repository 平行的第二套分层或命名。
 ## More Rules
 
 - 后端 Java 细则：`.claude/rules/backend.md`
 - AI、限流、异步细则：`.claude/rules/ai-and-async.md`
 - 前端细则：`.claude/rules/frontend.md`
+- 设计说明交付规范：`.claude/rules/design-delivery.md`
+- Bug 修复说明规范：`.claude/rules/bugfix.md`
+- 标准测试流程：`.claude/rules/testing.md`

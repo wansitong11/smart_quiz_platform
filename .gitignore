@@ -1,6 +1,9 @@
 # Ignore Gradle project-specific cache directory
 .gradle
 
+# Local JDK copy for sandboxed Gradle runs
+.jdk25/
+
 # Ignore Gradle build output directory
 build
 /.claude/*
@@ -18,6 +21,8 @@ backup/
 test-output.txt
 backend.log
 verify-*.log
+app/logs/
+.codex-tmp/
 # IDEA code analysis
 qodana.yaml
 

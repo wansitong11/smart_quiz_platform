@@ -80,4 +80,13 @@ public class RagMetrics {
       registry.counter(REFUSALS, "reason", reason).increment();
     }
   }
+
+  public void recordContext(int direct, int neighbors, int skipped, int errors) {
+    if (enabled) {
+      registry.counter("app.rag.context.direct").increment(direct);
+      registry.counter("app.rag.context.neighbor").increment(neighbors);
+      registry.counter("app.rag.context.budget.skipped").increment(skipped);
+      registry.counter("app.rag.context.neighbor.error").increment(errors);
+    }
+  }
 }

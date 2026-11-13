@@ -6,6 +6,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 向量存储Repository
@@ -17,6 +23,42 @@ import org.springframework.stereotype.Repository;
 public class VectorRepository {
     
     private final JdbcTemplate jdbcTemplate;
+
+    public record NeighborKey(long kbId, String parentDocumentId, int chunkIndex) { }
+    public record NeighborChunk(String id, String content, Map<String, Object> metadata) { }
+
+    public List<NeighborChunk> findNeighbors(List<NeighborKey> keys) {
+        if (keys == null || keys.isEmpty()) {
+            return List.of();
+        }
+        String values = keys.stream().map(key -> "(CAST(? AS text), CAST(? AS text), CAST(? AS text))")
+            .collect(Collectors.joining(","));
+        String sql = "SELECT v.id, v.content, v.metadata FROM vector_store v JOIN (VALUES "
+            + values + ") AS k(kb_id, parent_id, chunk_index) ON v.metadata->>'kb_id' = k.kb_id"
+            + " AND v.metadata->>'parent_document_id' = k.parent_id"
+            + " AND v.metadata->>'chunk_index' = k.chunk_index"
+            + " WHERE v.metadata->>'chunk_strategy' = 'section-neighbor-v2'";
+        List<Object> arguments = new ArrayList<>();
+        for (NeighborKey key : keys) {
+            arguments.add(Long.toString(key.kbId()));
+            arguments.add(key.parentDocumentId());
+            arguments.add(Integer.toString(key.chunkIndex()));
+        }
+        ObjectMapper mapper = new ObjectMapper();
+        return jdbcTemplate.query(sql, result -> {
+            List<NeighborChunk> chunks = new ArrayList<>();
+            while (result.next()) {
+                try {
+                    Map<String, Object> metadata = mapper.readValue(result.getString("metadata"),
+                        new TypeReference<Map<String, Object>>() { });
+                    chunks.add(new NeighborChunk(result.getString("id"), result.getString("content"), metadata));
+                } catch (tools.jackson.core.JacksonException e) {
+                    log.warn("邻居元数据解析失败: id={}", result.getString("id"), e);
+                }
+            }
+            return chunks;
+        }, arguments.toArray());
+    }
     
     /**
      * 删除指定知识库的所有向量数据

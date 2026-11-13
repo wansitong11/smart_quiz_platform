@@ -1,23 +1,55 @@
 package interview.guide.modules.knowledgebase.service;
 
 import lombok.Data;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
 
 @Data
 @Component
+@Validated
 @ConfigurationProperties(prefix = "app.ai.rag")
 public class KnowledgeBaseQueryProperties {
+
+    private boolean sectionNeighborEnabled = false;
+    @Valid
+    private Context context = new Context();
+
+    @Data
+    public static class Context {
+        @Min(1024)
+        private int maxTokens = 6000;
+        @Min(0)
+        @Max(2)
+        private int neighborBefore = 1;
+        @Min(0)
+        @Max(2)
+        private int neighborAfter = 1;
+        /** 开发诊断：记录本次上下文的命中、邻居及最终拼接文本。默认关闭。 */
+        private boolean diagnosticsEnabled = false;
+    }
 
     /**
      * RAG 业务指标开关（app.rag.* Micrometer 指标），默认开启。
      */
     private boolean metricsEnabled = true;
     private Rewrite rewrite = new Rewrite();
+    @Valid
     private Search search = new Search();
     private History history = new History();
     private Tools tools = new Tools();
     private Trace trace = new Trace();
+    @Valid
+    @NotNull
+    private Review review = new Review();
     private String systemPromptPath = "classpath:prompts/knowledgebase-query-system.st";
     private String userPromptPath = "classpath:prompts/knowledgebase-query-user.st";
     private String rewritePromptPath = "classpath:prompts/knowledgebase-query-rewrite.st";
@@ -28,7 +60,32 @@ public class KnowledgeBaseQueryProperties {
     }
 
     @Data
+    public static class Review {
+      private boolean enabled = false;
+      private String provider = "";
+      @NotNull
+      private Duration timeout = Duration.ofSeconds(15);
+      @Min(2048) @Max(16384)
+      private int maxInputTokens = 8192;
+      @Min(128) @Max(512)
+      private int maxOutputTokens = 256;
+      @Min(1) @Max(20)
+      private int maxUnits = 20;
+      @Min(1) @Max(4)
+      private int maxBatchesPerRequest = 2;
+
+      @AssertTrue(message = "复核超时必须在 1–60 秒之间")
+      public boolean isTimeoutValid() {
+        return timeout != null && timeout.compareTo(Duration.ofSeconds(1)) >= 0
+            && timeout.compareTo(Duration.ofSeconds(60)) <= 0;
+      }
+    }
+
+    @Data
     public static class Search {
+        @Valid
+        @NotNull
+        private Relevance relevance = new Relevance();
         /**
          * 双路召回融合：开启后改写 Query 与原始 Query 各自检索一次并按 Document 去重融合。
          * 测评证明整体收益成立前默认关闭。
@@ -48,7 +105,7 @@ public class KnowledgeBaseQueryProperties {
         private int candidateMultiplier = 3;
 
         /**
-         * 每份资料的保底片段数：范围内有多份资料时，保证每份至少有一条进入上下文；
+         * 每份资料的保底片段数：仅从传入的合格候选分配，总名额不足时不保证每份出场；
          * 只有一份资料时该值不生效（仍取 topK 条）。
          */
         private int perKbQuota = 2;
@@ -57,6 +114,22 @@ public class KnowledgeBaseQueryProperties {
          * 是否在回答末尾附「出处」（资料名 + 片段序号）
          */
         private boolean citeSources = true;
+    }
+
+    @Data
+    public static class Relevance {
+      private boolean enabled = false;
+      @DecimalMin("0.0")
+      @DecimalMax("1.0")
+      private double minScore = 0.40;
+      @DecimalMin("0.0")
+      @DecimalMax("1.0")
+      private double maxScoreDrop = 0.20;
+
+      @AssertTrue(message = "相关性阈值必须是有限数")
+      public boolean isFiniteScores() {
+        return Double.isFinite(minScore) && Double.isFinite(maxScoreDrop);
+      }
     }
 
     @Data

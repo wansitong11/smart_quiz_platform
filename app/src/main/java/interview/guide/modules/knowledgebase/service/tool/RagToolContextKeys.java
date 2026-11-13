@@ -17,6 +17,7 @@ public final class RagToolContextKeys {
 
     /** 轨迹收集器：{@code RagQueryTraceCollector} */
     public static final String COLLECTOR = "collector";
+    public static final String EVIDENCE_SESSION = "ragEvidenceSession";
 
     private RagToolContextKeys() {
     }

@@ -4,6 +4,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import org.springframework.ai.document.Document;
 
 /**
  * 一次问答的轨迹收集器：工具在调用过程中往里写，业务在结束时落库。
@@ -22,6 +25,27 @@ public class RagQueryTraceCollector {
 
     private final List<ToolCall> toolCalls = new ArrayList<>();
     private final Set<Long> retrievedKbIds = new LinkedHashSet<>();
+    private final Map<Long, Set<String>> directHits = new LinkedHashMap<>();
+
+    public synchronized void addDirectHits(List<Document> documents) {
+        for (Document document : documents) {
+            try {
+                long id = Long.parseLong(String.valueOf(document.getMetadata().get("kb_id")));
+                if (id > 0) {
+                    retrievedKbIds.add(id);
+                    directHits.computeIfAbsent(id, key -> new LinkedHashSet<>()).add(document.getId());
+                }
+            } catch (NumberFormatException exception) {
+                continue;
+            }
+        }
+    }
+
+    public synchronized Map<Long, Integer> directHitCounts() {
+        Map<Long, Integer> counts = new LinkedHashMap<>();
+        directHits.forEach((id, hits) -> counts.put(id, hits.size()));
+        return java.util.Collections.unmodifiableMap(counts);
+    }
 
     private String rewrittenQuery;
     private String intent;
@@ -43,32 +67,32 @@ public class RagQueryTraceCollector {
     public record ToolCall(String name, int hits, Double topScore, long latencyMs, boolean error) {
     }
 
-    public void addToolCall(ToolCall call) {
+    public synchronized void addToolCall(ToolCall call) {
         toolCalls.add(call);
         if (call.error()) {
             toolError = true;
         }
     }
 
-    public void addRetrievedKbIds(List<Long> kbIds) {
+    public synchronized void addRetrievedKbIds(List<Long> kbIds) {
         if (kbIds != null) {
             retrievedKbIds.addAll(kbIds);
         }
     }
 
-    public void markIntent(String intent) {
+    public synchronized void markIntent(String intent) {
         this.intent = intent;
     }
 
-    public void markOutcome(String outcome) {
+    public synchronized void markOutcome(String outcome) {
         this.outcome = outcome;
     }
 
-    public void markRewrittenQuery(String rewrittenQuery) {
+    public synchronized void markRewrittenQuery(String rewrittenQuery) {
         this.rewrittenQuery = rewrittenQuery;
     }
 
-    public void updateTopScore(Double score) {
+    public synchronized void updateTopScore(Double score) {
         if (score == null) {
             return;
         }
@@ -97,31 +121,31 @@ public class RagQueryTraceCollector {
         return llmProvider;
     }
 
-    public String rewrittenQuery() {
+    public synchronized String rewrittenQuery() {
         return rewrittenQuery;
     }
 
-    public String intent() {
+    public synchronized String intent() {
         return intent;
     }
 
-    public String outcome() {
+    public synchronized String outcome() {
         return outcome;
     }
 
-    public boolean toolError() {
+    public synchronized boolean toolError() {
         return toolError;
     }
 
-    public Double topScore() {
+    public synchronized Double topScore() {
         return topScore;
     }
 
-    public List<ToolCall> toolCalls() {
+    public synchronized List<ToolCall> toolCalls() {
         return List.copyOf(toolCalls);
     }
 
-    public List<Long> retrievedKbIds() {
+    public synchronized List<Long> retrievedKbIds() {
         return List.copyOf(retrievedKbIds);
     }
 }

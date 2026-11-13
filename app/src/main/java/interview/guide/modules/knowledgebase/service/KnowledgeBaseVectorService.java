@@ -19,6 +19,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 /**
@@ -44,6 +46,9 @@ public class KnowledgeBaseVectorService {
     private final TransactionalExecutor transactionalExecutor;
     private final KnowledgeBaseVectorProperties vectorProperties;
     private final KnowledgeBasePersistenceService persistenceService;
+    private final KnowledgeBaseQueryProperties queryProperties;
+    private final MarkdownSectionParser sectionParser;
+    private final SectionChunker sectionChunker;
 
     @Autowired
     public KnowledgeBaseVectorService(
@@ -51,19 +56,37 @@ public class KnowledgeBaseVectorService {
         VectorRepository vectorRepository,
         TransactionalExecutor transactionalExecutor,
         KnowledgeBaseVectorProperties vectorProperties,
-        KnowledgeBasePersistenceService persistenceService
+        KnowledgeBasePersistenceService persistenceService,
+        KnowledgeBaseQueryProperties queryProperties,
+        MarkdownSectionParser sectionParser,
+        SectionChunker sectionChunker
     ) {
         this.vectorStore = vectorStore;
         this.vectorRepository = vectorRepository;
         this.transactionalExecutor = transactionalExecutor;
         this.vectorProperties = vectorProperties;
         this.persistenceService = persistenceService;
+        this.queryProperties = queryProperties;
+        this.sectionParser = sectionParser;
+        this.sectionChunker = sectionChunker;
         // Chunk 策略由 app.ai.rag.vectorization 配置驱动（仅 Spring AI 原生参数，无 overlap）
         this.textSplitter = vectorProperties.createTextSplitter();
     }
 
     KnowledgeBaseVectorService(VectorStore vectorStore, VectorRepository vectorRepository) {
-        this(vectorStore, vectorRepository, null, new KnowledgeBaseVectorProperties(), null);
+        this(vectorStore, vectorRepository, null, new KnowledgeBaseVectorProperties(), null,
+            new KnowledgeBaseQueryProperties(), new MarkdownSectionParser(), new SectionChunker());
+    }
+
+    public KnowledgeBaseVectorService(
+        VectorStore vectorStore,
+        VectorRepository vectorRepository,
+        TransactionalExecutor transactionalExecutor,
+        KnowledgeBaseVectorProperties vectorProperties,
+        KnowledgeBasePersistenceService persistenceService
+    ) {
+        this(vectorStore, vectorRepository, transactionalExecutor, vectorProperties, persistenceService,
+            new KnowledgeBaseQueryProperties(), new MarkdownSectionParser(), new SectionChunker());
     }
 
     /**
@@ -87,6 +110,11 @@ public class KnowledgeBaseVectorService {
      */
     public void vectorizeAndStore(Long knowledgeBaseId, String content, String attemptId,
                                   Runnable progressHeartbeat) {
+        vectorizeAndStore(knowledgeBaseId, content, null, null, attemptId, progressHeartbeat);
+    }
+
+    public void vectorizeAndStore(Long knowledgeBaseId, String content, String documentTitle,
+                                  String originalFilename, String attemptId, Runnable progressHeartbeat) {
         String jobId = null;
         try {
             if (knowledgeBaseId == null) {
@@ -97,14 +125,15 @@ public class KnowledgeBaseVectorService {
                 knowledgeBaseId, jobId, content.length());
 
             // 1. 将文本分块
-            List<Document> chunks = textSplitter.apply(
-                List.of(new Document(content))
-            );
+            boolean sectionEnabled = queryProperties.isSectionNeighborEnabled();
+            List<Document> chunks = sectionEnabled
+                ? sectionChunks(content, documentTitle, originalFilename)
+                : textSplitter.apply(List.of(new Document(content)));
             
             log.info("文本分块完成: {} 个chunks", chunks.size());
             
             // 2. 为每个 chunk 添加临时 metadata，成功后再提升为正式 kb_id。
-            applyPendingMetadata(chunks, knowledgeBaseId, jobId);
+            applyPendingMetadata(chunks, knowledgeBaseId, jobId, sectionEnabled);
 
             // 分块完成心跳
             progressHeartbeat.run();
@@ -123,7 +152,7 @@ public class KnowledgeBaseVectorService {
                 // Embedding 批次心跳（调用方节流）
                 progressHeartbeat.run();
             }
-            String configJson = vectorConfigJson();
+            String configJson = vectorConfigJson(sectionEnabled);
             if (attemptId != null && persistenceService != null) {
                 persistenceService.activateVectorJobAndUpdateSnapshot(
                     knowledgeBaseId, attemptId, jobId, totalChunks, configJson);
@@ -134,6 +163,9 @@ public class KnowledgeBaseVectorService {
             }
             log.info("知识库向量化完成: kbId={}, jobId={}, chunks={}, batches={}",
                     knowledgeBaseId, jobId, totalChunks, batchCount);
+        } catch (BusinessException e) {
+            cleanupPendingVectorJob(knowledgeBaseId, jobId);
+            throw e;
         } catch (Exception e) {
             cleanupPendingVectorJob(knowledgeBaseId, jobId);
             log.error("向量化知识库失败: kbId={}, jobId={}, error={}",
@@ -144,15 +176,56 @@ public class KnowledgeBaseVectorService {
         }
     }
 
-    private void applyPendingMetadata(List<Document> chunks, Long knowledgeBaseId, String jobId) {
+    private void applyPendingMetadata(List<Document> chunks, Long knowledgeBaseId, String jobId,
+                                      boolean sectionEnabled) {
         String pendingKbId = TEMP_KB_ID_PREFIX + knowledgeBaseId + ":" + jobId;
         chunks.forEach(chunk -> {
             chunk.getMetadata().put(METADATA_KB_ID, pendingKbId);
             chunk.getMetadata().put(METADATA_TARGET_KB_ID, knowledgeBaseId.toString());
             chunk.getMetadata().put(METADATA_VECTOR_JOB_ID, jobId);
             // 在 add 前写入策略标识：promote 只改 kb_id，不会回填
-            chunk.getMetadata().put(METADATA_CHUNK_STRATEGY, vectorProperties.getStrategyVersion());
+            chunk.getMetadata().put(METADATA_CHUNK_STRATEGY,
+                sectionEnabled ? "section-neighbor-v2" : vectorProperties.getStrategyVersion());
         });
+    }
+
+    private List<Document> sectionChunks(String content, String title, String filename) {
+        String name = title != null && !title.isBlank() ? title.strip()
+            : filename != null && !filename.isBlank() ? filename.strip() : "知识库";
+        name = clipCodePoints(name, 80, false);
+        boolean markdown = filename != null && filename.toLowerCase(Locale.ROOT).endsWith(".md");
+        String parentId = UUID.randomUUID().toString();
+        List<Document> chunks = new ArrayList<>();
+        for (MarkdownSectionParser.Section section : sectionParser.parse(content, markdown)) {
+            String path = clipCodePoints(String.join(" > ", section.path()), 160, true);
+            for (String text : sectionChunker.split(section.body(), vectorProperties.getChunkSize(),
+                vectorProperties.getMaxNumChunks())) {
+                Map<String, Object> metadata = new LinkedHashMap<>();
+                metadata.put("parent_document_id", parentId);
+                metadata.put("chunk_index", chunks.size());
+                metadata.put("document_title", name);
+                metadata.put("section_path", path);
+                chunks.add(new Document(text, metadata));
+                if (chunks.size() > vectorProperties.getMaxNumChunks()) {
+                    throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_VECTORIZATION_FAILED,
+                        "资料分块数量超过上限，请拆分资料后重试");
+                }
+            }
+        }
+        if (chunks.isEmpty()) {
+            throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_VECTORIZATION_FAILED, "资料正文为空");
+        }
+        chunks.forEach(chunk -> chunk.getMetadata().put("total_chunks", chunks.size()));
+        return chunks;
+    }
+
+    private String clipCodePoints(String value, int limit, boolean tail) {
+        int count = value.codePointCount(0, value.length());
+        if (count <= limit) {
+            return value;
+        }
+        return tail ? value.substring(value.offsetByCodePoints(0, count - limit))
+            : value.substring(0, value.offsetByCodePoints(0, limit));
     }
     
     /**
@@ -306,16 +379,17 @@ public class KnowledgeBaseVectorService {
         transactionalExecutor.run(update);
     }
 
-    private String vectorConfigJson() {
+    private String vectorConfigJson(boolean sectionEnabled) {
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("splitter", vectorProperties.getSplitter());
+        config.put("splitter", sectionEnabled ? "section-codepoint-token" : vectorProperties.getSplitter());
         config.put("chunkSize", vectorProperties.getChunkSize());
         config.put("minChunkSizeChars", vectorProperties.getMinChunkSizeChars());
         config.put("minChunkLengthToEmbed", vectorProperties.getMinChunkLengthToEmbed());
         config.put("maxNumChunks", vectorProperties.getMaxNumChunks());
         config.put("keepSeparator", vectorProperties.isKeepSeparator());
         config.put("punctuationMarks", vectorProperties.getPunctuationMarks());
-        config.put("strategyVersion", vectorProperties.getStrategyVersion());
+        config.put("strategyVersion", sectionEnabled ? "section-neighbor-v2" : vectorProperties.getStrategyVersion());
+        config.put("sectionNeighborEnabled", sectionEnabled);
         try {
             return new tools.jackson.databind.ObjectMapper().writeValueAsString(config);
         } catch (tools.jackson.core.JacksonException e) {

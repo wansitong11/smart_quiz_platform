@@ -1,6 +1,11 @@
 package interview.guide.modules.knowledgebase.service;
 
 import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.modules.auth.security.OwnerScope;
+import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
+import interview.guide.modules.knowledgebase.model.VectorStatus;
+import interview.guide.modules.knowledgebase.model.RagQueryTraceEntity;
+import interview.guide.modules.knowledgebase.service.scope.ResolvedScope;
 import interview.guide.modules.knowledgebase.metrics.RagMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import ch.qos.logback.classic.Level;
@@ -26,6 +31,7 @@ import reactor.core.publisher.Flux;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyDouble;
@@ -58,6 +64,14 @@ class KnowledgeBaseQueryServiceTest {
   private ResourceLoader resourceLoader;
   @Mock(answer = Answers.RETURNS_DEEP_STUBS)
   private ChatClient plainChatClient;
+  @Mock
+  private OwnerScope ownerScope;
+  @Mock
+  private KnowledgeBaseRepository knowledgeBaseRepository;
+  @Mock
+  private RagContextAssembler contextAssembler;
+  @Mock
+  private RagQueryTraceService traceService;
 
   private KnowledgeBaseQueryService service;
 
@@ -65,11 +79,14 @@ class KnowledgeBaseQueryServiceTest {
   void setUp() throws Exception {
     when(resourceLoader.getResource(anyString()))
         .thenAnswer(invocation -> new ByteArrayResource("模板".getBytes(StandardCharsets.UTF_8)));
+    org.mockito.Mockito.lenient().when(knowledgeBaseRepository.findAccessibleIdsByVectorStatus(
+        org.mockito.ArgumentMatchers.any(), eq(VectorStatus.COMPLETED))).thenReturn(List.of(1L));
   }
 
   private KnowledgeBaseQueryService buildService(boolean rewriteEnabled) throws Exception {
     KnowledgeBaseQueryProperties properties = new KnowledgeBaseQueryProperties();
     properties.getRewrite().setEnabled(rewriteEnabled);
+    properties.getSearch().setCiteSources(false);
     return new KnowledgeBaseQueryService(
         llmProviderRegistry,
         ragMetrics,
@@ -81,7 +98,10 @@ class KnowledgeBaseQueryServiceTest {
         null,
         null,
         null,
-        null
+        null,
+        ownerScope,
+        knowledgeBaseRepository,
+        contextAssembler
     );
   }
 
@@ -91,7 +111,138 @@ class KnowledgeBaseQueryServiceTest {
 
   private void stubDocuments() {
     when(vectorService.similaritySearch(anyString(), anyList(), anyInt(), anyDouble()))
-        .thenReturn(List.of(new Document("相关片段内容")));
+        .thenReturn(List.of(new Document("doc", "相关片段内容", Map.of("kb_id", 1L))));
+  }
+
+  private KnowledgeBaseQueryService buildSectionService() throws Exception {
+    KnowledgeBaseQueryProperties properties = new KnowledgeBaseQueryProperties();
+    properties.setSectionNeighborEnabled(true);
+    properties.getRewrite().setEnabled(false);
+    properties.getSearch().setCiteSources(false);
+    properties.getTools().setEnabled(false);
+    return new KnowledgeBaseQueryService(llmProviderRegistry, ragMetrics, vectorService, listService,
+        countService, properties, resourceLoader, null, traceService, null, null,
+        ownerScope, knowledgeBaseRepository, contextAssembler);
+  }
+
+  @Test
+  @DisplayName("四条问答入口遇到超长上下文均不调用回答模型")
+  void allEntrancesRejectOversizedContext() throws Exception {
+    service = buildSectionService();
+    stubDocuments();
+    when(contextAssembler.assemble(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anySet()))
+        .thenReturn(new RagContextAssembler.ContextResult(RagContextAssembler.Status.TOO_LONG,
+            "", List.of(), List.of(), List.of(), 0));
+    ResolvedScope scope = ResolvedScope.ofSelection(List.of(1L));
+    assertThat(service.answerQuestion(scope, "问题")).contains("资料片段过长");
+    List<RagQueryExecution> traces = new ArrayList<>();
+    assertThat(service.answerQuestionStream(scope, "问题", List.of(), traces::add).collectList().block())
+        .singleElement().asString().contains("资料片段过长");
+    assertThat(traces.getFirst().outcome()).isEqualTo("CONTEXT_TOO_LONG");
+    assertThat(service.answerQuestionStreamWithTools(scope, 1L, "问题", List.of(), null)
+        .collectList().block()).singleElement().asString().contains("资料片段过长");
+    assertThat(service.searchKnowledge("问题", scope).status()).isEqualTo(RagContextAssembler.Status.TOO_LONG);
+    assertThat(service.retrieveOnly(List.of(1L), "问题", List.of()).outcome())
+        .isEqualTo("CONTEXT_TOO_LONG");
+    var collector = org.mockito.ArgumentCaptor.forClass(RagQueryTraceCollector.class);
+    verify(traceService).recordAsync(collector.capture());
+    assertThat(collector.getValue().outcome()).isEqualTo(RagQueryTraceEntity.OUTCOME_CONTEXT_TOO_LONG);
+    verify(llmProviderRegistry, never()).getPlainChatClient();
+    verify(countService, never()).updateQuestionCounts(anyList());
+  }
+
+  @Test
+  @DisplayName("新策略流式问答与检索测评使用同一组装上下文")
+  void streamAndRetrievalUseAssembledContext() throws Exception {
+    service = buildSectionService();
+    stubDocuments();
+    mockPlainClient();
+    Document direct = new Document("doc", "相关片段内容", Map.of("kb_id", 1L));
+    Document neighbor = new Document("neighbor", "前置条件", Map.of("kb_id", 1L));
+    when(contextAssembler.assemble(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anySet()))
+        .thenReturn(new RagContextAssembler.ContextResult(RagContextAssembler.Status.READY,
+            "前置条件\n相关片段内容", List.of(direct), List.of(neighbor), List.of(1L), 10));
+    when(plainChatClient.prompt().system(anyString()).user(anyString()).stream().content())
+        .thenReturn(Flux.just("回答"));
+    when(plainChatClient.prompt().system(anyString()).user(anyString()).call().content())
+        .thenReturn("同步回答");
+    assertThat(service.answerQuestion(List.of(1L), "问题")).isEqualTo("同步回答");
+    List<RagQueryExecution> traces = new ArrayList<>();
+    service.answerQuestionStream(List.of(1L), "问题", List.of(), traces::add).collectList().block();
+    RagQueryExecution retrieval = service.retrieveOnly(List.of(1L), "问题", List.of());
+    assertThat(traces.getFirst().contextText()).isEqualTo("前置条件\n相关片段内容");
+    assertThat(traces.getFirst().directDocumentIds()).containsExactly("doc");
+    assertThat(traces.getFirst().neighborDocumentIds()).containsExactly("neighbor");
+    assertThat(retrieval.contextText()).isEqualTo(traces.getFirst().contextText());
+    assertThat(retrieval.neighborDocumentIds()).containsExactly("neighbor");
+    assertThat(service.searchKnowledge("问题", ResolvedScope.ofSelection(List.of(1L))).text())
+        .isEqualTo(retrieval.contextText());
+  }
+
+  @Test
+  @DisplayName("未命中时同步、普通流式和工具检索不调用回答模型")
+  void noHitsDoesNotCallAnswerModel() throws Exception {
+    service = buildSectionService();
+    when(vectorService.similaritySearch(anyString(), anyList(), anyInt(), anyDouble())).thenReturn(List.of());
+    ResolvedScope scope = ResolvedScope.ofSelection(List.of(1L));
+    assertThat(service.answerQuestion(scope, "问题")).contains("未检索到");
+    assertThat(service.answerQuestionStream(scope, "问题", List.of()).collectList().block())
+        .singleElement().asString().contains("未检索到");
+    assertThat(service.searchKnowledge("问题", scope).status()).isEqualTo(RagContextAssembler.Status.NO_HITS);
+    verify(llmProviderRegistry, never()).getPlainChatClient();
+  }
+
+  @Test
+  @DisplayName("工具化预检索向模型注入组装结果并只计直接命中")
+  void toolPreRetrievalUsesAssembledContext() throws Exception {
+    when(resourceLoader.getResource(anyString()))
+        .thenAnswer(invocation -> new ByteArrayResource(
+            (invocation.getArgument(0).toString().contains("agent-user") ? "{context} {question}" : "模板")
+                .getBytes(StandardCharsets.UTF_8)));
+    service = buildSectionService();
+    stubDocuments();
+    Document direct = new Document("doc", "结论", Map.of("kb_id", 1L));
+    Document neighbor = new Document("neighbor", "条件", Map.of("kb_id", 1L));
+    when(contextAssembler.assemble(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anySet()))
+        .thenReturn(new RagContextAssembler.ContextResult(RagContextAssembler.Status.READY,
+            "条件\n结论", List.of(direct), List.of(neighbor), List.of(1L), 5));
+    mockPlainClient();
+    var promptSpec = mock(ChatClient.ChatClientRequestSpec.class, Answers.RETURNS_DEEP_STUBS);
+    when(plainChatClient.prompt().system(anyString())).thenReturn(promptSpec);
+    when(promptSpec.user(anyString()).stream().content()).thenReturn(Flux.just("回答"));
+    assertThat(service.answerQuestionStreamWithTools(ResolvedScope.ofSelection(List.of(1L)), null,
+        "问题", List.of(), null).collectList().block()).containsExactly("回答");
+    var collector = org.mockito.ArgumentCaptor.forClass(RagQueryTraceCollector.class);
+    verify(traceService).recordAsync(collector.capture());
+    assertThat(collector.getValue().directHitCounts()).containsExactlyEntriesOf(Map.of(1L, 1));
+    verify(promptSpec).user(org.mockito.ArgumentMatchers.<String>argThat(
+        prompt -> prompt != null && prompt.replace("\r\n", "\n").contains("条件\n结论")));
+    verify(countService).updateQuestionCounts(List.of(1L));
+  }
+
+  @Test
+  @DisplayName("授权范围为空时不访问向量库")
+  void doesNotSearchWhenNoAccessibleKnowledgeBases() throws Exception {
+    when(knowledgeBaseRepository.findAccessibleIdsByVectorStatus(
+        org.mockito.ArgumentMatchers.any(), eq(VectorStatus.COMPLETED))).thenReturn(List.of());
+    service = buildService(false);
+    assertThat(service.answerQuestion(List.of(1L), "问题")).contains("未检索到");
+    verify(vectorService, never()).similaritySearch(anyString(), anyList(), anyInt(), anyDouble());
+  }
+
+  @Test
+  @DisplayName("流式轨迹记录实际发送模型的上下文")
+  void traceContainsActualLegacyContext() throws Exception {
+    service = buildService(false);
+    mockPlainClient();
+    stubDocuments();
+    when(plainChatClient.prompt().system(anyString()).user(anyString()).stream().content())
+        .thenReturn(Flux.just("回答"));
+    List<RagQueryExecution> traces = new ArrayList<>();
+    service.answerQuestionStream(List.of(1L), "问题", List.of(), traces::add).collectList().block();
+    assertThat(traces.getFirst().contextText()).isEqualTo("相关片段内容");
+    assertThat(traces.getFirst().directDocumentIds()).containsExactly("doc");
+    assertThat(traces.getFirst().neighborDocumentIds()).isEmpty();
   }
 
   @Nested
@@ -174,7 +325,8 @@ class KnowledgeBaseQueryServiceTest {
       properties.setMetricsEnabled(true);
       RagMetrics ragMetrics = new RagMetrics(provider, properties);
       return new KnowledgeBaseQueryService(llmProviderRegistry, ragMetrics, vectorService, listService,
-          countService, properties, resourceLoader, null, null, null, null);
+          countService, properties, resourceLoader, null, null, null, null,
+          ownerScope, knowledgeBaseRepository, contextAssembler);
     }
 
     @Test
@@ -385,14 +537,15 @@ class KnowledgeBaseQueryServiceTest {
 
     private org.springframework.ai.document.Document doc(String id, Double score) {
       return org.springframework.ai.document.Document.builder()
-          .id(id).text("片段-" + id).score(score).build();
+          .id(id).text("片段-" + id).score(score).metadata(Map.of("kb_id", 1L)).build();
     }
 
     private KnowledgeBaseQueryService buildMergeService() throws Exception {
       KnowledgeBaseQueryProperties properties = new KnowledgeBaseQueryProperties();
       properties.getSearch().setMergeOriginalQuery(true);
       return new KnowledgeBaseQueryService(llmProviderRegistry, ragMetrics, vectorService, listService,
-          countService, properties, resourceLoader, null, null, null, null);
+          countService, properties, resourceLoader, null, null, null, null,
+          ownerScope, knowledgeBaseRepository, contextAssembler);
     }
 
     private List<RagQueryExecution> answerCollect(KnowledgeBaseQueryService svc, String question)

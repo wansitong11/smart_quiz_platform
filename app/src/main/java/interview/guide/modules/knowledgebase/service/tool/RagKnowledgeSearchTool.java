@@ -2,6 +2,10 @@ package interview.guide.modules.knowledgebase.service.tool;
 
 import interview.guide.modules.knowledgebase.service.KnowledgeBaseQueryService;
 import interview.guide.modules.knowledgebase.service.RagQueryTraceCollector;
+import interview.guide.modules.knowledgebase.service.RagContextAssembler;
+import interview.guide.modules.knowledgebase.service.RagEvidenceSession;
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.knowledgebase.service.scope.ResolvedScope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,31 +42,42 @@ public class RagKnowledgeSearchTool {
 
         ResolvedScope scope = RagToolContexts.scope(toolContext);
         RagQueryTraceCollector collector = RagToolContexts.collector(toolContext);
+        RagEvidenceSession evidence = RagToolContexts.evidenceSession(toolContext);
         long start = System.nanoTime();
         try {
             if (scope == null) {
                 return "当前会话没有可用的检索范围。";
             }
-            var result = queryService.searchKnowledge(query, scope);
+            var result = queryService.searchKnowledge(query, scope, evidence);
             long elapsedMs = (System.nanoTime() - start) / 1_000_000;
             if (collector != null) {
                 collector.addToolCall(new RagQueryTraceCollector.ToolCall(
                     TOOL_NAME, result.documents().size(), result.topScore(), elapsedMs, false));
                 collector.addRetrievedKbIds(result.knowledgeBaseIds());
+                collector.addDirectHits(result.documents());
                 collector.updateTopScore(result.topScore());
             }
-            if (!result.hit()) {
+            if (result.status() == RagContextAssembler.Status.NO_HITS) {
                 return "未在用户资料中检索到与「" + query + "」相关的内容。"
                     + "可以换一个更具体的关键词再检索，或如实告知用户资料里没有这部分。";
+            }
+            if (result.status() == RagContextAssembler.Status.TOO_LONG) {
+                return result.text();
             }
             return "检索到 " + result.documents().size() + " 个片段（范围：" + scope.description() + "）：\n\n"
                 + result.text();
         } catch (Exception e) {
             long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-            log.warn("资料检索工具失败: query={}, error={}", query, e.getMessage());
+            log.warn("资料检索工具失败: query={}, error={}", query, e.getMessage(), e);
             if (collector != null) {
                 collector.addToolCall(new RagQueryTraceCollector.ToolCall(
                     TOOL_NAME, 0, null, elapsedMs, true));
+            }
+            if (evidence != null && evidence.failed()
+                || e instanceof BusinessException business
+                && business.getCode().equals(ErrorCode.RAG_EVIDENCE_REVIEW_FAILED.getCode())) {
+                if (evidence != null) evidence.markFailed();
+                throw e;
             }
             return "检索资料时出错，请基于已有信息回答，或告知用户稍后再试。";
         }

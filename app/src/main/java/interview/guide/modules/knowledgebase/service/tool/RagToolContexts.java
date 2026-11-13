@@ -1,6 +1,7 @@
 package interview.guide.modules.knowledgebase.service.tool;
 
 import interview.guide.modules.knowledgebase.service.RagQueryTraceCollector;
+import interview.guide.modules.knowledgebase.service.RagEvidenceSession;
 import interview.guide.modules.knowledgebase.service.scope.ResolvedScope;
 import org.springframework.ai.chat.model.ToolContext;
 
@@ -32,5 +33,10 @@ public final class RagToolContexts {
             return null;
         }
         return toolContext.getContext().get(key);
+    }
+
+    public static RagEvidenceSession evidenceSession(ToolContext toolContext) {
+        Object value = value(toolContext, RagToolContextKeys.EVIDENCE_SESSION);
+        return value instanceof RagEvidenceSession session ? session : null;
     }
 }

@@ -35,6 +35,11 @@ public interface KnowledgeBaseRepository extends JpaRepository<KnowledgeBaseEnti
         + "AND (:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED')")
     Optional<KnowledgeBaseEntity> findByIdAccessible(@Param("id") Long id, @Param("ownerId") Long ownerId);
 
+    @Query("SELECT k FROM KnowledgeBaseEntity k WHERE k.id IN :ids "
+        + "AND (:ownerId IS NULL OR k.ownerId = :ownerId OR k.visibility = 'SHARED')")
+    List<KnowledgeBaseEntity> findAccessibleByIds(@Param("ids") List<Long> ids,
+                                                  @Param("ownerId") Long ownerId);
+
     @Query("SELECT k FROM KnowledgeBaseEntity k WHERE k.id = :id "
         + "AND (:ownerId IS NULL OR k.ownerId = :ownerId)")
     Optional<KnowledgeBaseEntity> findByIdOwned(@Param("id") Long id, @Param("ownerId") Long ownerId);

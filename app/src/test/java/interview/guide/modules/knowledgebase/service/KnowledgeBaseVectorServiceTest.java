@@ -65,6 +65,30 @@ class KnowledgeBaseVectorServiceTest {
             new KnowledgeBaseVectorProperties(), persistenceService);
     }
 
+    @Test
+    @DisplayName("新策略保存正文和章节元数据并保留任务代次")
+    void sectionStrategyKeepsBodyAndMetadata() {
+        KnowledgeBaseQueryProperties properties = new KnowledgeBaseQueryProperties();
+        properties.setSectionNeighborEnabled(true);
+        vectorService = new KnowledgeBaseVectorService(vectorStore, vectorRepository, null,
+            new KnowledgeBaseVectorProperties(), persistenceService, properties,
+            new MarkdownSectionParser(), new SectionChunker());
+        vectorService.vectorizeAndStore(1L, "# 退款\n## 特殊商品\n申请后补充凭证。", "退款规范",
+            "rules.md", "attempt", () -> { });
+        ArgumentCaptor<List<Document>> captor = ArgumentCaptor.forClass(List.class);
+        verify(vectorStore).add(captor.capture());
+        Document chunk = captor.getValue().getFirst();
+        assertThat(chunk.getText()).isEqualTo("申请后补充凭证。");
+        assertThat(chunk.getMetadata()).containsEntry("document_title", "退款规范")
+            .containsEntry("section_path", "退款 > 特殊商品")
+            .containsEntry("chunk_strategy", "section-neighbor-v2")
+            .containsEntry("chunk_index", 0).containsEntry("total_chunks", 1)
+            .containsEntry("kb_target_id", "1");
+        assertThat(chunk.getMetadata()).containsKeys("parent_document_id", "kb_vector_job_id");
+        verify(persistenceService).activateVectorJobAndUpdateSnapshot(eq(1L), eq("attempt"),
+            anyString(), eq(1), anyString());
+    }
+
     // ==================== 共享辅助方法 ====================
 
     /**

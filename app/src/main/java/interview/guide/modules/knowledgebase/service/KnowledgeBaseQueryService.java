@@ -15,6 +15,9 @@ import interview.guide.modules.knowledgebase.model.RagQueryTraceEntity;
 import interview.guide.modules.knowledgebase.model.RagScopeKind;
 import interview.guide.modules.knowledgebase.model.RagStreamEvent;
 import interview.guide.modules.knowledgebase.service.scope.ResolvedScope;
+import interview.guide.modules.auth.security.OwnerScope;
+import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
+import interview.guide.modules.knowledgebase.model.VectorStatus;
 import interview.guide.modules.knowledgebase.service.tool.ConversationHistoryReader;
 import interview.guide.modules.knowledgebase.service.tool.RagConversationHistoryTool;
 import interview.guide.modules.knowledgebase.service.tool.RagKnowledgeSearchTool;
@@ -31,8 +34,12 @@ import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.document.Document;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.SynchronousSink;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -77,6 +84,9 @@ public class KnowledgeBaseQueryService {
     private final double minScoreDefault;
     private final int candidateMultiplier;
     private final int perKbQuota;
+    private final boolean relevanceEnabled;
+    private final double relevanceMinScore;
+    private final double relevanceMaxScoreDrop;
     private final boolean citeSources;
     private final PromptTemplate agentSystemPromptTemplate;
     private final PromptTemplate agentUserPromptTemplate;
@@ -85,7 +95,110 @@ public class KnowledgeBaseQueryService {
     private final RagQueryTraceService traceService;
     private final RagKnowledgeSearchTool knowledgeSearchTool;
     private final RagConversationHistoryTool conversationHistoryTool;
+    private final OwnerScope ownerScope;
+    private final KnowledgeBaseRepository knowledgeBaseRepository;
+    private final RagContextAssembler contextAssembler;
+    private final KnowledgeBaseQueryProperties queryProperties;
+    private final RagEvidenceReviewService evidenceReviewService;
+    private final String citationInstruction;
 
+    private static final String CONTEXT_TOO_LONG = "资料片段过长，当前无法完整提供上下文，请缩小检索范围或拆分资料。";
+
+    private ResolvedScope authorizeScope(ResolvedScope scope) {
+        if (scope == null) return null;
+        List<Long> accessible = knowledgeBaseRepository.findAccessibleIdsByVectorStatus(
+            ownerScope.effectiveOwnerId(), VectorStatus.COMPLETED);
+        Set<Long> allowed = new LinkedHashSet<>(accessible);
+        List<Long> ids = scope.kind() == RagScopeKind.ALL ? accessible
+            : scope.knowledgeBaseIds().stream().filter(allowed::contains).toList();
+        return new ResolvedScope(scope.kind(), ids, scope.description(), scope.unavailableCount());
+    }
+
+    private ResolvedScope authorizeScope(ResolvedScope scope, RagEvidenceSession session) {
+        if (session == null) return authorizeScope(scope);
+        List<Long> accessible = knowledgeBaseRepository.findAccessibleIdsByVectorStatus(
+            session.effectiveOwnerId(), VectorStatus.COMPLETED);
+        Set<Long> allowed = new LinkedHashSet<>(accessible);
+        ResolvedScope original = session.originalScope();
+        if (original.kind() != RagScopeKind.ALL) allowed.retainAll(original.knowledgeBaseIds());
+        List<Long> ids = scope.kind() == RagScopeKind.ALL ? accessible.stream().filter(allowed::contains).toList()
+            : scope.knowledgeBaseIds().stream().filter(allowed::contains).toList();
+        session.reauthorize(new LinkedHashSet<>(ids));
+        return new ResolvedScope(scope.kind(), ids, scope.description(), scope.unavailableCount());
+    }
+
+    private RagEvidenceSession evidenceSession(ResolvedScope scope, String question) {
+        if (!queryProperties.getReview().isEnabled()) return null;
+        AiCallContext context = AiCallContextHolder.get();
+        if (context == null) throw RagEvidenceSession.failure("PROVIDER：缺少问答计费上下文");
+        Long owner = ownerScope.effectiveOwnerId();
+        return new RagEvidenceSession(context.userId(), owner, owner == null && ownerScope.isAdmin(),
+            scope, context, question);
+    }
+
+    private RagContextAssembler.PreparedContext prepareReviewedEvidence(List<Document> docs,
+        ResolvedScope scope, RagEvidenceSession session) {
+        if (evidenceReviewService == null) throw RagEvidenceSession.failure("PROVIDER：复核服务未配置");
+        synchronized (session) {
+            ResolvedScope authorized = authorizeScope(scope, session);
+            var prepared = contextAssembler.prepareEvidence(docs,
+                new LinkedHashSet<>(authorized.knowledgeBaseIds()), queryProperties.getReview().getMaxUnits(),
+                sectionContextEnabled(), session.budgetSnapshot());
+            return evidenceReviewService.review(session.effectiveQuestion(), prepared, session);
+        }
+    }
+
+    private RagContextAssembler.ContextResult assembleContext(List<Document> docs, ResolvedScope scope,
+        RagEvidenceSession session) {
+        if (session == null) return assembleContext(docs, authorizeScope(scope));
+        var prepared = prepareReviewedEvidence(docs, scope, session);
+        List<Document> direct = prepared.blocks().stream().filter(RagContextAssembler.EvidenceBlock::direct)
+            .map(RagContextAssembler.EvidenceBlock::document).toList();
+        List<Document> neighbors = prepared.blocks().stream().filter(block -> !block.direct())
+            .map(RagContextAssembler.EvidenceBlock::document).toList();
+        return new RagContextAssembler.ContextResult(prepared.status(), prepared.text(), direct, neighbors,
+            prepared.blocks().stream().map(RagContextAssembler.EvidenceBlock::kbId).distinct().toList(), prepared.tokens());
+    }
+
+    private String citationInstruction(RagEvidenceSession session) {
+        return session != null && citeSources ? "\n" + citationInstruction : "";
+    }
+
+    private String reviewedSuffix(String answer, RagEvidenceSession session) {
+        if (!citeSources || session.failed() || NO_RESULT_RESPONSE.equals(answer)) return "";
+        authorizeScope(session.originalScope(), session);
+        var result = session.citations(answer);
+        return result.warning() + renderSourcesBlock(result.sources());
+    }
+
+    private void countHits(List<Long> ids, RagEvidenceSession session) {
+        List<Long> newIds = session == null ? ids : session.newlyCounted(ids);
+        if (!newIds.isEmpty()) countService.updateQuestionCounts(newIds);
+    }
+
+    private RagContextAssembler.ContextResult assembleContext(List<Document> docs, ResolvedScope scope) {
+        return contextAssembler.assemble(docs,
+            scope == null ? Set.of() : new LinkedHashSet<>(scope.knowledgeBaseIds()));
+    }
+
+    private boolean sectionContextEnabled() {
+        return queryProperties.isSectionNeighborEnabled();
+    }
+
+    public KnowledgeBaseQueryService(
+            LlmProviderRegistry llmProviderRegistry, RagMetrics ragMetrics,
+            KnowledgeBaseVectorService vectorService, KnowledgeBaseListService listService,
+            KnowledgeBaseCountService countService, KnowledgeBaseQueryProperties queryProperties,
+            ResourceLoader resourceLoader, ConversationHistoryReader historyReader,
+            RagQueryTraceService traceService, RagKnowledgeSearchTool knowledgeSearchTool,
+            RagConversationHistoryTool conversationHistoryTool, OwnerScope ownerScope,
+            KnowledgeBaseRepository knowledgeBaseRepository, RagContextAssembler contextAssembler) throws IOException {
+        this(llmProviderRegistry, ragMetrics, vectorService, listService, countService, queryProperties,
+            resourceLoader, historyReader, traceService, knowledgeSearchTool, conversationHistoryTool,
+            ownerScope, knowledgeBaseRepository, contextAssembler, null);
+    }
+
+    @Autowired
     public KnowledgeBaseQueryService(
             LlmProviderRegistry llmProviderRegistry,
             RagMetrics ragMetrics,
@@ -97,12 +210,23 @@ public class KnowledgeBaseQueryService {
             ConversationHistoryReader historyReader,
             RagQueryTraceService traceService,
             @Lazy RagKnowledgeSearchTool knowledgeSearchTool,
-            @Lazy RagConversationHistoryTool conversationHistoryTool) throws IOException {
+            @Lazy RagConversationHistoryTool conversationHistoryTool,
+            OwnerScope ownerScope,
+            KnowledgeBaseRepository knowledgeBaseRepository,
+            RagContextAssembler contextAssembler,
+            RagEvidenceReviewService evidenceReviewService) throws IOException {
         this.llmProviderRegistry = llmProviderRegistry;
         this.ragMetrics = ragMetrics;
         this.vectorService = vectorService;
         this.listService = listService;
         this.countService = countService;
+        this.ownerScope = ownerScope;
+        this.knowledgeBaseRepository = knowledgeBaseRepository;
+        this.contextAssembler = contextAssembler;
+        this.queryProperties = queryProperties;
+        this.evidenceReviewService = evidenceReviewService;
+        this.citationInstruction = resourceLoader.getResource("classpath:prompts/knowledgebase-evidence-citations.st")
+            .getContentAsString(StandardCharsets.UTF_8);
         this.systemPromptTemplate = new PromptTemplate(
             resourceLoader.getResource(queryProperties.getSystemPromptPath())
                 .getContentAsString(StandardCharsets.UTF_8)
@@ -125,6 +249,9 @@ public class KnowledgeBaseQueryService {
         this.minScoreDefault = queryProperties.getSearch().getMinScoreDefault();
         this.candidateMultiplier = Math.max(1, queryProperties.getSearch().getCandidateMultiplier());
         this.perKbQuota = Math.max(1, queryProperties.getSearch().getPerKbQuota());
+        this.relevanceEnabled = queryProperties.getSearch().getRelevance().isEnabled();
+        this.relevanceMinScore = queryProperties.getSearch().getRelevance().getMinScore();
+        this.relevanceMaxScoreDrop = queryProperties.getSearch().getRelevance().getMaxScoreDrop();
         this.citeSources = queryProperties.getSearch().isCiteSources();
         this.historyReader = historyReader;
         this.traceService = traceService;
@@ -170,8 +297,7 @@ public class KnowledgeBaseQueryService {
     /**
      * 基于解析后的检索范围回答用户问题（RAG）。
      * <p>
-     * 范围里的资料列表为空表示「全部资料」（由 {@code KnowledgeBaseVectorService} 的
-     * 既有语义承载），因此跨库检索不需要新的检索接口。
+     * 全部资料范围在检索前解析为当前用户可访问的资料 ID；空范围不访问向量库。
      * </p>
      */
     public String answerQuestion(ResolvedScope scope, String question) {
@@ -195,9 +321,10 @@ public class KnowledgeBaseQueryService {
         QueryContext queryContext = null;
         long retrievalNanos = 0;
         try {
+            RagEvidenceSession evidence = evidenceSession(scope, normalized);
             queryContext = buildQueryContext(question, List.of());
             long retrievalStart = System.nanoTime();
-            List<Document> relevantDocs = retrieveRelevantDocs(queryContext, scope);
+            List<Document> relevantDocs = retrieveRelevantDocs(queryContext, scope, null, evidence);
             retrievalNanos = System.nanoTime() - retrievalStart;
 
             if (!hasEffectiveHit(relevantDocs)) {
@@ -210,13 +337,23 @@ public class KnowledgeBaseQueryService {
                 return withUnavailableHint(NO_RESULT_RESPONSE, scope);
             }
 
+            String context;
+            if (sectionContextEnabled() || evidence != null) {
+                var assembled = assembleContext(relevantDocs, scope, evidence);
+                if (assembled.status() == RagContextAssembler.Status.TOO_LONG) {
+                    ragMetrics.recordRequest("sync", "context_too_long");
+                    ragMetrics.recordStageDuration("total", "context_too_long", System.nanoTime() - totalStart);
+                    return CONTEXT_TOO_LONG;
+                }
+                relevantDocs = assembled.directHits();
+                if (assembled.status() == RagContextAssembler.Status.NO_HITS) return NO_RESULT_RESPONSE;
+                context = assembled.text();
+            } else {
+                context = relevantDocs.stream().map(Document::getText).collect(Collectors.joining("\n\n---\n\n"));
+            }
             // 提问计数按「实际命中的资料」归位，而不是按会话范围全量 +1
-            countService.updateQuestionCounts(hitKnowledgeBaseIds(relevantDocs));
-
-            String context = relevantDocs.stream()
-                    .map(Document::getText)
-                    .collect(Collectors.joining("\n\n---\n\n"));
-            String systemPrompt = buildSystemPrompt();
+            countHits(hitKnowledgeBaseIds(relevantDocs), evidence);
+            String systemPrompt = buildSystemPrompt() + citationInstruction(evidence);
             String userPrompt = buildUserPrompt(context, question);
 
             long generationStart = System.nanoTime();
@@ -242,7 +379,8 @@ public class KnowledgeBaseQueryService {
 
             log.info("知识库问答完成: scope={}, 命中资料={}",
                 scope.kind(), hitKnowledgeBaseIds(relevantDocs));
-            return rejected ? answer : withSources(answer, relevantDocs);
+            return rejected ? answer : evidence == null ? withSources(answer, relevantDocs)
+                : answer + reviewedSuffix(answer, evidence);
 
         } catch (Exception e) {
             log.error("知识库问答失败: {}", ErrorLogSanitizer.summarize(e),
@@ -254,6 +392,7 @@ public class KnowledgeBaseQueryService {
                 ragMetrics.recordStageDuration("retrieve", "error", retrievalNanos);
             }
             ragMetrics.recordStageDuration("total", "error", System.nanoTime() - totalStart);
+            if (e instanceof BusinessException business) throw business;
             // 把底层原因（额度不足 / 密钥失效 / 网络不通）透出到接口提示里
             String reason = AiErrorMessages.describe(e).orElse("请稍后重试");
             throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_QUERY_FAILED,
@@ -307,25 +446,65 @@ public class KnowledgeBaseQueryService {
      * </p>
      */
     public KnowledgeSearchResult searchKnowledge(String query, ResolvedScope scope) {
+        if (normalizeQuestion(query).isBlank() || scope == null || scope.isEmptySelection()) {
+            return KnowledgeSearchResult.empty();
+        }
+        return searchKnowledge(query, scope, evidenceSession(scope, normalizeQuestion(query)));
+    }
+
+    public KnowledgeSearchResult searchKnowledge(String query, ResolvedScope scope, RagEvidenceSession evidence) {
+        if (evidence == null) return searchKnowledgeInternal(query, scope, null);
+        SecurityContext previous = SecurityContextHolder.getContext();
+        SecurityContextHolder.setContext(evidence.securityContext());
+        try {
+            return AiCallContextHolder.callWith(evidence.callContext(),
+                () -> searchKnowledgeInternal(query, scope, evidence));
+        } catch (Throwable exception) {
+            if (exception instanceof RuntimeException runtime) throw runtime;
+            evidence.markFailed();
+            throw new BusinessException(ErrorCode.RAG_EVIDENCE_REVIEW_FAILED, "资料复核失败", exception);
+        } finally {
+            SecurityContextHolder.setContext(previous);
+        }
+    }
+
+    private KnowledgeSearchResult searchKnowledgeInternal(String query, ResolvedScope scope, RagEvidenceSession evidence) {
         String normalized = normalizeQuestion(query);
         if (normalized.isBlank() || scope == null || scope.isEmptySelection()) {
             return KnowledgeSearchResult.empty();
         }
         QueryContext queryContext = new QueryContext(normalized, List.of(normalized),
             resolveSearchParams(normalized), 0);
-        List<Document> docs = retrieveRelevantDocs(queryContext, scope);
+        if (queryProperties.getReview().isEnabled() && evidence == null) {
+            throw RagEvidenceSession.failure("PROVIDER：工具缺少证据会话");
+        }
+        List<Document> docs = retrieveRelevantDocs(queryContext, scope, null, evidence);
         if (!hasEffectiveHit(docs)) {
             return KnowledgeSearchResult.empty();
         }
 
+        String context = null;
+        if (sectionContextEnabled() || evidence != null) {
+            var assembled = assembleContext(docs, scope, evidence);
+            if (assembled.status() == RagContextAssembler.Status.TOO_LONG) {
+                String message = evidence != null && !evidence.acceptedUnits().isEmpty()
+                    ? "本轮资料上下文额度已满，没有新增证据。请仅使用此前有效证据。" : CONTEXT_TOO_LONG;
+                return new KnowledgeSearchResult(List.of(), List.of(), message,
+                    RagContextAssembler.Status.TOO_LONG, null);
+            }
+            docs = assembled.directHits();
+            if (docs.isEmpty()) return KnowledgeSearchResult.empty();
+            context = assembled.text();
+        }
         List<Long> kbIds = hitKnowledgeBaseIds(docs);
-        countService.updateQuestionCounts(kbIds);
+        countHits(kbIds, evidence);
         Double topScore = docs.stream()
             .map(this::extractScore)
             .filter(java.util.Objects::nonNull)
             .max(Double::compareTo)
             .orElse(null);
-        return new KnowledgeSearchResult(docs, kbIds, renderHitsForModel(docs), true, topScore);
+        return new KnowledgeSearchResult(docs, kbIds, context == null ? renderHitsForModel(docs) : context,
+            RagContextAssembler.Status.READY, topScore);
     }
 
     /**
@@ -335,11 +514,11 @@ public class KnowledgeBaseQueryService {
         List<Document> documents,
         List<Long> knowledgeBaseIds,
         String text,
-        boolean hit,
+        RagContextAssembler.Status status,
         Double topScore
     ) {
         static KnowledgeSearchResult empty() {
-            return new KnowledgeSearchResult(List.of(), List.of(), "", false, null);
+            return new KnowledgeSearchResult(List.of(), List.of(), "", RagContextAssembler.Status.NO_HITS, null);
         }
     }
 
@@ -372,23 +551,35 @@ public class KnowledgeBaseQueryService {
             ResolvedScope scope, Long sessionId, String question,
             List<Message> history, String llmProvider) {
         AiCallContext callContext = AiCallContextHolder.get();
+        Long capturedOwner = ownerScope.effectiveOwnerId();
+        boolean capturedAdminAll = capturedOwner == null && ownerScope.isAdmin();
+        SecurityContext capturedSecurity = SecurityContextHolder.createEmptyContext();
+        capturedSecurity.setAuthentication(SecurityContextHolder.getContext().getAuthentication());
         return Flux.concat(
             Flux.just(RagStreamEvent.tool("search_knowledge_base", "start")),
             Flux.defer(() -> {
                 AiCallContext previous = AiCallContextHolder.get();
+                SecurityContext previousSecurity = SecurityContextHolder.getContext();
+                SecurityContextHolder.setContext(capturedSecurity);
                 if (callContext != null) {
                     AiCallContextHolder.set(callContext);
                 }
                 try {
                     AtomicReference<List<RagStreamEvent.Source>> sources =
                         new AtomicReference<>(List.of());
+                    RagEvidenceSession evidence = !queryProperties.getReview().isEnabled() ? null
+                        : new RagEvidenceSession(callContext == null ? null : callContext.userId(),
+                            capturedOwner, capturedAdminAll, scope, callContext, normalizeQuestion(question));
                     Flux<RagStreamEvent> answers = answerQuestionStreamWithTools(
-                        scope, sessionId, question, history, llmProvider, sources::set, false)
+                        scope, sessionId, question, history, llmProvider, sources::set, false, evidence)
                         .map(RagStreamEvent::answer);
                     return answers.concatWith(Flux.defer(() -> sources.get().isEmpty()
                         ? Flux.empty()
                         : Flux.just(RagStreamEvent.sources(sources.get()))));
+                } catch (BusinessException exception) {
+                    return Flux.just(RagStreamEvent.answer(describeFailure(exception)));
                 } finally {
+                    SecurityContextHolder.setContext(previousSecurity);
                     if (previous == null) {
                         AiCallContextHolder.clear();
                     } else {
@@ -404,6 +595,19 @@ public class KnowledgeBaseQueryService {
             List<Message> history, String llmProvider,
             Consumer<List<RagStreamEvent.Source>> sourcesConsumer,
             boolean appendSourcesToAnswer) {
+        try {
+            return answerQuestionStreamWithTools(scope, sessionId, question, history, llmProvider,
+                sourcesConsumer, appendSourcesToAnswer, evidenceSession(scope, normalizeQuestion(question)));
+        } catch (BusinessException exception) {
+            return Flux.just(describeFailure(exception));
+        }
+    }
+
+    private Flux<String> answerQuestionStreamWithTools(
+            ResolvedScope scope, Long sessionId, String question,
+            List<Message> history, String llmProvider,
+            Consumer<List<RagStreamEvent.Source>> sourcesConsumer,
+            boolean appendSourcesToAnswer, RagEvidenceSession evidence) {
         long totalStart = System.nanoTime();
         String normalized = normalizeQuestion(question);
         RagQueryTraceCollector collector = new RagQueryTraceCollector(sessionId, normalized,
@@ -428,22 +632,35 @@ public class KnowledgeBaseQueryService {
             // 统一走「改写 → 预检索」：资料类问题靠它保底，对话类问题由模型按工具自己取
             QueryContext queryContext = buildQueryContext(normalized, effectiveHistory);
             List<String> attemptedQueries = new ArrayList<>();
-            relevantDocs = retrieveRelevantDocs(queryContext, scope, attemptedQueries);
+            relevantDocs = retrieveRelevantDocs(queryContext, scope, attemptedQueries, evidence);
             collector.markRewrittenQuery(queryContext.candidateQueries().isEmpty()
                 ? normalized : queryContext.candidateQueries().getFirst());
+            if (sectionContextEnabled() || evidence != null) {
+                var assembled = assembleContext(relevantDocs, scope, evidence);
+                if (assembled.status() == RagContextAssembler.Status.TOO_LONG) {
+                    collector.markIntent(RagQueryTraceEntity.INTENT_PRERETRIEVAL);
+                    settle(collector, true, RagQueryTraceEntity.OUTCOME_CONTEXT_TOO_LONG);
+                    ragMetrics.recordRequest("stream", "context_too_long");
+                    ragMetrics.recordStageDuration("total", "context_too_long", System.nanoTime() - totalStart);
+                    return Flux.just(CONTEXT_TOO_LONG);
+                }
+                relevantDocs = assembled.directHits();
+                context = assembled.text();
+            }
             List<Long> preHitKbIds = hitKnowledgeBaseIds(relevantDocs);
             collector.addRetrievedKbIds(preHitKbIds);
+            collector.addDirectHits(relevantDocs);
             collector.updateTopScore(topScoreOf(relevantDocs));
             collector.markIntent(RagQueryTraceEntity.INTENT_PRERETRIEVAL);
             // 提问计数按实际命中的资料归位（工具再命中时会额外计数）
             if (!preHitKbIds.isEmpty()) {
-                countService.updateQuestionCounts(preHitKbIds);
+                countHits(preHitKbIds, evidence);
             }
-            context = relevantDocs.stream()
-                .map(Document::getText)
-                .collect(Collectors.joining("\n\n---\n\n"));
+            if (!sectionContextEnabled() && evidence == null) {
+                context = relevantDocs.stream().map(Document::getText).collect(Collectors.joining("\n\n---\n\n"));
+            }
 
-            String systemPrompt = agentSystemPromptTemplate.render(Map.of());
+            String systemPrompt = agentSystemPromptTemplate.render(Map.of()) + citationInstruction(evidence);
             Map<String, Object> variables = new HashMap<>();
             variables.put("context", context);
             variables.put("question", normalized);
@@ -465,6 +682,7 @@ public class KnowledgeBaseQueryService {
                 toolContext.put(RagToolContextKeys.SESSION_ID, sessionId == null ? 0L : sessionId);
                 toolContext.put(RagToolContextKeys.SCOPE, scope);
                 toolContext.put(RagToolContextKeys.COLLECTOR, collector);
+                if (evidence != null) toolContext.put(RagToolContextKeys.EVIDENCE_SESSION, evidence);
                 spec = spec.tools(knowledgeSearchTool, conversationHistoryTool)
                     .toolContext(toolContext);
             }
@@ -477,13 +695,17 @@ public class KnowledgeBaseQueryService {
             StringBuilder collectedAnswer = new StringBuilder();
             AtomicBoolean hardFailed = new AtomicBoolean(false);
             // lambda 需要 effectively final：把预检索结果固定下来
-            List<Document> preRetrievedDocs = relevantDocs;
             // 降级用的普通提示词：保留「对话类问题依据对话记录回答」的例外，但不含工具契约
-            String fallbackSystemPrompt = systemPromptTemplate.render(Map.of());
+            String fallbackSystemPrompt = systemPromptTemplate.render(Map.of()) + citationInstruction(evidence);
 
             Flux<String> answerStream = normalizeStreamOutput(responseFlux)
+                .handle((String chunk, SynchronousSink<String> sink) -> {
+                    if (evidence != null && evidence.failed()) sink.error(RagEvidenceSession.failure("PROVIDER：工具复核失败"));
+                    else sink.next(chunk);
+                })
                 .doOnNext(collectedAnswer::append)
                 .doOnComplete(() -> {
+                    if (evidence != null && evidence.failed()) throw RagEvidenceSession.failure("PROVIDER：工具复核失败");
                     boolean rejected = collectedAnswer.isEmpty()
                         || NO_RESULT_RESPONSE.equals(collectedAnswer.toString());
                     settle(collector, rejected);
@@ -498,6 +720,12 @@ public class KnowledgeBaseQueryService {
                         sessionId, collector.outcome(), collector.toolCalls().size());
                 })
                 .onErrorResume(e -> {
+                    if (evidence != null && (evidence.failed() || !collectedAnswer.isEmpty())) {
+                        hardFailed.set(true);
+                        settle(collector, true, RagQueryTraceEntity.OUTCOME_TOOL_ERROR);
+                        return Flux.just(evidence.failed()
+                            ? "\n\n【中断】资料相关性复核失败，本轮未展示出处，请稍后重试。" : describeFailure(e));
+                    }
                     // 部分 OpenAI 兼容厂商（如 DashScope）的流式工具调用分片会让 Spring AI 的
                     // ChunkMerger 抛错——此时降级为「不带工具的流式生成」，上下文里已经有
                     // 预检索片段与对话记录，用户体验与旧链路一致。
@@ -505,6 +733,7 @@ public class KnowledgeBaseQueryService {
                         ErrorLogSanitizer.summarize(e), ErrorLogSanitizer.forLogging(e));
                     return streamWithoutTools(fallbackSystemPrompt, userPrompt, sessionId,
                         collector, totalStart)
+                        .doOnNext(collectedAnswer::append)
                         .onErrorResume(retryError -> {
                             hardFailed.set(true);
                             log.error("无工具降级生成同样失败: sessionId={}, error={}", sessionId,
@@ -523,7 +752,8 @@ public class KnowledgeBaseQueryService {
             // 出处必须等回答结束再算：工具是在流式过程中被调用的，
             // 只有在那一刻才知道模型额外检索到了哪些资料。
             return answerStream.concatWith(Flux.defer(() -> {
-                if (hardFailed.get()) {
+                if (hardFailed.get() || evidence != null && evidence.failed() || collectedAnswer.isEmpty()
+                    || NO_RESULT_RESPONSE.equals(collectedAnswer.toString())) {
                     return Flux.empty();
                 }
                 // 只用了「查对话记录」的工具时，预检索片段与本次回答无关，不标出处
@@ -533,10 +763,19 @@ public class KnowledgeBaseQueryService {
                 if (onlyHistoryTool) {
                     return Flux.empty();
                 }
-                List<RagStreamEvent.Source> sources = sourceCitations(preRetrievedDocs);
-                if (sources.isEmpty()) {
-                    sources = sourceCitationsFromKbIds(collector.retrievedKbIds());
+                if (evidence != null) {
+                    if (!citeSources) return Flux.empty();
+                    authorizeScope(scope, evidence);
+                    var cited = evidence.citations(collectedAnswer.toString());
+                    if (sourcesConsumer != null && !cited.sources().isEmpty()) sourcesConsumer.accept(cited.sources());
+                    String suffix = cited.warning() + (appendSourcesToAnswer ? renderSourcesBlock(cited.sources()) : "");
+                    return suffix.isBlank() ? Flux.empty() : Flux.just(suffix);
                 }
+                Map<Long, Integer> counts = collector.directHitCounts();
+                Map<Long, String> names = knowledgeBaseNames(List.copyOf(counts.keySet()));
+                List<RagStreamEvent.Source> sources = !citeSources ? List.of()
+                    : counts.entrySet().stream().map(entry -> new RagStreamEvent.Source(
+                        entry.getKey(), names.getOrDefault(entry.getKey(), "未知资料"), entry.getValue())).toList();
                 if (sourcesConsumer != null) {
                     sourcesConsumer.accept(sources);
                 }
@@ -548,7 +787,7 @@ public class KnowledgeBaseQueryService {
         } catch (Exception e) {
             log.error("工具化问答启动失败: sessionId={}, error={}", sessionId,
                 ErrorLogSanitizer.summarize(e), ErrorLogSanitizer.forLogging(e));
-            settle(collector, true);
+            settle(collector, true, RagQueryTraceEntity.OUTCOME_TOOL_ERROR);
             ragMetrics.recordRequest("stream", "error");
             return Flux.just(describeFailure(e));
         }
@@ -722,11 +961,12 @@ public class KnowledgeBaseQueryService {
 
         try {
             // 1. Query rewrite + 动态参数检索
+            RagEvidenceSession evidence = evidenceSession(scope, normalized);
             long rewriteStart = System.nanoTime();
             List<Message> effectiveHistory = sanitizeHistory(history);
             QueryContext queryContext = buildQueryContext(question, effectiveHistory);
             List<String> attemptedQueries = new ArrayList<>();
-            List<Document> relevantDocs = retrieveRelevantDocs(queryContext, scope, attemptedQueries);
+            List<Document> relevantDocs = retrieveRelevantDocs(queryContext, scope, attemptedQueries, evidence);
             long rewriteAndRetrievalMs = (System.nanoTime() - rewriteStart) / 1_000_000;
 
             if (!hasEffectiveHit(relevantDocs)) {
@@ -741,18 +981,31 @@ public class KnowledgeBaseQueryService {
                 return Flux.just(withUnavailableHint(NO_RESULT_RESPONSE, scope));
             }
 
+            String context;
+            List<Document> contextNeighbors = List.of();
+            if (sectionContextEnabled() || evidence != null) {
+                var assembled = assembleContext(relevantDocs, scope, evidence);
+                if (assembled.status() == RagContextAssembler.Status.TOO_LONG) {
+                    emitTrace(trace, question, queryContext, attemptedQueries, List.of(),
+                        rewriteAndRetrievalMs, 0, CONTEXT_TOO_LONG, "CONTEXT_TOO_LONG");
+                    ragMetrics.recordRequest("stream", "context_too_long");
+                    ragMetrics.recordStageDuration("total", "context_too_long", System.nanoTime() - totalStart);
+                    return Flux.just(CONTEXT_TOO_LONG);
+                }
+                relevantDocs = assembled.directHits();
+                contextNeighbors = assembled.neighbors();
+                if (assembled.status() == RagContextAssembler.Status.NO_HITS) return Flux.just(NO_RESULT_RESPONSE);
+                context = assembled.text();
+            } else {
+                context = relevantDocs.stream().map(Document::getText).collect(Collectors.joining("\n\n---\n\n"));
+            }
             // 2. 提问计数按实际命中的资料归位
-            countService.updateQuestionCounts(hitKnowledgeBaseIds(relevantDocs));
-
-            // 3. 构建上下文
-            String context = relevantDocs.stream()
-                    .map(Document::getText)
-                    .collect(Collectors.joining("\n\n---\n\n"));
+            countHits(hitKnowledgeBaseIds(relevantDocs), evidence);
 
             log.debug("检索到 {} 个相关文档片段", relevantDocs.size());
 
             // 4. 构建提示词
-            String systemPrompt = buildSystemPrompt();
+            String systemPrompt = buildSystemPrompt() + citationInstruction(evidence);
             String userPrompt = buildUserPrompt(context, question);
 
             // 5. 流式调用（带历史上下文）+ 探测窗口归一化
@@ -771,7 +1024,9 @@ public class KnowledgeBaseQueryService {
             StringBuilder collectedAnswer = new StringBuilder();
             AtomicBoolean failed = new AtomicBoolean(false);
             // 出处作为最后一小段输出：只在这条回答成功时追加，错误/拒答不追加
-            String sourcesBlock = sourcesBlock(relevantDocs);
+            String sourcesBlock = evidence == null ? sourcesBlock(relevantDocs) : "";
+            List<Document> finalRelevantDocs = relevantDocs;
+            List<Document> finalContextNeighbors = contextNeighbors;
             Flux<String> answerStream = normalizeStreamOutput(responseFlux)
                 .doOnNext(collectedAnswer::append)
                 .doOnComplete(() -> {
@@ -791,11 +1046,11 @@ public class KnowledgeBaseQueryService {
                         Math.max(0, rewriteAndRetrievalMs - queryContext.rewriteDurationMs()) * 1_000_000L);
                     ragMetrics.recordStageDuration("generate", result, generationNanos);
                     ragMetrics.recordStageDuration("total", result, System.nanoTime() - totalStart);
-                    emitTrace(trace, question, queryContext, attemptedQueries, relevantDocs,
+                    emitTrace(trace, question, queryContext, attemptedQueries, finalRelevantDocs,
                         rewriteAndRetrievalMs, generationNanos / 1_000_000, collectedAnswer.toString(),
-                        rejected ? "NO_RESULT" : "ANSWERED");
+                        rejected ? "NO_RESULT" : "ANSWERED", context, finalContextNeighbors);
                     log.info("流式输出完成: scope={}, hitKbIds={}", scope.kind(),
-                        hitKnowledgeBaseIds(relevantDocs));
+                        hitKnowledgeBaseIds(finalRelevantDocs));
                 })
                 .onErrorResume(e -> {
                     failed.set(true);
@@ -819,10 +1074,15 @@ public class KnowledgeBaseQueryService {
                     }
                 });
 
+            if (evidence != null) {
+                return answerStream.concatWith(Flux.defer(() -> failed.get()
+                    ? Flux.empty() : Flux.just(reviewedSuffix(collectedAnswer.toString(), evidence))));
+            }
             if (sourcesBlock.isBlank()) {
                 return answerStream;
             }
             return answerStream.concatWith(Flux.defer(() -> failed.get()
+                || NO_RESULT_RESPONSE.equals(collectedAnswer.toString())
                 ? Flux.empty()
                 : Flux.just(sourcesBlock)));
 
@@ -845,6 +1105,10 @@ public class KnowledgeBaseQueryService {
      * 识别不了才退回"服务暂时不可用"。
      */
     private String describeFailure(Throwable error) {
+        if (error instanceof BusinessException business
+            && business.getCode().equals(ErrorCode.RAG_EVIDENCE_REVIEW_FAILED.getCode())) {
+            return "【错误】资料相关性复核失败，本轮未生成回答或出处，请稍后重试。";
+        }
         String reason = AiErrorMessages.describe(error)
             .orElse("AI服务暂时不可用，请稍后重试");
         return "【错误】知识库查询失败：" + reason + "。";
@@ -858,6 +1122,15 @@ public class KnowledgeBaseQueryService {
                            List<String> attemptedQueries, List<Document> chosenDocs,
                            long rewriteAndRetrievalMs, long generationMs,
                            String answer, String outcome) {
+        emitTrace(trace, originalQuestion, queryContext, attemptedQueries, chosenDocs,
+            rewriteAndRetrievalMs, generationMs, answer, outcome, "", List.of());
+    }
+
+    private void emitTrace(java.util.function.Consumer<RagQueryExecution> trace,
+                           String originalQuestion, QueryContext queryContext,
+                           List<String> attemptedQueries, List<Document> chosenDocs,
+                           long rewriteAndRetrievalMs, long generationMs,
+                           String answer, String outcome, String context, List<Document> neighbors) {
         if (trace == null) {
             return;
         }
@@ -882,7 +1155,10 @@ public class KnowledgeBaseQueryService {
             Math.max(0, rewriteAndRetrievalMs - rewriteMs),
             generationMs,
             answer,
-            outcome));
+            outcome,
+            context,
+            chosenDocs.stream().map(Document::getId).toList(),
+            neighbors.stream().map(Document::getId).toList()));
     }
 
     private Double extractScore(Document doc) {
@@ -909,29 +1185,48 @@ public class KnowledgeBaseQueryService {
         List<Message> effectiveHistory = sanitizeHistory(history);
         QueryContext queryContext = buildQueryContext(question, effectiveHistory);
         List<String> attemptedQueries = new ArrayList<>();
-        List<Document> relevantDocs = retrieveRelevantDocs(queryContext,
-            ResolvedScope.ofSelection(knowledgeBaseIds), attemptedQueries);
+        ResolvedScope scope = ResolvedScope.ofSelection(knowledgeBaseIds);
+        RagEvidenceSession evidence = evidenceSession(scope, normalized);
+        List<Document> relevantDocs = retrieveRelevantDocs(queryContext, scope, attemptedQueries, evidence);
+        String context = "";
+        List<Document> neighbors = List.of();
+        boolean tooLong = false;
+        if (hasEffectiveHit(relevantDocs)) {
+            if (sectionContextEnabled() || evidence != null) {
+                var assembled = assembleContext(relevantDocs, scope, evidence);
+                tooLong = assembled.status() == RagContextAssembler.Status.TOO_LONG;
+                relevantDocs = assembled.directHits();
+                neighbors = assembled.neighbors();
+                context = assembled.text();
+            } else {
+                context = relevantDocs.stream().map(Document::getText).collect(Collectors.joining("\n\n---\n\n"));
+            }
+        }
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         boolean hit = hasEffectiveHit(relevantDocs);
         String stageResult = hit ? "success" : "reject";
         ragMetrics.recordStageDuration("rewrite", stageResult, queryContext.rewriteDurationMs() * 1_000_000L);
         ragMetrics.recordStageDuration("retrieve", stageResult,
             Math.max(0, elapsedMs - queryContext.rewriteDurationMs()) * 1_000_000L);
+        List<Document> finalDocs = relevantDocs;
         return new RagQueryExecution(
             normalized,
             queryContext.candidateQueries().getFirst(),
             List.copyOf(attemptedQueries),
             queryContext.searchParams().topK(),
             queryContext.searchParams().minScore(),
-            relevantDocs.stream()
+            finalDocs.stream()
                 .map(doc -> new RagQueryExecution.RetrievedDoc(
-                    relevantDocs.indexOf(doc) + 1, doc.getText(), extractScore(doc), doc.getMetadata()))
+                    finalDocs.indexOf(doc) + 1, doc.getText(), extractScore(doc), doc.getMetadata()))
                 .toList(),
             queryContext.rewriteDurationMs(),
             Math.max(0, elapsedMs - queryContext.rewriteDurationMs()),
             0,
             null,
-            hit ? "RETRIEVED" : "NO_RESULT");
+            tooLong ? "CONTEXT_TOO_LONG" : hit ? "RETRIEVED" : "NO_RESULT",
+            context,
+            relevantDocs.stream().map(Document::getId).toList(),
+            neighbors.stream().map(Document::getId).toList());
     }
 
     private QueryContext buildQueryContext(String originalQuestion, List<Message> history) {
@@ -966,6 +1261,13 @@ public class KnowledgeBaseQueryService {
 
     private List<Document> retrieveRelevantDocs(QueryContext queryContext, ResolvedScope scope,
                                                 List<String> attemptedQueries) {
+        return retrieveRelevantDocs(queryContext, scope, attemptedQueries, null);
+    }
+
+    private List<Document> retrieveRelevantDocs(QueryContext queryContext, ResolvedScope scope,
+        List<String> attemptedQueries, RagEvidenceSession evidence) {
+        scope = authorizeScope(scope, evidence);
+        if (scope == null || scope.knowledgeBaseIds().isEmpty()) return List.of();
         List<String> candidates = queryContext.candidateQueries();
         if (mergeOriginalQuery && candidates.size() > 1
                 && !candidates.get(0).equals(candidates.get(1))) {
@@ -988,8 +1290,10 @@ public class KnowledgeBaseQueryService {
                 poolSize,
                 queryContext.searchParams().minScore()
             );
-            // 跨库均衡：先按资料保底，再按分数补齐到 topK（单库时结果不变）
-            List<Document> docs = balanceByKnowledgeBase(candidatesDocs, topK);
+            Set<Long> allowedIds = new LinkedHashSet<>(scope.knowledgeBaseIds());
+            candidatesDocs = candidatesDocs.stream()
+                .filter(doc -> allowedIds.contains(knowledgeBaseIdOf(doc))).toList();
+            List<Document> docs = selectCandidateDocuments(candidatesDocs, topK);
             long durationMs = (System.nanoTime() - startNanos) / 1_000_000;
             log.info("RAG 检索完成: scope={}, kbCount={}, questionLength={}, queryVariant={}, "
                     + "poolSize={}, hits={}, durationMs={}",
@@ -1011,8 +1315,43 @@ public class KnowledgeBaseQueryService {
         return topK * candidateMultiplier;
     }
 
+    private static boolean hasValidRelevanceScore(Document document) {
+      if (document == null || document.getScore() == null) {
+        return false;
+      }
+      double score = document.getScore();
+      return Double.isFinite(score) && score >= 0 && score <= 1;
+    }
+
+    List<Document> filterRelevantCandidates(List<Document> candidates) {
+      if (candidates == null || candidates.isEmpty()) {
+        return List.of();
+      }
+      if (!relevanceEnabled) {
+        return candidates;
+      }
+      List<Document> valid = candidates.stream()
+          .filter(KnowledgeBaseQueryService::hasValidRelevanceScore)
+          .sorted(KnowledgeBaseQueryService::scoreDescendingNullsLast)
+          .toList();
+      Double topScore = valid.isEmpty() ? null : valid.getFirst().getScore();
+      Double effectiveMinScore = topScore == null ? null
+          : Math.max(relevanceMinScore, topScore - relevanceMaxScoreDrop);
+      List<Document> passed = effectiveMinScore == null ? List.of() : valid.stream()
+          .filter(document -> document.getScore() >= effectiveMinScore).toList();
+      log.info("RAG 相关性筛选: enabled=true, candidates={}, invalidScores={}, topScore={}, "
+              + "effectiveMinScore={}, passed={}, rejected={}",
+          candidates.size(), candidates.size() - valid.size(), topScore, effectiveMinScore,
+          passed.size(), candidates.size() - passed.size());
+      return passed;
+    }
+
+    List<Document> selectCandidateDocuments(List<Document> candidates, int topK) {
+      return balanceByKnowledgeBase(filterRelevantCandidates(candidates), topK);
+    }
+
     /**
-     * 跨库均衡：每份资料先保底取 {@code perKbQuota} 条，剩余名额按全局分数补齐。
+     * 跨库均衡：仅在传入的合格候选内，每份资料先保底取 {@code perKbQuota} 条。
      * <p>
      * 刻意做成「保底」而不是「上限」：范围里只有一份资料时不做任何裁剪，
      * 仍按分数取 topK，避免单库检索被配额误伤。
@@ -1074,6 +1413,7 @@ public class KnowledgeBaseQueryService {
         int poolSize = poolSize(topK);
         int rewrittenHits = 0;
         int originalHits = 0;
+        int invalidScoreHits = 0;
         for (int i = 0; i < 2; i++) {
             String candidateQuery = queryContext.candidateQueries().get(i);
             if (candidateQuery.isBlank()) {
@@ -1085,22 +1425,28 @@ public class KnowledgeBaseQueryService {
             List<Document> docs = vectorService.similaritySearch(
                 candidateQuery, scope.knowledgeBaseIds(), poolSize,
                 queryContext.searchParams().minScore());
+            Set<Long> allowedIds = new LinkedHashSet<>(scope.knowledgeBaseIds());
+            docs = docs.stream().filter(doc -> allowedIds.contains(knowledgeBaseIdOf(doc))).toList();
             if (i == 0) {
                 rewrittenHits = docs.size();
             } else {
                 originalHits = docs.size();
             }
             for (Document doc : docs) {
+                if (relevanceEnabled && !hasValidRelevanceScore(doc)) {
+                    invalidScoreHits++;
+                    continue;
+                }
                 merged.merge(doc.getId(), doc, KnowledgeBaseQueryService::higherScore);
             }
         }
         List<Document> sorted = merged.values().stream()
             .sorted(KnowledgeBaseQueryService::scoreDescendingNullsLast)
             .collect(Collectors.toList());
-        List<Document> result = balanceByKnowledgeBase(sorted, topK);
-        log.info("RAG 双路融合完成: kbCount={}, rewrittenHits={}, originalHits={}, dedupedHits={}, finalHits={}, topK={}",
+        List<Document> result = selectCandidateDocuments(sorted, topK);
+        log.info("RAG 双路融合完成: kbCount={}, rewrittenHits={}, originalHits={}, dedupedHits={}, finalHits={}, topK={}, invalidScoreHits={}",
             scope.knowledgeBaseIds().size(), rewrittenHits, originalHits, merged.size(),
-            result.size(), topK);
+            result.size(), topK, invalidScoreHits);
         ragMetrics.recordRetrievalHits("rewritten", rewrittenHits);
         ragMetrics.recordRetrievalHits("original", originalHits);
         ragMetrics.recordRetrievalHits("merged", result.size());

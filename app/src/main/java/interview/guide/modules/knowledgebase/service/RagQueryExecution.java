@@ -32,8 +32,18 @@ public record RagQueryExecution(
     long retrievalDurationMs,
     long generationDurationMs,
     String answer,
-    String outcome
+    String outcome,
+    String contextText,
+    List<String> directDocumentIds,
+    List<String> neighborDocumentIds
 ) {
+
+  public RagQueryExecution(String originalQuestion, String rewrittenQuestion, List<String> attemptedQueries,
+      int resolvedTopK, double resolvedMinScore, List<RetrievedDoc> retrievedDocs,
+      long rewriteDurationMs, long retrievalDurationMs, long generationDurationMs, String answer, String outcome) {
+    this(originalQuestion, rewrittenQuestion, attemptedQueries, resolvedTopK, resolvedMinScore, retrievedDocs,
+        rewriteDurationMs, retrievalDurationMs, generationDurationMs, answer, outcome, "", List.of(), List.of());
+  }
 
   /**
    * 检索片段快照。

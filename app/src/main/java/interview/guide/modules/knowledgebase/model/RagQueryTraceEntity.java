@@ -38,6 +38,7 @@ public class RagQueryTraceEntity {
     public static final String OUTCOME_ANSWERED = "ANSWERED";
     public static final String OUTCOME_NO_HIT = "NO_HIT";
     public static final String OUTCOME_TOOL_ERROR = "TOOL_ERROR";
+    public static final String OUTCOME_CONTEXT_TOO_LONG = "CONTEXT_TOO_LONG";
 
     /**
      * 路由来源：模型是否调用了工具。

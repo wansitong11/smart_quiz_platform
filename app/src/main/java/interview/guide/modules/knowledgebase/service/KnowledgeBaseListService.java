@@ -101,6 +101,18 @@ public class KnowledgeBaseListService {
             .toList();
     }
 
+    public Map<Long, String> getAccessibleKnowledgeBaseNames(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, String> names = new java.util.HashMap<>();
+        for (KnowledgeBaseEntity entity : knowledgeBaseRepository.findAccessibleByIds(
+            ids, ownerScope.effectiveOwnerId())) {
+            names.put(entity.getId(), entity.getName());
+        }
+        return names;
+    }
+
     // ========== 分类管理 ==========
 
     /**

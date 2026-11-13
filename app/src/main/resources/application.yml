@@ -429,6 +429,14 @@ app:
       metrics-enabled: ${APP_AI_RAG_METRICS_ENABLED:true}
       rewrite:
         enabled: ${APP_AI_RAG_REWRITE_ENABLED:true}
+      review:
+        enabled: ${APP_AI_RAG_REVIEW_ENABLED:false}
+        provider: ${APP_AI_RAG_REVIEW_PROVIDER:}
+        timeout: ${APP_AI_RAG_REVIEW_TIMEOUT:15s}
+        max-input-tokens: ${APP_AI_RAG_REVIEW_MAX_INPUT_TOKENS:8192}
+        max-output-tokens: ${APP_AI_RAG_REVIEW_MAX_OUTPUT_TOKENS:256}
+        max-units: ${APP_AI_RAG_REVIEW_MAX_UNITS:20}
+        max-batches-per-request: ${APP_AI_RAG_REVIEW_MAX_BATCHES_PER_REQUEST:2}
       search:
         # 双路召回融合（改写 Query 与原始 Query），测评证明收益前默认关闭
         merge-original-query: ${APP_AI_RAG_MERGE_ORIGINAL_QUERY:false}
@@ -438,7 +446,17 @@ app:
         topk-long: ${APP_AI_RAG_TOPK_LONG:8}
         min-score-short: ${APP_AI_RAG_MIN_SCORE_SHORT:0.18}
         min-score-default: ${APP_AI_RAG_MIN_SCORE_DEFAULT:0.28}
+        relevance:
+          enabled: ${APP_AI_RAG_RELEVANCE_ENABLED:false}
+          min-score: ${APP_AI_RAG_RELEVANCE_MIN_SCORE:0.40}
+          max-score-drop: ${APP_AI_RAG_RELEVANCE_MAX_SCORE_DROP:0.20}
       # 向量化 Chunk 策略（仅 Spring AI 2.0 原生参数，无 overlap；调整后需重新向量化）
+      section-neighbor-enabled: ${APP_AI_RAG_SECTION_NEIGHBOR_ENABLED:true}
+      context:
+        max-tokens: ${APP_AI_RAG_CONTEXT_MAX_TOKENS:6000}
+        neighbor-before: ${APP_AI_RAG_CONTEXT_NEIGHBOR_BEFORE:1}
+        neighbor-after: ${APP_AI_RAG_CONTEXT_NEIGHBOR_AFTER:1}
+        diagnostics-enabled: ${APP_AI_RAG_CONTEXT_DIAGNOSTICS_ENABLED:false}
       vectorization:
         splitter: ${APP_AI_RAG_VECTORIZATION_SPLITTER:token}
         chunk-size: ${APP_AI_RAG_VECTORIZATION_CHUNK_SIZE:800}

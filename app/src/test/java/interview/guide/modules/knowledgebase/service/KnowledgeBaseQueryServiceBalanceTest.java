@@ -23,7 +23,7 @@ class KnowledgeBaseQueryServiceBalanceTest {
     try {
       return new KnowledgeBaseQueryService(null, null, null, null, null,
           new KnowledgeBaseQueryProperties(), new DefaultResourceLoader(),
-          null, null, null, null);
+          null, null, null, null, null, null, null);
     } catch (java.io.IOException e) {
       throw new IllegalStateException("初始化查询服务失败", e);
     }

@@ -6,6 +6,8 @@ import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
 import interview.guide.modules.knowledgebase.service.KnowledgeBaseQueryService;
 import interview.guide.modules.knowledgebase.service.KnowledgeBaseVectorService;
 import interview.guide.modules.knowledgebase.service.RagQueryExecution;
+import interview.guide.common.ai.AiCallContextHolder;
+import interview.guide.common.ai.AiFeature;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -46,7 +48,7 @@ import static org.assertj.core.api.Assertions.fail;
  * <pre>RUN_RAG_EVAL=true REDIS_DATABASE=1 ./gradlew :app:ragEvaluation --no-daemon</pre>
  *
  * <p>双保险：rag-eval 标签（普通 :app:test 排除）+ RUN_RAG_EVAL 环境变量。
- * 环境使用独立可销毁的 PostgreSQL 逻辑库 smart-quiz-rag-eval，不触碰开发库。
+ * 环境使用独立可销毁的 PostgreSQL 逻辑库与对象存储桶。
  */
 @Tag("rag-eval")
 @EnabledIfEnvironmentVariable(named = "RUN_RAG_EVAL", matches = "true")
@@ -57,7 +59,8 @@ class RagEvaluationTest {
   private static final String EVAL_DB = "smart-quiz-rag-eval";
   /** 库名含连字符，作为 SQL 标识符时必须加双引号。 */
   private static final String EVAL_DB_IDENTIFIER = "\"" + EVAL_DB + "\"";
-  private static final String DATASET = "rag-eval/dataset-v1.jsonl";
+  private static final boolean CONTINUITY = "true".equalsIgnoreCase(System.getenv("RAG_CONTINUITY_EVAL"));
+  private static final String DATASET = CONTINUITY ? "continuity-48-v1" : "rag-eval/dataset-v1.jsonl";
   private static final String REPORT_DIR =
       System.getProperty("ragEval.reportDir", "build/reports/rag-eval");
   private static final String RUN_ID =
@@ -73,6 +76,10 @@ class RagEvaluationTest {
   private KnowledgeBaseVectorService vectorService;
   @Autowired
   private KnowledgeBaseQueryService queryService;
+  @Autowired
+  private software.amazon.awssdk.services.s3.S3Client storageClient;
+  @Autowired
+  private interview.guide.common.config.StorageConfigProperties storageProperties;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
   private final Map<String, Long> fixtureKbIds = new HashMap<>();
@@ -101,7 +108,11 @@ class RagEvaluationTest {
     try (Connection conn = DriverManager.getConnection(
         "jdbc:postgresql://" + host + ":" + port + "/postgres", user, password);
         Statement stmt = conn.createStatement()) {
-      stmt.execute("DROP DATABASE IF EXISTS " + EVAL_DB_IDENTIFIER);
+      try (var existing = stmt.executeQuery("SELECT 1 FROM pg_database WHERE datname = 'smart-quiz-rag-eval'")) {
+        if (existing.next()) {
+          fail("测评数据库已存在，拒绝覆盖；请先检查并处理已有数据");
+        }
+      }
       stmt.execute("CREATE DATABASE " + EVAL_DB_IDENTIFIER);
       dbCreated = true;
     } catch (Exception e) {
@@ -120,7 +131,7 @@ class RagEvaluationTest {
         Statement stmt = conn.createStatement()) {
       stmt.execute("DROP DATABASE IF EXISTS " + EVAL_DB_IDENTIFIER + " WITH (FORCE)");
     } catch (Exception ignored) {
-      // 清理失败不影响已生成的报告；下次运行会先 DROP 再 CREATE
+      // 清理失败不影响报告；下次运行会拒绝覆盖已有测评库
     }
   }
 
@@ -154,7 +165,13 @@ class RagEvaluationTest {
     List<Map<String, Object>> badCases = new ArrayList<>();
     List<Map<String, Object>> faithfulnessReview = new ArrayList<>();
     for (RagEvalSample sample : samples) {
-      sampleResults.add(evaluateSample(sample, faithfulnessReview, badCases));
+      for (int repetition = 1; repetition <= (CONTINUITY ? 3 : 1); repetition++) {
+        Map<String, Object> result = evaluateSample(sample, faithfulnessReview, badCases);
+        result.put("repetition", repetition);
+        sampleResults.add(result);
+        RagEvalReportWriter.write(Path.of(REPORT_DIR), RUN_ID,
+            buildReport(samples, sampleResults, badCases, faithfulnessReview, chunkCounts));
+      }
     }
     final List<Map<String, Object>> results = sampleResults;
     final List<Map<String, Object>> bad = badCases;
@@ -211,6 +228,9 @@ class RagEvaluationTest {
     result.put("question", sample.question());
     result.put("shouldReject", sample.shouldReject());
     result.put("evaluateGeneration", sample.evaluateGeneration());
+    String operationId = "rag-eval-" + java.util.UUID.randomUUID();
+    AiCallContextHolder.set(new AiCallContextHolder.AiCallContext(null, AiFeature.KB_QA,
+        "continuity-evaluation", operationId, operationId, "SYSTEM"));
     long totalStart = System.nanoTime();
     try {
       Long kbId = fixtureKbIds.get(sample.fixture());
@@ -227,10 +247,10 @@ class RagEvaluationTest {
             .answerQuestionStream(List.of(kbId), sample.question(), history, trace::add)
             .doOnNext(chunks::add)
             .blockLast();
-        execution = trace.isEmpty()
-            ? new RagQueryExecution(sample.question(), sample.question(), List.of(), 0, 0,
-                List.of(), 0, 0, 0, String.join("", chunks), "NO_RESULT")
-            : trace.getFirst();
+        if (trace.isEmpty()) {
+          throw new IllegalStateException("问答未返回测评轨迹");
+        }
+        execution = trace.getFirst();
       } else {
         execution = queryService.retrieveOnly(List.of(kbId), sample.question(), history);
       }
@@ -267,6 +287,12 @@ class RagEvaluationTest {
       result.put("resolvedTopK", execution.resolvedTopK());
       result.put("resolvedMinScore", execution.resolvedMinScore());
       result.put("answer", execution.answer());
+      result.put("contextText", execution.contextText());
+      result.put("directDocumentIds", execution.directDocumentIds());
+      result.put("neighborDocumentIds", execution.neighborDocumentIds());
+      result.put("contextContainsAllEvidence", !sample.expectedEvidence().isEmpty()
+          && sample.expectedEvidence().stream().allMatch(evidence ->
+              RagEvalSample.normalize(execution.contextText()).contains(RagEvalSample.normalize(evidence.text()))));
       result.put("retrievedDocs", execution.retrievedDocs().stream()
           .map(d -> Map.of(
               "rank", d.rank(),
@@ -284,6 +310,7 @@ class RagEvaluationTest {
       result.put("retrievalMs", execution.retrievalDurationMs());
       result.put("generationMs", execution.generationDurationMs());
       result.put("totalMs", (System.nanoTime() - totalStart) / 1_000_000);
+      result.put("operationId", operationId);
 
       collectBadCase(sample, result, firstHitRank, evidenceRecall, predictedReject, badCases);
       return result;
@@ -294,6 +321,8 @@ class RagEvaluationTest {
       badCases.add(badCase(sample, "HARNESS_ERROR",
           e.getClass().getSimpleName() + ": " + e.getMessage(), result));
       return result;
+    } finally {
+      AiCallContextHolder.clear();
     }
   }
 
@@ -385,10 +414,12 @@ class RagEvaluationTest {
   private Map<String, Object> buildEnvironment(Map<String, Integer> chunkCounts) throws Exception {
     Map<String, Object> env = new LinkedHashMap<>();
     env.put("gitSha", gitSha());
-    env.put("datasetSha256", sha256(new ClassPathResource(DATASET).getInputStream().readAllBytes()));
-    for (String fixture : List.of("java-guide.md", "project-guide.md")) {
-      env.put("fixtureSha256:" + fixture,
-          sha256(new ClassPathResource("rag-eval/fixtures/" + fixture).getInputStream().readAllBytes()));
+    env.put("datasetSha256", CONTINUITY
+        ? sha256(objectMapper.writeValueAsBytes(ContinuityEvalCorpus.samples()))
+        : sha256(new ClassPathResource(DATASET).getInputStream().readAllBytes()));
+    Map<String, String> fixtureContents = loadFixtures(CONTINUITY ? ContinuityEvalCorpus.samples() : loadSamples());
+    for (var fixture : fixtureContents.entrySet()) {
+      env.put("fixtureSha256:" + fixture.getKey(), sha256(fixture.getValue().getBytes(StandardCharsets.UTF_8)));
     }
     for (String prompt : List.of("knowledgebase-query-system.st", "knowledgebase-query-user.st",
         "knowledgebase-query-rewrite.st")) {
@@ -401,9 +432,12 @@ class RagEvaluationTest {
         ? "false(默认)" : System.getenv("APP_AI_RAG_MERGE_ORIGINAL_QUERY"));
     env.put("chunkSize", System.getenv("APP_AI_RAG_VECTORIZATION_CHUNK_SIZE") == null
         ? "800(默认)" : System.getenv("APP_AI_RAG_VECTORIZATION_CHUNK_SIZE"));
+    env.put("sectionNeighborEnabled", System.getenv().getOrDefault("APP_AI_RAG_SECTION_NEIGHBOR_ENABLED", "false"));
     env.put("redisDatabase", System.getenv().getOrDefault("REDIS_DATABASE", "1(rag-eval Profile 默认)"));
     env.put("evalDatabase", EVAL_DB + "（每 run 重建）");
+    env.put("evalStorageBucket", storageProperties.getBucket());
     env.put("tokenUsage", "null（当前链路 .content() 无法取得 usage，补齐属 P1-04）");
+    env.put("usageNote", "成本账本的 input_tokens 可能为估算值，不能作为真实 usage 使用；operationId 可用于核对账本。");
     env.put("springAiVersion", springAiVersion());
     env.putAll(providerSnapshot());
     chunkCounts.forEach((fixture, count) -> env.put("chunkCount:" + fixture, count));
@@ -473,6 +507,7 @@ class RagEvaluationTest {
   // ========== 数据准备 ==========
 
   private List<RagEvalSample> loadSamples() throws IOException {
+    if (CONTINUITY) return ContinuityEvalCorpus.samples();
     List<String> lines = new String(
             new ClassPathResource(DATASET).getInputStream().readAllBytes(), StandardCharsets.UTF_8)
         .lines().filter(line -> !line.isBlank()).toList();
@@ -485,6 +520,11 @@ class RagEvaluationTest {
   }
 
   private Map<String, String> loadFixtures(List<RagEvalSample> samples) throws IOException {
+    if (CONTINUITY) {
+      return Map.of("continuity-conditions.md", ContinuityEvalCorpus.conditionFixture(),
+          "continuity-reference.txt", ContinuityEvalCorpus.referenceFixture(),
+          "continuity-facts.md", ContinuityEvalCorpus.factsFixture());
+    }
     Map<String, String> contents = new HashMap<>();
     for (RagEvalSample sample : samples) {
       if (!contents.containsKey(sample.fixture())) {
@@ -502,12 +542,24 @@ class RagEvaluationTest {
       KnowledgeBaseEntity kb = new KnowledgeBaseEntity();
       kb.setName("rag-eval-" + fixture);
       kb.setOriginalFilename(fixture);
-      kb.setFileHash("rag-eval-" + RUN_ID + "-" + fixture);
+      kb.setFileHash(sha256Quiet(RUN_ID + ":" + fixture));
       kb.setContentType("text/markdown");
       kb.setFileSize((long) content.length());
       kb.setVectorStatus(VectorStatus.PENDING);
       KnowledgeBaseEntity saved = knowledgeBaseRepository.save(kb);
-      vectorService.vectorizeAndStore(saved.getId(), content);
+      String key = RUN_ID + "/" + fixture;
+      storageClient.putObject(software.amazon.awssdk.services.s3.model.PutObjectRequest.builder()
+              .bucket(storageProperties.getBucket()).key(key).contentType("text/plain; charset=utf-8").build(),
+          software.amazon.awssdk.core.sync.RequestBody.fromString(content, StandardCharsets.UTF_8));
+      String storedContent = storageClient.getObjectAsBytes(
+          software.amazon.awssdk.services.s3.model.GetObjectRequest.builder()
+              .bucket(storageProperties.getBucket()).key(key).build()).asUtf8String();
+      if (!storedContent.equals(content)) throw new IllegalStateException("测评原文存储不一致: " + fixture);
+      vectorService.vectorizeAndStore(saved.getId(), content, "rag-eval-" + fixture,
+          fixture, null, () -> { });
+      KnowledgeBaseEntity vectorized = knowledgeBaseRepository.findById(saved.getId()).orElseThrow();
+      vectorized.setVectorStatus(VectorStatus.COMPLETED);
+      knowledgeBaseRepository.save(vectorized);
       fixtureKbIds.put(fixture, saved.getId());
       // 使用生产链路真实写入的 chunkCount（由向量化快照更新），保证与 chunk-size 配置一致
       int chunks = knowledgeBaseRepository.findById(saved.getId())

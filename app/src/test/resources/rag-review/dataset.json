@@ -1,0 +1,8 @@
+[
+  {"id":"D1","split":"dev","question":"spring ai都要学习些什么呢","kb":23,"anchors":["Spring AI"]},
+  {"id":"D2","split":"dev","question":"制作扇形统计图的四个步骤是什么","kb":4,"anchors":["圆心角","在每个扇形中标明"]},
+  {"id":"D3","split":"dev","question":"Spring AI 的文档分块和嵌入分别起什么作用","kb":23,"anchors":["Embedding"]},
+  {"id":"H1","split":"holdout","question":"根据指南，学完基本聊天接口之后，要怎样把自己的文档用于问答？","kb":23,"anchors":["Embedding"]},
+  {"id":"H2","split":"holdout","question":"做扇形统计图时，计算圆心角和给扇形标注信息分别在什么时候？","kb":4,"anchors":["圆心角","在每个扇形中标明"]},
+  {"id":"H3","split":"holdout","question":"这份语文资料里“描写”有哪些具体知识点？","kb":32,"anchors":["描写"]}
+]

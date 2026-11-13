@@ -280,6 +280,15 @@ public class StructuredOutputInvoker {
             rawResponseConsumer, null, null);
     }
 
+    public <T> T invokeOnceWithoutSchemaValidation(
+        ChatClient client, String system, String user, BeanOutputConverter<T> converter,
+        ErrorCode errorCode, String errorPrefix, String logContext, Logger log,
+        Predicate<T> semanticValidator
+    ) {
+        return invoke(client, system, user, List.of(), converter, errorCode, errorPrefix,
+            logContext, log, false, 1, false, null, semanticValidator, null);
+    }
+
     private <T> T invoke(
         ChatClient chatClient,
         String systemPromptWithFormat,

@@ -26,6 +26,21 @@ public class LlmEmbeddingConfig {
       public float[] embed(Document document) {
         return registry.getDefaultEmbeddingModel().embed(document);
       }
+
+      @Override
+      public String getEmbeddingContent(Document document) {
+        if (!"section-neighbor-v2".equals(document.getMetadata().get("chunk_strategy"))) {
+          return document.getText();
+        }
+        Object title = document.getMetadata().get("document_title");
+        Object path = document.getMetadata().get("section_path");
+        if (!(title instanceof String) || !(path instanceof String) || document.getText() == null) {
+          throw new IllegalArgumentException("新分块策略缺少正文或章节信息");
+        }
+        return "[资料：" + title + "]\n"
+            + (((String) path).isEmpty() ? "" : "[章节：" + path + "]\n")
+            + document.getText();
+      }
     };
   }
 }

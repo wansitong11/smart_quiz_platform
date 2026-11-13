@@ -21,6 +21,7 @@ repositories {
 }
 
 dependencies {
+    implementation libs.jtokkit
     // Spring Boot Starters (Boot 4 modular design)
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
@@ -142,7 +143,9 @@ tasks.register('ragEvaluation', Test) {
             def trimmed = line.trim()
             if (trimmed && !trimmed.startsWith('#') && trimmed.contains('=')) {
                 def (key, value) = trimmed.split('=', 2)
-                environment key, value
+                if (!System.getenv().containsKey(key)) {
+                    environment key, value
+                }
             }
         }
     }

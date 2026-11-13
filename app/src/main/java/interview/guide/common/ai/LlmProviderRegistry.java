@@ -170,6 +170,45 @@ public class LlmProviderRegistry {
         return getChatClient(resolveProviderId(providerId));
     }
 
+    public record ShortTextOptions(Duration timeout, int maxOutputTokens) {
+      public ShortTextOptions {
+        if (timeout == null || timeout.isNegative() || timeout.isZero()
+            || timeout.compareTo(Duration.ofSeconds(60)) > 0 || maxOutputTokens < 1) {
+          throw new IllegalArgumentException("Invalid short text limits");
+        }
+      }
+    }
+
+    public ChatClient getChatClientOrDefault(String providerId, ShortTextOptions limits) {
+      String id = resolveProviderId(providerId);
+      String key = id + ":short-text:" + limits.timeout().toMillis() + ":"
+          + limits.maxOutputTokens();
+      return clientCache.computeIfAbsent(key, unused -> {
+        ProviderSnapshot config = loadProviderOrThrow(id);
+        int timeout = Math.toIntExact(limits.timeout().toMillis());
+        OpenAIClient sdk = ApiPathResolver.buildOpenAiClient(config.baseUrl(), config.apiKey(),
+            Math.min(3000, timeout), timeout, timeout);
+        Map<String, Object> configured = properties.extraBodyFor(id);
+        Map<String, Object> extra = configured == null ? new LinkedHashMap<>()
+            : new LinkedHashMap<>(configured);
+        if (id.toLowerCase(Locale.ROOT).contains("dashscope") || extra.containsKey("enable_thinking"))
+          extra.put("enable_thinking", false);
+        if (id.toLowerCase(Locale.ROOT).startsWith("glm") || extra.containsKey("thinking")) {
+          extra.put("thinking", Map.of("type", "disabled"));
+        }
+        var options = OpenAiChatOptions.builder().model(config.model()).temperature(0.0)
+            .timeout(limits.timeout()).maxTokens(limits.maxOutputTokens()).extraBody(extra).build();
+        var model = OpenAiChatModel.builder().openAiClient(sdk).openAiClientAsync(sdk.async())
+            .options(options).observationRegistry(observationRegistry == null
+                ? ObservationRegistry.NOOP : observationRegistry).build();
+        var builder = ChatClient.builder(model);
+        attachAiMeter(builder, id, "TEXT");
+        log.info("短文本客户端: provider={}, model={}, timeoutMs={}, maxOutputTokens={}",
+            id, config.model(), timeout, limits.maxOutputTokens());
+        return builder.build();
+      });
+    }
+
     /**
      * 获取不带 SkillsTool 的 ChatClient，用于结构化输出场景（出题、简历评分等）。
      * 这些场景要求模型一次性返回可解析 JSON，不应混入工具调用消息。

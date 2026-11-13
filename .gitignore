@@ -1,5 +1,6 @@
 # Ignore Gradle project-specific cache directory
 .gradle
+.gradle-home/
 
 # Local JDK copy for sandboxed Gradle runs
 .jdk25/
@@ -25,6 +26,7 @@ docs/项目部署/*AccessKey*.csv
 backup/
 test-output.txt
 backend.log
+build-*.log
 verify-*.log
 app/logs/
 .codex-tmp/
